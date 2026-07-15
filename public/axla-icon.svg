@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <linearGradient id="green" x1="250" y1="780" x2="830" y2="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#16A34A"/>
+      <stop offset="100%" stop-color="#22C55E"/>
+    </linearGradient>
+
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Main A -->
+  <path
+    d="M512 150
+       L300 760
+       L410 700
+       L512 405
+       L614 700
+       L724 760
+       L512 150Z"
+    fill="#0F172A"/>
+
+  <!-- Right leg cut -->
+  <path
+    d="M585 560
+       L705 900
+       L595 900
+       L515 665
+       Z"
+    fill="#0F172A"/>
+
+  <!-- Orbit / Axis -->
+  <path
+    d="M235 650
+       C295 820 565 770 845 470"
+    stroke="url(#green)"
+    stroke-width="58"
+    stroke-linecap="round"
+    fill="none"
+    filter="url(#glow)"/>
+
+  <!-- Arrow -->
+  <polygon
+    points="840,470 775,455 804,515"
+    fill="#22C55E"/>
+
+</svg>
