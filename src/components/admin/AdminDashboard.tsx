@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { StatsCards } from "@/components/admin/StatsCards";
 import { GraphTabs } from "@/components/admin/GraphTabs";
+import { PeakHoursCard } from "@/components/admin/PeakHoursCard";
 import { TopQuestionsTable } from "@/components/admin/TopQuestionsTable";
 import { RecentChatsFeed } from "@/components/admin/RecentChatsFeed";
 import { WaitlistTable } from "@/components/admin/WaitlistTable";
@@ -199,6 +200,7 @@ export function AdminDashboard() {
               chatMessages={filteredChatMessages}
               days={RANGE_TO_DAYS[dateRange]}
             />
+            <PeakHoursCard chatMessages={filteredChatMessages} />
             <div className="grid gap-6 lg:grid-cols-2">
               <TopQuestionsTable chatMessages={filteredChatMessages} />
               <RecentChatsFeed chatMessages={filteredChatMessages} />
