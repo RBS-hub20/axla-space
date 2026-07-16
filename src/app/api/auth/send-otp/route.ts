@@ -35,7 +35,16 @@ export async function POST(req: Request) {
   const safeName = typeof name === "string" ? name.trim().slice(0, 100) : "";
 
   const otp = generateOtp();
-  storeOtp(email, otp, safeName);
+
+  try {
+    await storeOtp(email, otp);
+  } catch (err) {
+    console.error("send-otp: failed to store OTP", err);
+    return NextResponse.json(
+      { success: false, error: "Something went wrong. Please try again." },
+      { status: 500 },
+    );
+  }
 
   try {
     await plunk.emails.send({

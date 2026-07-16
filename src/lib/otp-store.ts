@@ -1,19 +1,7 @@
 import "server-only";
-
-interface OtpEntry {
-  otp: string;
-  name: string;
-  expiresAt: number;
-}
+import { prisma } from "@/lib/prisma";
 
 const OTP_TTL_MS = 10 * 60 * 1000;
-
-// TODO: swap this in-memory Map for a database table (e.g. Supabase) before
-// production. A module-level Map only survives within a single warm server
-// process — it's empty after every cold start/redeploy, and won't be shared
-// across instances if this app ever runs on more than one server process.
-// Fine for local dev and low-traffic testing, not for real multi-instance use.
-const otpStore = new Map<string, OtpEntry>();
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -23,28 +11,41 @@ export function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-export function storeOtp(email: string, otp: string, name: string): void {
-  otpStore.set(normalizeEmail(email), {
-    otp,
-    name,
-    expiresAt: Date.now() + OTP_TTL_MS,
+/**
+ * Stores a fresh OTP for the email, replacing any codes issued earlier —
+ * only the most recently sent code should ever be valid.
+ */
+export async function storeOtp(email: string, otp: string): Promise<void> {
+  const normalizedEmail = normalizeEmail(email);
+
+  await prisma.oTP.deleteMany({ where: { email: normalizedEmail } });
+  await prisma.oTP.create({
+    data: {
+      email: normalizedEmail,
+      otp,
+      expiresAt: new Date(Date.now() + OTP_TTL_MS),
+    },
   });
 }
 
 export type VerifyOtpResult =
-  | { ok: true; name: string }
+  | { ok: true }
   | { ok: false; reason: "not_found" | "expired" | "mismatch" };
 
-export function verifyOtp(email: string, otp: string): VerifyOtpResult {
-  const key = normalizeEmail(email);
-  const entry = otpStore.get(key);
+/** Verifies the OTP and deletes it — codes are single-use either way. */
+export async function verifyOtp(email: string, otp: string): Promise<VerifyOtpResult> {
+  const normalizedEmail = normalizeEmail(email);
+  const entry = await prisma.oTP.findFirst({
+    where: { email: normalizedEmail },
+    orderBy: { createdAt: "desc" },
+  });
 
   if (!entry) {
     return { ok: false, reason: "not_found" };
   }
 
-  if (Date.now() > entry.expiresAt) {
-    otpStore.delete(key);
+  if (entry.expiresAt < new Date()) {
+    await prisma.oTP.deleteMany({ where: { email: normalizedEmail } });
     return { ok: false, reason: "expired" };
   }
 
@@ -52,6 +53,6 @@ export function verifyOtp(email: string, otp: string): VerifyOtpResult {
     return { ok: false, reason: "mismatch" };
   }
 
-  otpStore.delete(key);
-  return { ok: true, name: entry.name };
+  await prisma.oTP.deleteMany({ where: { email: normalizedEmail } });
+  return { ok: true };
 }
