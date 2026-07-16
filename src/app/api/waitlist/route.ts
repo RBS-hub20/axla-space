@@ -1,18 +1,10 @@
 import { NextResponse } from "next/server";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const HATE_OPTIONS = [
-  "Ang haba ng pila",
-  "Di ko alam ilalagay sa forms",
-  "Nagbabayad ako ng CPA kahit maliit lang kita ko",
-  "Natatakot ako sa penalties",
-  "Ayoko lang talaga, period",
-];
-
 export async function POST(request: Request) {
-  let body: { email?: unknown; hate?: unknown };
+  let body: { email?: unknown; bir_hate_level?: unknown };
 
   try {
     body = await request.json();
@@ -21,14 +13,18 @@ export async function POST(request: Request) {
   }
 
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-  const hate = typeof body.hate === "string" ? body.hate : "";
+  const birHateLevel =
+    typeof body.bir_hate_level === "number" ? body.bir_hate_level : Number(body.bir_hate_level);
 
   if (!EMAIL_RE.test(email)) {
     return NextResponse.json({ error: "Please enter a valid email." }, { status: 400 });
   }
 
-  if (!HATE_OPTIONS.includes(hate)) {
-    return NextResponse.json({ error: "Please pick an answer." }, { status: 400 });
+  if (!Number.isInteger(birHateLevel) || birHateLevel < 1 || birHateLevel > 10) {
+    return NextResponse.json(
+      { error: "Please pick a hassle level from 1 to 10." },
+      { status: 400 },
+    );
   }
 
   if (!isSupabaseConfigured) {
@@ -38,10 +34,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const { error } = await supabase.from("waitlist").insert({ 
-    email, 
-    bir_hate: hate  // ← ITO YUNG FIX: bir_hate dapat, hindi hate
-  });
+  const { error } = await supabase
+    .from("waitlist")
+    .insert({ email, bir_hate_level: birHateLevel });
 
   if (error) {
     if (error.code === "23505") {
@@ -50,7 +45,6 @@ export async function POST(request: Request) {
         { status: 200 },
       );
     }
-    // Para makita natin yung real error sa Vercel logs next time
     console.error("Supabase insert error:", error);
     return NextResponse.json({ error: "Something went wrong. Try again." }, { status: 500 });
   }

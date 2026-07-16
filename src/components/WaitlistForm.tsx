@@ -2,24 +2,25 @@
 
 import { useState, type FormEvent } from "react";
 
-const HATE_OPTIONS = [
-  "Ang haba ng pila",
-  "Di ko alam ilalagay sa forms",
-  "Nagbabayad ako ng CPA kahit maliit lang kita ko",
-  "Natatakot ako sa penalties",
-  "Ayoko lang talaga, period",
-];
-
 type Status = "idle" | "loading" | "success" | "error";
+
+const HASSLE_LEVELS = Array.from({ length: 10 }, (_, i) => i + 1);
 
 export function WaitlistForm() {
   const [email, setEmail] = useState("");
-  const [hate, setHate] = useState("");
+  const [birHateLevel, setBirHateLevel] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (birHateLevel === null) {
+      setStatus("error");
+      setMessage("Please pick a hassle level from 1 to 10.");
+      return;
+    }
+
     setStatus("loading");
     setMessage("");
 
@@ -27,7 +28,7 @@ export function WaitlistForm() {
       const res = await fetch("/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, hate }),
+        body: JSON.stringify({ email, bir_hate_level: birHateLevel }),
       });
       const data = await res.json();
 
@@ -40,7 +41,7 @@ export function WaitlistForm() {
       setStatus("success");
       setMessage(data.message || "You're on the waitlist!");
       setEmail("");
-      setHate("");
+      setBirHateLevel(null);
     } catch {
       setStatus("error");
       setMessage("Network error. Please try again.");
@@ -59,7 +60,7 @@ export function WaitlistForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5">
       <div>
         <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-navy">
           Email address
@@ -76,25 +77,30 @@ export function WaitlistForm() {
       </div>
 
       <div>
-        <label htmlFor="hate" className="mb-1.5 block text-sm font-medium text-navy">
-          Ano pinaka-hate mo sa BIR?
-        </label>
-        <select
-          id="hate"
-          required
-          value={hate}
-          onChange={(e) => setHate(e.target.value)}
-          className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-navy focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
-        >
-          <option value="" disabled>
-            Pumili ng sagot
-          </option>
-          {HATE_OPTIONS.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
+        <span className="mb-1.5 block text-sm font-medium text-navy">
+          Gaano ka-hassle ang BIR sa&apos;yo?
+        </span>
+        <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
+          {HASSLE_LEVELS.map((level) => (
+            <button
+              key={level}
+              type="button"
+              onClick={() => setBirHateLevel(level)}
+              aria-pressed={birHateLevel === level}
+              className={`rounded-lg py-2 text-sm font-semibold transition ${
+                birHateLevel === level
+                  ? "bg-accent text-navy"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              {level}
+            </button>
           ))}
-        </select>
+        </div>
+        <div className="mt-1.5 flex justify-between text-xs text-slate-400">
+          <span>Chill lang</span>
+          <span>Sobrang hassle</span>
+        </div>
       </div>
 
       {status === "error" && (

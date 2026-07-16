@@ -1,16 +1,17 @@
-# Axla — landing page
+# Axla — landing page + admin dashboard
 
 Landing page for [axla.space](https://axla.space) — **Axla: your AI agent for
 adulting**. First agent: **RDO Runner**, which files PH BIR quarterly taxes
 (2551Q + 1701Q) from your GCash history.
 
-Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase (waitlist).
+Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase (waitlist) +
+a password-protected admin dashboard for the waitlist data.
 
 ## Local development
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in your Supabase project values
+cp .env.example .env.local   # then fill in your Supabase project + admin password
 npm run dev
 ```
 
@@ -25,33 +26,59 @@ to actually collect signups — see below.
 1. Create a project at [supabase.com](https://supabase.com).
 2. Open the **SQL Editor** and run [`supabase/schema.sql`](./supabase/schema.sql)
    — this creates the `waitlist` table with row-level security that only
-   allows public **inserts** (no reading/listing with the public key).
+   allows public **inserts** (no reading/listing with the public anon key).
+   - Already ran an older version of this schema (with a text `hate` column)?
+     Run [`supabase/migrations/001_bir_hate_level.sql`](./supabase/migrations/001_bir_hate_level.sql)
+     instead — it migrates existing rows to the new `bir_hate_level` (1-10) column.
 3. Go to **Project Settings → API** and copy:
    - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
    - **anon public** key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-4. Put both in `.env.local` for local dev, and in your Vercel project's
+   - **service_role** key → `SUPABASE_SERVICE_ROLE_KEY` (server-only — used by
+     the admin dashboard to read the waitlist; RLS blocks the anon key from
+     reading it, by design)
+4. Put all three in `.env.local` for local dev, and in your Vercel project's
    Environment Variables for production.
 
-Signups land in `public.waitlist` (`email`, `hate`, `created_at`). View them
-from the Supabase Table Editor, or the SQL Editor.
+Signups land in `public.waitlist` (`email`, `bir_hate_level` 1-10, `created_at`).
+
+## Admin dashboard
+
+`/admin` — stats (total signups, average BIR hate level, signups today/this
+week), a 30-day signups chart, and a searchable/paginated waitlist table with
+CSV export. Auto-refreshes every 30s.
+
+- Set `ADMIN_PASSWORD` in your environment — this is the only credential
+  gating `/admin`. Choose a strong, unique value; never commit the real value.
+- Visit `/admin` (redirects to `/admin/login` if you're not signed in), enter
+  the password. A signed, httpOnly session cookie keeps you in for 7 days.
+- The dashboard reads data via `/api/admin/waitlist`, which checks the session
+  cookie server-side and queries Supabase with the service-role key — the
+  service-role key never reaches the browser.
 
 ## Deploying to Vercel
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).
 2. Import the repo in [Vercel](https://vercel.com/new).
-3. Add the two `NEXT_PUBLIC_SUPABASE_*` environment variables from above.
+3. Add all four environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`).
 4. Deploy, then point the `axla.space` domain at the Vercel project
    (**Settings → Domains**).
 
 ## Structure
 
 ```
-src/app/            Routes: / (landing), /privacy, /terms, /api/waitlist
-src/components/     Navbar, Hero, HowItWorks, WhyAxla, PricingTeaser,
-                     WaitlistSection/WaitlistForm, Footer
-src/lib/supabase.ts Supabase client
-supabase/schema.sql Waitlist table + RLS policy
-public/              Axla logo, app icon, favicon assets
+src/app/                  Routes: / (landing), /privacy, /terms,
+                           /admin, /admin/login, /api/waitlist, /api/admin/*
+src/components/           Navbar, Hero, HowItWorks, WhyAxla, PricingTeaser,
+                           WaitlistSection/WaitlistForm, Footer
+src/components/admin/     AdminDashboard, StatsCards, SignupChart, WaitlistTable
+src/components/ui/        shadcn-style primitives (Card, Table, Button, Input, Badge, Dialog)
+src/lib/supabase/client.ts  Public anon Supabase client (landing page waitlist insert)
+src/lib/supabase/admin.ts   Service-role Supabase client (admin dashboard, server-only)
+src/lib/admin-session.ts    Signed httpOnly session cookie for /admin
+supabase/schema.sql          Waitlist table + RLS policy
+supabase/migrations/         Schema migrations for existing deployments
+public/                      Axla logo, app icon, favicon assets
 ```
 
 ## Brand
