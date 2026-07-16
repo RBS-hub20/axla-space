@@ -1,4 +1,4 @@
-import { xai } from "@ai-sdk/xai";
+import { openai } from "@ai-sdk/openai";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
 import { CHAT_DAILY_LIMIT, checkChatRateLimit, getClientIp } from "@/lib/rate-limit";
 
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
 
   const result = streamText({
-    model: xai(process.env.XAI_MODEL || "grok-4.20-reasoning"),
+    model: openai("gpt-4o-mini"),
     system: TAXLAYA_SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
     maxOutputTokens: 1000,

@@ -1,9 +1,10 @@
-# Axla — TaxLaya chat + waitlist + admin dashboard
+# Axla — landing page + TaxLaya chat widget + admin dashboard
 
 [axla.space](https://axla.space) — **Axla: your AI agent for adulting**.
-The homepage (`/`) is **TaxLaya**, a free Taglish AI chat assistant for PH
-BIR tax questions (2551Q, 1701Q, 0619E, etc.), powered by xAI Grok. The
-original waitlist landing page lives on at `/waitlist`.
+The homepage (`/`) is the original waitlist marketing page. **TaxLaya**, a
+free Taglish AI chat assistant for PH BIR tax questions (2551Q, 1701Q,
+0619E, etc.), floats as a chat bubble in the bottom-right corner of every
+public page — click it to open the chat panel.
 
 Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase (waitlist +
 chat rate limiting) + a password-protected admin dashboard for the waitlist
@@ -46,12 +47,6 @@ to actually collect signups — see below.
 
 Signups land in `public.waitlist` (`email`, `bir_hate_level` 1-10, `created_at`).
 
-## Waitlist landing page
-
-`/waitlist` — the original marketing page (hero, how it works, why Axla,
-pricing teaser, waitlist signup form). Linked from the chat homepage's
-header and footer.
-
 ## Admin dashboard
 
 `/admin` — stats (total signups, average BIR hate level, signups today/this
@@ -66,15 +61,18 @@ CSV export. Auto-refreshes every 30s.
   cookie server-side and queries Supabase with the service-role key — the
   service-role key never reaches the browser.
 
-## TaxLaya chat support (homepage)
+## TaxLaya chat widget
 
-`/` — a dark-themed, Taglish AI assistant for BIR tax questions (2551Q,
-1701Q, 0619E, 1601C, 2550Q, etc.), streaming responses via xAI's Grok. Open
-to anyone, no login required. `/chat` redirects here for old links.
+A floating chat bubble (bottom-right, `src/components/chat/ChatWidget.tsx`)
+mounted site-wide from the root layout — present on the landing page,
+`/privacy`, and `/terms`, but hidden on `/admin`. Minimized by default as a
+round avatar button with a pulsing green "online" dot; clicking it opens a
+~400×600 dark chat panel. `/chat` redirects to `/` for old links.
 
-- Get an API key at [console.x.ai](https://console.x.ai) and set `XAI_API_KEY`.
-- Optionally set `XAI_MODEL` to override the default model (see
-  `.env.example` for the current default and where to find valid model IDs).
+- Streams Taglish BIR tax answers (2551Q, 1701Q, 0619E, 1601C, 2550Q, etc.)
+  via OpenAI's `gpt-4o-mini`. Get an API key at
+  [platform.openai.com](https://platform.openai.com/api-keys) and set
+  `OPENAI_API_KEY`.
 - The system prompt and persona live in `src/app/api/chat/route.ts`.
 - **Rate limited to 10 messages per IP per day**, tracked in the
   `chat_rate_limits` Supabase table (atomic upsert via the
@@ -90,20 +88,21 @@ to anyone, no login required. `/chat` redirects here for old links.
 2. Import the repo in [Vercel](https://vercel.com/new).
 3. Add all five environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`,
-   `XAI_API_KEY`).
+   `OPENAI_API_KEY`).
 4. Deploy, then point the `axla.space` domain at the Vercel project
    (**Settings → Domains**).
 
 ## Structure
 
 ```
-src/app/                  Routes: / (TaxLaya chat), /chat (redirects to /),
-                           /waitlist, /privacy, /terms,
+src/app/                  Routes: / (landing), /chat (redirects to /),
+                           /privacy, /terms,
                            /admin, /admin/login, /api/waitlist, /api/admin/*, /api/chat
 src/components/           Navbar, Hero, HowItWorks, WhyAxla, PricingTeaser,
-                           WaitlistSection/WaitlistForm, Footer (all used by /waitlist)
+                           WaitlistSection/WaitlistForm, Footer (landing page)
 src/components/admin/     AdminDashboard, StatsCards, SignupChart, WaitlistTable
-src/components/chat/      ChatHeader, ChatMessage, ChatInput (TaxLaya UI)
+src/components/chat/      ChatWidget (floating bubble + panel), ChatHeader,
+                           ChatMessage, ChatInput
 src/components/ui/        shadcn-style primitives (Card, Table, Button, Input,
                            Badge, Dialog, ScrollArea, Textarea)
 src/lib/supabase/client.ts  Public anon Supabase client (landing page waitlist insert)
@@ -117,6 +116,7 @@ public/                      Axla logo, app icon, favicon, TaxLaya avatar assets
 
 ## Brand
 
-- Primary: `#0F172A` (navy) · Accent: `#22C55E` (electric green)
+- Primary: `#0F172A` (navy) · Accent: `#22C55E` (electric green) ·
+  TaxLaya widget accent: `#00FF88`
 - Font: Inter
 - Copy: Taglish, no fluff
