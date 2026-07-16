@@ -1,17 +1,19 @@
 "use client";
 
 import Image from "next/image";
-import { Trash2, X } from "lucide-react";
+import { Trash2, Volume2, VolumeX, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface ChatHeaderProps {
   onClear: () => void;
   onClose: () => void;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
 }
 
-export function ChatHeader({ onClear, onClose }: ChatHeaderProps) {
+export function ChatHeader({ onClear, onClose, soundEnabled, onToggleSound }: ChatHeaderProps) {
   return (
-    <div className="flex items-center justify-between rounded-t-2xl border-b border-gray-800 bg-gray-900/80 p-3 backdrop-blur">
+    <div className="flex items-center justify-between border-b border-gray-800 bg-gray-900/80 p-3 backdrop-blur sm:rounded-t-2xl">
       <div className="flex items-center gap-2.5">
         <div className="relative">
           <Image
@@ -35,6 +37,15 @@ export function ChatHeader({ onClear, onClose }: ChatHeaderProps) {
         </div>
       </div>
       <div className="flex items-center gap-0.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggleSound}
+          aria-label={soundEnabled ? "Mute notification sound" : "Unmute notification sound"}
+          className="h-8 w-8 text-gray-400 hover:bg-gray-800 hover:text-gray-100"
+        >
+          {soundEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+        </Button>
         <Button
           variant="ghost"
           size="icon"

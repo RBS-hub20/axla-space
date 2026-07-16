@@ -80,6 +80,20 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
   `supabase/migrations/002_chat_rate_limits.sql`). Fails open (chat still
   works, just unlimited) if Supabase isn't configured, so a rate-limiter
   outage never takes the chat down.
+- **Welcome toast**: a small "Hi! TaxLaya here 👋" bubble appears above the
+  launcher ~1s after page load, auto-hides after 5s, and is dismissible or
+  clickable (opens the chat). Shows once per full page load, not on every
+  client-side navigation.
+- **Quick replies**: after any TaxLaya reply, three chips ("Compute my tax",
+  "Check deadline", "What form do I need?") let the user continue the
+  conversation with one click.
+- **Notification sound**: a short two-tone chime (synthesized with the Web
+  Audio API — no audio file to ship) plays when a reply finishes streaming,
+  even if the widget is minimized. Mute/unmute via the speaker icon in the
+  header; the preference persists in `localStorage`.
+- **Mobile**: the closed launcher stays a small bottom-right bubble on every
+  screen size; opened, the panel goes edge-to-edge full-screen below the
+  `sm` breakpoint instead of the fixed 400×600 desktop size.
 - Avatar art: `public/taxlaya-avatar.png`.
 
 ## Deploying to Vercel
@@ -109,6 +123,7 @@ src/lib/supabase/client.ts  Public anon Supabase client (landing page waitlist i
 src/lib/supabase/admin.ts   Service-role Supabase client (admin dashboard + rate limiting, server-only)
 src/lib/admin-session.ts    Signed httpOnly session cookie for /admin
 src/lib/rate-limit.ts        10 messages/IP/day limiter for /api/chat
+src/lib/notification-sound.ts  Synthesized reply chime (Web Audio API)
 supabase/schema.sql          Waitlist + chat_rate_limits tables, RLS policy, RPC
 supabase/migrations/         Schema migrations for existing deployments
 public/                      Axla logo, app icon, favicon, TaxLaya avatar assets
