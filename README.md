@@ -191,6 +191,48 @@ Set `PLUNK_API_KEY` (from your Plunk project), and optionally
 > `OTP`/`User` writes haven't been exercised against a real database. Run
 > through the flow once against your real `DATABASE_URL` before shipping it.
 
+## Dashboard (`/dashboard`)
+
+A gated area for signed-in TaxLaya users — dark navy (`#001A29`) chrome with
+neon green (`#00FF85`) accents, matching the OTP email/login styling above.
+
+- `src/app/login/page.tsx` — mounts the existing `OTPForm` so the sign-in
+  flow above actually has somewhere to live.
+- `src/app/dashboard/layout.tsx` — renders `Sidebar` + `Header` around every
+  `/dashboard/*` page, and redirects to `/login` if there's no signed-in user.
+- `src/app/dashboard/page.tsx` — welcome message + three cards: **Your Tax
+  Status** (static "all clear" placeholder), **Quick Actions** (links to
+  `/dashboard/calculator`, `/forms`, `/documents` — none of those pages exist
+  yet, so they 404 today; same as the equivalent Sidebar nav links), and
+  **Recent Activity** (empty state).
+- `src/components/dashboard/Sidebar.tsx` / `Header.tsx` — nav with active-route
+  highlighting, a mobile slide-out drawer, sticky header with avatar
+  initial + logout button (`POST /api/auth/logout`, clears the session
+  cookie).
+- `src/middleware.ts` — redirects `/dashboard/*` to `/login` if the
+  `taxlaya_session` cookie is missing (matcher-scoped, so it doesn't touch
+  any other route).
+
+**This is scaffolding, not a finished auth system, on purpose** (per how this
+was asked for):
+
+- `src/lib/session.ts`'s `getCurrentUser()` reads `taxlaya_session` and, if
+  present, treats its raw value as a Prisma `User` id — no signature or
+  expiry check. Nothing sets this cookie yet (`verify-otp` doesn't issue
+  one), so in practice every `/dashboard` request today gets redirected to
+  `/login` — that's intentional fail-closed behavior, not a bug. There's a
+  `TODO` in that file: replace this with real session issuance (NextAuth, or
+  a signed JWT / opaque token backed by a `Session` table) before anything
+  ever sets this cookie for real — an unsigned cookie holding a raw user id
+  would let anyone log in as anyone by guessing/setting it themselves.
+- `src/middleware.ts` only checks whether the cookie is *present* (edge
+  runtime can't run Prisma), so it has the same TODO.
+- Because the dashboard is unreachable without real session issuance, it
+  couldn't be screenshotted end-to-end through the real flow. It was
+  verified by temporarily stubbing the user lookup, screenshotting desktop
+  + mobile (including the mobile nav drawer) and the `/login` page, then
+  reverting the stub — the committed code never had it.
+
 ## Deploying to Vercel
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).
@@ -208,13 +250,15 @@ Set `PLUNK_API_KEY` (from your Plunk project), and optionally
 ```
 src/app/                  Routes: / (landing), /chat (redirects to /),
                            /privacy, /terms, /robots.ts, /sitemap.ts,
+                           /login, /dashboard,
                            /admin, /admin/login, /api/waitlist,
                            /api/waitlist-count, /api/admin/{waitlist,chat,auth,logout},
-                           /api/chat, /api/auth/{send-otp,verify-otp}
+                           /api/chat, /api/auth/{send-otp,verify-otp,logout}
 src/components/           Navbar, Hero, SocialProof, HowItWorks, WhyAxla,
                            PricingTeaser, WaitlistSection/WaitlistForm, Footer
                            (landing page), PostHogProvider (analytics)
 src/components/auth/      OTPForm (email → 6-digit code sign-in)
+src/components/dashboard/ Sidebar, Header (for the gated /dashboard area)
 src/components/admin/     AdminDashboard, StatsCards, GraphTabs,
                            TopQuestionsTable, RecentChatsFeed, WaitlistTable,
                            HateLevelDialog, DateRangeFilter
@@ -236,6 +280,9 @@ src/lib/plunk.ts             Plunk transactional email client (server-only)
 src/lib/email-templates.ts   otpEmailTemplate + welcomeEmailTemplate (inline-CSS HTML)
 src/lib/otp-store.ts         Prisma-backed OTP generate/store/verify, 10-min expiry
 src/lib/prisma.ts            Singleton PrismaClient (server-only)
+src/lib/session.ts           getCurrentUser() — placeholder session lookup, see TODO
+src/lib/session-cookie.ts    SESSION_COOKIE name only (dependency-free, edge-safe)
+src/middleware.ts            Redirects /dashboard/* to /login if no session cookie
 prisma/schema.prisma         OTP + User models (Postgres, via DATABASE_URL)
 supabase/schema.sql          Waitlist + chat_rate_limits + chat_messages
                               tables, RLS policies, RPC
