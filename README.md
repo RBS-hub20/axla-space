@@ -151,24 +151,28 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
 A complete, working passwordless email-OTP sign-in for TaxLaya: request a
 code, verify it, get a real signed-in session, land on `/dashboard`.
 
-- `src/components/auth/OTPForm.tsx` — two-step client form (email/name →
-  6-digit code), redirects to `/dashboard` on success. Mounted at `/login`.
+- `src/app/login/page.tsx` — self-contained two-step client page (email →
+  6-digit code), `gray-900`/`gray-800`/`green-600` dashboard-matching theme,
+  loading spinners, inline validation, redirects to `/dashboard` on success.
+  (An earlier version delegated to a separate `components/auth/OTPForm.tsx`
+  with a navy/neon-green brand palette; that's been folded directly into
+  the page and removed, since nothing else used it.)
 - `POST /api/auth/send-otp` — accepts `{ email }`, generates a 6-digit code,
   stores it in the `OtpToken` table (10-minute expiry), and emails it via
   Plunk using `otpEmailTemplate`. **Always responds `{ success: true }`**
   regardless of whether the email is valid, registered, or the send actually
   succeeded — the response can't be used to enumerate which emails exist.
   Real failures are logged server-side only.
-- `POST /api/auth/verify-otp` — accepts `{ email, code }` (also accepts
-  `otp` as the field name, since that's what `OTPForm` actually sends —
-  see note below). Looks up a matching, unused, unexpired `OtpToken`; if
-  none matches, returns `401 { error: "Invalid or expired code" }` (one
-  generic message regardless of *why* it failed — not found, expired,
-  wrong code, or already used, so a client can't distinguish those cases).
-  On success: marks the code used (single-use), upserts a `User` row
-  (`name` derived from the email's local part, e.g. `jane@x.com` → `jane`),
-  signs a 7-day JWT (`{ userId, email, exp }`), sets it as the httpOnly
-  `taxlaya_session` cookie, sends a best-effort welcome email, and returns
+- `POST /api/auth/verify-otp` — accepts `{ email, code }` (`/login` also
+  sends the same value under the key `otp` for safety, and the route reads
+  either). Looks up a matching, unused, unexpired `OtpToken`; if none
+  matches, returns `401 { error: "Invalid or expired code" }` (one generic
+  message regardless of *why* it failed — not found, expired, wrong code,
+  or already used, so a client can't distinguish those cases). On success:
+  marks the code used (single-use), upserts a `User` row (`name` derived
+  from the email's local part, e.g. `jane@x.com` → `jane`), signs a 7-day
+  JWT (`{ userId, email, exp }`), sets it as the httpOnly `taxlaya_session`
+  cookie, sends a best-effort welcome email, and returns
   `{ success: true, user: { id, email, name } }`.
 - `src/lib/jwt.ts` — `signSessionToken` / `verifySessionToken`, signed with
   `JWT_SECRET`. If `JWT_SECRET` is unset: falls back to a known dev-only
@@ -187,11 +191,6 @@ code, verify it, get a real signed-in session, land on `/dashboard`.
   crash — as soon as a Server Component calls `getCurrentUser()`.
 - `POST /api/auth/logout` clears the cookie.
 
-**Field-name note:** the spec for `verify-otp` called the code field `code`,
-matching the new `OtpToken.code` column, but the already-built `OTPForm`
-posts it as `otp`. Rather than edit the shipped UI, the route accepts either
-key (`body.code ?? body.otp`) so both contracts work without a frontend change.
-
 ### Prisma setup
 
 1. Add a Postgres `DATABASE_URL` to `.env.local` — this can be the same
@@ -209,26 +208,35 @@ string — see `src/lib/jwt.ts` above for what happens if you don't), and
 optionally `PLUNK_FROM_EMAIL` / `PLUNK_FROM_NAME` (default to
 `hello@axla.space` / `TaxLaya`).
 
-> **This was verified against a real Postgres 16 instance and a real
-> send-otp → verify-otp → dashboard round trip** (Plunk itself wasn't live in
-> this sandbox, so the email send was skipped by reading the code straight
-> from the `OtpToken` table instead of an inbox — everything downstream of
-> that, including JWT signing/verification and the Prisma `User` upsert, ran
-> for real). Confirmed working: full login → `/dashboard` render with the
-> real signed-in name, OTP single-use (reusing a code correctly 401s), wrong
-> code correctly 401s, a tampered/forged session cookie is rejected instead
-> of crashing, unauthenticated `/dashboard` still redirects to `/login`, and
-> logout clears the cookie. Not exercised: an actual Plunk email delivery
-> (no live `PLUNK_API_KEY` here) and a second concurrent server instance —
-> the JWT approach doesn't have the single-instance limitation the old
-> in-memory store had, so that's expected to be fine.
+> **This was verified against a real Postgres 16 instance by actually
+> driving the `/login` UI in a real browser** (Plunk itself wasn't live in
+> this sandbox, so the email send was skipped by reading the generated code
+> straight from the `OtpToken` table instead of an inbox — everything
+> downstream of that, including the real page, real JWT signing/verification,
+> and the real Prisma `User` upsert, ran for real). Confirmed working:
+> typing an email into `/login`, submitting, landing on the code step,
+> entering the real code, and landing on `/dashboard` with an httpOnly
+> `taxlaya_session` cookie set and the correct signed-in name rendered.
+> Also confirmed: reusing a code 401s, a wrong code 401s, a tampered/forged
+> session cookie is rejected instead of crashing, unauthenticated
+> `/dashboard` still redirects to `/login`, and logout clears the cookie.
+> Not exercised: an actual Plunk email delivery (no live `PLUNK_API_KEY`
+> here) and a second concurrent server instance — the JWT approach doesn't
+> have the single-instance limitation the old in-memory store had, so
+> that's expected to be fine.
 
 ## Dashboard (`/dashboard`)
 
 A gated area for signed-in TaxLaya users — dark navy (`#001A29`) chrome with
-neon green (`#00FF85`) accents, matching the OTP email/login styling above.
+neon green (`#00FF85`) accents, matching the OTP email styling.
 
-- `src/app/login/page.tsx` — mounts `OTPForm`.
+> Note: `/login` (above) was later restyled to plain Tailwind
+> `gray-900`/`gray-800`/`green-600`, matching the *dashboard's own* card
+> palette (`ui/card.tsx`) rather than this navy/`#00FF85` shell. The two now
+> look slightly different back-to-back — `/login` is a touch more muted/gray,
+> the dashboard shell a bit more navy/neon. Say the word if you want them
+> unified on one palette.
+
 - `src/app/dashboard/layout.tsx` — renders `Sidebar` + `Header` around every
   `/dashboard/*` page, and redirects to `/login` if there's no signed-in user.
 - `src/app/dashboard/page.tsx` — welcome message + three cards: **Your Tax
@@ -268,7 +276,6 @@ src/app/                  Routes: / (landing), /chat (redirects to /),
 src/components/           Navbar, Hero, SocialProof, HowItWorks, WhyAxla,
                            PricingTeaser, WaitlistSection/WaitlistForm, Footer
                            (landing page), PostHogProvider (analytics)
-src/components/auth/      OTPForm (email → 6-digit code sign-in)
 src/components/dashboard/ Sidebar, Header (for the gated /dashboard area)
 src/components/admin/     AdminDashboard, StatsCards, GraphTabs,
                            TopQuestionsTable, RecentChatsFeed, WaitlistTable,

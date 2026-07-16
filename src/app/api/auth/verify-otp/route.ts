@@ -13,8 +13,8 @@ const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
 interface VerifyOtpBody {
   email?: unknown;
   code?: unknown;
-  // The live OTPForm posts the code under the key `otp`, not `code` — accept
-  // both so this matches the already-shipped UI without touching it.
+  // /login sends both `code` and `otp` with the same value for safety —
+  // accept either key.
   otp?: unknown;
 }
 
