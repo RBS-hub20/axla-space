@@ -7,60 +7,48 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface SendOtpBody {
   email?: unknown;
-  name?: unknown;
 }
 
+/**
+ * Always responds `{ success: true }` regardless of whether the email is
+ * well-formed, whether an account exists for it, or whether the send
+ * actually succeeded — the response can't be used to probe which emails are
+ * registered or valid. Real failures are logged server-side, not surfaced.
+ */
 export async function POST(req: Request) {
   let body: SendOtpBody;
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ success: false, error: "Invalid request body." }, { status: 400 });
+    return NextResponse.json({ success: true });
   }
 
-  const { email, name } = body;
-
+  const { email } = body;
   if (typeof email !== "string" || !EMAIL_REGEX.test(email.trim())) {
-    return NextResponse.json({ success: false, error: "A valid email is required." }, { status: 400 });
+    return NextResponse.json({ success: true });
   }
 
-  if (!isPlunkConfigured) {
-    console.error("send-otp: PLUNK_API_KEY missing, cannot send email");
-    return NextResponse.json(
-      { success: false, error: "Email service is not configured. Please try again later." },
-      { status: 500 },
-    );
-  }
-
-  const safeName = typeof name === "string" ? name.trim().slice(0, 100) : "";
-
-  const otp = generateOtp();
+  const trimmedEmail = email.trim();
+  const friendlyName = trimmedEmail.split("@")[0];
+  const code = generateOtp();
 
   try {
-    await storeOtp(email, otp);
-  } catch (err) {
-    console.error("send-otp: failed to store OTP", err);
-    return NextResponse.json(
-      { success: false, error: "Something went wrong. Please try again." },
-      { status: 500 },
-    );
-  }
+    await storeOtp(trimmedEmail, code);
 
-  try {
-    await plunk.emails.send({
-      to: email.trim(),
-      subject: `Your TaxLaya code: ${otp}`,
-      body: otpEmailTemplate(otp, safeName),
-      type: "html",
-      from: PLUNK_FROM_EMAIL,
-      name: PLUNK_FROM_NAME,
-    });
+    if (isPlunkConfigured) {
+      await plunk.emails.send({
+        to: trimmedEmail,
+        subject: "Your TaxLaya Login Code",
+        body: otpEmailTemplate(code, friendlyName),
+        type: "html",
+        from: PLUNK_FROM_EMAIL,
+        name: PLUNK_FROM_NAME,
+      });
+    } else {
+      console.error("send-otp: PLUNK_API_KEY missing, code was stored but no email was sent");
+    }
   } catch (err) {
-    console.error("send-otp: Plunk send failed", err);
-    return NextResponse.json(
-      { success: false, error: "Could not send the code. Please try again in a moment." },
-      { status: 502 },
-    );
+    console.error("send-otp: failed to store/send OTP", err);
   }
 
   return NextResponse.json({ success: true });

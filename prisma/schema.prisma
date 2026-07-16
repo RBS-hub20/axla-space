@@ -7,20 +7,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model OTP {
+model OtpToken {
   id        String   @id @default(cuid())
   email     String
-  otp       String
+  code      String
   expiresAt DateTime
+  used      Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  @@index([email])
+  @@index([email, code])
 }
 
 model User {
   id        String   @id @default(cuid())
   email     String   @unique
-  name      String
+  name      String?
   verified  Boolean  @default(false)
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

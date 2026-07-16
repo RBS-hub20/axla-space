@@ -3,14 +3,19 @@ import { isPlunkConfigured, plunk, PLUNK_FROM_EMAIL, PLUNK_FROM_NAME } from "@/l
 import { welcomeEmailTemplate } from "@/lib/email-templates";
 import { verifyOtp } from "@/lib/otp-store";
 import { prisma } from "@/lib/prisma";
+import { signSessionToken } from "@/lib/jwt";
+import { SESSION_COOKIE } from "@/lib/session-cookie";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OTP_REGEX = /^\d{6}$/;
+const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
 
 interface VerifyOtpBody {
   email?: unknown;
+  code?: unknown;
+  // The live OTPForm posts the code under the key `otp`, not `code` — accept
+  // both so this matches the already-shipped UI without touching it.
   otp?: unknown;
-  name?: unknown;
 }
 
 export async function POST(req: Request) {
@@ -18,57 +23,55 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ success: false, error: "Invalid request body." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { email, otp, name } = body;
+  const { email } = body;
+  const rawCode = body.code ?? body.otp;
 
   if (typeof email !== "string" || !EMAIL_REGEX.test(email.trim())) {
-    return NextResponse.json({ success: false, error: "A valid email is required." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid or expired code" }, { status: 401 });
   }
 
-  if (typeof otp !== "string" || !OTP_REGEX.test(otp.trim())) {
-    return NextResponse.json({ success: false, error: "Enter the 6-digit code." }, { status: 400 });
+  if (typeof rawCode !== "string" || !OTP_REGEX.test(rawCode.trim())) {
+    return NextResponse.json({ error: "Invalid or expired code" }, { status: 401 });
   }
 
-  if (typeof name !== "string" || !name.trim()) {
-    return NextResponse.json({ success: false, error: "Name is required." }, { status: 400 });
-  }
-
-  const trimmedEmail = email.trim();
-  const safeName = name.trim().slice(0, 100);
+  const trimmedEmail = email.trim().toLowerCase();
+  const code = rawCode.trim();
 
   let result;
   try {
-    result = await verifyOtp(trimmedEmail, otp.trim());
+    result = await verifyOtp(trimmedEmail, code);
   } catch (err) {
-    console.error("verify-otp: failed to check OTP", err);
-    return NextResponse.json(
-      { success: false, error: "Something went wrong. Please try again." },
-      { status: 500 },
-    );
+    console.error("verify-otp: failed to check code", err);
+    return NextResponse.json({ error: "Invalid or expired code" }, { status: 401 });
   }
 
   if (!result.ok) {
-    const message =
-      result.reason === "expired"
-        ? "This code has expired. Please request a new one."
-        : "Incorrect code. Please check and try again.";
-    return NextResponse.json({ success: false, error: message }, { status: 400 });
+    return NextResponse.json({ error: "Invalid or expired code" }, { status: 401 });
   }
 
+  const friendlyName = trimmedEmail.split("@")[0];
+
+  let user;
   try {
-    await prisma.user.upsert({
+    user = await prisma.user.upsert({
       where: { email: trimmedEmail },
-      update: { name: safeName, verified: true },
-      create: { email: trimmedEmail, name: safeName, verified: true },
+      update: { name: friendlyName, verified: true },
+      create: { email: trimmedEmail, name: friendlyName, verified: true },
     });
   } catch (err) {
     console.error("verify-otp: failed to upsert user", err);
-    return NextResponse.json(
-      { success: false, error: "Something went wrong. Please try again." },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
+  }
+
+  let token: string;
+  try {
+    token = signSessionToken({ userId: user.id, email: user.email });
+  } catch (err) {
+    console.error("verify-otp: failed to sign session token", err);
+    return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 
   if (isPlunkConfigured) {
@@ -76,7 +79,7 @@ export async function POST(req: Request) {
       await plunk.emails.send({
         to: trimmedEmail,
         subject: "Welcome to TaxLaya 🎉",
-        body: welcomeEmailTemplate(safeName),
+        body: welcomeEmailTemplate(user.name ?? friendlyName),
         type: "html",
         from: PLUNK_FROM_EMAIL,
         name: PLUNK_FROM_NAME,
@@ -88,5 +91,16 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ success: true });
+  const response = NextResponse.json({
+    success: true,
+    user: { id: user.id, email: user.email, name: user.name },
+  });
+  response.cookies.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: SEVEN_DAYS_SECONDS,
+  });
+  return response;
 }

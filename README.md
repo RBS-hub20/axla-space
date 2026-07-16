@@ -146,58 +146,89 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
   `sm` breakpoint instead of the fixed 400×600 desktop size.
 - Avatar art: `public/taxlaya-avatar.png`.
 
-## OTP email sign-in (Plunk + Prisma)
+## Authentication (Plunk OTP + Prisma + JWT)
 
-A passwordless, email-OTP sign-in flow for TaxLaya, built on
-[Plunk](https://useplunk.com) for transactional email and
-[Prisma](https://prisma.io) (Postgres) for the `OTP` and `User` tables.
+A complete, working passwordless email-OTP sign-in for TaxLaya: request a
+code, verify it, get a real signed-in session, land on `/dashboard`.
 
-- `src/components/auth/OTPForm.tsx` — two-step client form (email+name →
-  6-digit code), then redirects to `/dashboard` on success. Not yet mounted
-  on a route; drop it into a `/login` (or similar) page when ready.
-- `POST /api/auth/send-otp` — validates the email, generates a 6-digit code,
-  stores it in the `OTP` table (10-minute expiry, replacing any earlier
-  unused code for that email), and emails it via Plunk using
-  `otpEmailTemplate`.
-- `POST /api/auth/verify-otp` — checks the code against the `OTP` table,
-  deletes it once used (single-use), **upserts a `User` row** (`email`,
-  `name`, `verified: true`), and sends a `welcomeEmailTemplate` email via
-  Plunk on success. A "session" today is still just "this email proved it
-  owns its inbox and now has a `User` row" — there's no auth cookie/JWT
-  issued yet, so pairing this with a real session mechanism is the next step
-  before gating actual pages behind it.
-- Both routes catch Prisma/Plunk errors and return a clean
-  `{ success: false, error }` JSON response instead of crashing.
+- `src/components/auth/OTPForm.tsx` — two-step client form (email/name →
+  6-digit code), redirects to `/dashboard` on success. Mounted at `/login`.
+- `POST /api/auth/send-otp` — accepts `{ email }`, generates a 6-digit code,
+  stores it in the `OtpToken` table (10-minute expiry), and emails it via
+  Plunk using `otpEmailTemplate`. **Always responds `{ success: true }`**
+  regardless of whether the email is valid, registered, or the send actually
+  succeeded — the response can't be used to enumerate which emails exist.
+  Real failures are logged server-side only.
+- `POST /api/auth/verify-otp` — accepts `{ email, code }` (also accepts
+  `otp` as the field name, since that's what `OTPForm` actually sends —
+  see note below). Looks up a matching, unused, unexpired `OtpToken`; if
+  none matches, returns `401 { error: "Invalid or expired code" }` (one
+  generic message regardless of *why* it failed — not found, expired,
+  wrong code, or already used, so a client can't distinguish those cases).
+  On success: marks the code used (single-use), upserts a `User` row
+  (`name` derived from the email's local part, e.g. `jane@x.com` → `jane`),
+  signs a 7-day JWT (`{ userId, email, exp }`), sets it as the httpOnly
+  `taxlaya_session` cookie, sends a best-effort welcome email, and returns
+  `{ success: true, user: { id, email, name } }`.
+- `src/lib/jwt.ts` — `signSessionToken` / `verifySessionToken`, signed with
+  `JWT_SECRET`. If `JWT_SECRET` is unset: falls back to a known dev-only
+  secret in development (with a console warning), but **refuses to sign or
+  verify at all in production** — a fallback secret that's public (it's
+  written directly into this repo's history) would let anyone forge a
+  session for any user if it were ever actually used in prod.
+- `src/lib/session.ts`'s `getCurrentUser()` reads the cookie, verifies the
+  JWT, and looks up the `User` by id — returns `null` (fail closed) on any
+  missing cookie, bad/expired/tampered signature, or DB error, instead of
+  throwing.
+- `src/middleware.ts` still only checks whether `taxlaya_session` is
+  *present* (edge runtime can't run Prisma/`jsonwebtoken`'s Node APIs) — the
+  real verification happens in `getCurrentUser()`. A forged or tampered
+  cookie gets past middleware but is rejected — and safely, not with a
+  crash — as soon as a Server Component calls `getCurrentUser()`.
+- `POST /api/auth/logout` clears the cookie.
+
+**Field-name note:** the spec for `verify-otp` called the code field `code`,
+matching the new `OtpToken.code` column, but the already-built `OTPForm`
+posts it as `otp`. Rather than edit the shipped UI, the route accepts either
+key (`body.code ?? body.otp`) so both contracts work without a frontend change.
 
 ### Prisma setup
 
 1. Add a Postgres `DATABASE_URL` to `.env.local` — this can be the same
    Supabase project's Postgres instance (**Project Settings → Database →
    Connection string → URI**) or any other Postgres.
-2. Run `npx prisma migrate dev --name init` to create the `OTP` and `User`
-   tables (see `prisma/schema.prisma`). This also runs on every `npm install`
-   / `npm run build` via the `postinstall`/`build` scripts calling
-   `prisma generate`, so the client stays in sync with the schema.
+2. Run `npx prisma migrate dev` to apply `prisma/migrations/` (creates
+   `OtpToken` and `User`). This also runs on every `npm install` / `npm run
+   build` via the `postinstall`/`build` scripts calling `prisma generate`,
+   so the client stays in sync with the schema.
 3. `src/lib/prisma.ts` exports a singleton `PrismaClient`, cached on
    `globalThis` in dev so hot-reload doesn't leak new connections.
 
-Set `PLUNK_API_KEY` (from your Plunk project), and optionally
-`PLUNK_FROM_EMAIL` / `PLUNK_FROM_NAME` (default to `hello@axla.space` /
-`TaxLaya`) and `NEXT_PUBLIC_APP_URL` (used for links in future emails).
+Set `PLUNK_API_KEY` (from your Plunk project), `JWT_SECRET` (a long random
+string — see `src/lib/jwt.ts` above for what happens if you don't), and
+optionally `PLUNK_FROM_EMAIL` / `PLUNK_FROM_NAME` (default to
+`hello@axla.space` / `TaxLaya`).
 
-> This was built and type-checked against Prisma without a live Postgres
-> instance available in the dev sandbox — the schema, generated client, and
-> both routes' error-handling paths were verified, but the actual
-> `OTP`/`User` writes haven't been exercised against a real database. Run
-> through the flow once against your real `DATABASE_URL` before shipping it.
+> **This was verified against a real Postgres 16 instance and a real
+> send-otp → verify-otp → dashboard round trip** (Plunk itself wasn't live in
+> this sandbox, so the email send was skipped by reading the code straight
+> from the `OtpToken` table instead of an inbox — everything downstream of
+> that, including JWT signing/verification and the Prisma `User` upsert, ran
+> for real). Confirmed working: full login → `/dashboard` render with the
+> real signed-in name, OTP single-use (reusing a code correctly 401s), wrong
+> code correctly 401s, a tampered/forged session cookie is rejected instead
+> of crashing, unauthenticated `/dashboard` still redirects to `/login`, and
+> logout clears the cookie. Not exercised: an actual Plunk email delivery
+> (no live `PLUNK_API_KEY` here) and a second concurrent server instance —
+> the JWT approach doesn't have the single-instance limitation the old
+> in-memory store had, so that's expected to be fine.
 
 ## Dashboard (`/dashboard`)
 
 A gated area for signed-in TaxLaya users — dark navy (`#001A29`) chrome with
 neon green (`#00FF85`) accents, matching the OTP email/login styling above.
 
-- `src/app/login/page.tsx` — mounts the existing `OTPForm` so the sign-in
-  flow above actually has somewhere to live.
+- `src/app/login/page.tsx` — mounts `OTPForm`.
 - `src/app/dashboard/layout.tsx` — renders `Sidebar` + `Header` around every
   `/dashboard/*` page, and redirects to `/login` if there's no signed-in user.
 - `src/app/dashboard/page.tsx` — welcome message + three cards: **Your Tax
@@ -213,26 +244,6 @@ neon green (`#00FF85`) accents, matching the OTP email/login styling above.
   `taxlaya_session` cookie is missing (matcher-scoped, so it doesn't touch
   any other route).
 
-**This is scaffolding, not a finished auth system, on purpose** (per how this
-was asked for):
-
-- `src/lib/session.ts`'s `getCurrentUser()` reads `taxlaya_session` and, if
-  present, treats its raw value as a Prisma `User` id — no signature or
-  expiry check. Nothing sets this cookie yet (`verify-otp` doesn't issue
-  one), so in practice every `/dashboard` request today gets redirected to
-  `/login` — that's intentional fail-closed behavior, not a bug. There's a
-  `TODO` in that file: replace this with real session issuance (NextAuth, or
-  a signed JWT / opaque token backed by a `Session` table) before anything
-  ever sets this cookie for real — an unsigned cookie holding a raw user id
-  would let anyone log in as anyone by guessing/setting it themselves.
-- `src/middleware.ts` only checks whether the cookie is *present* (edge
-  runtime can't run Prisma), so it has the same TODO.
-- Because the dashboard is unreachable without real session issuance, it
-  couldn't be screenshotted end-to-end through the real flow. It was
-  verified by temporarily stubbing the user lookup, screenshotting desktop
-  + mobile (including the mobile nav drawer) and the `/login` page, then
-  reverting the stub — the committed code never had it.
-
 ## Deploying to Vercel
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).
@@ -240,8 +251,8 @@ was asked for):
 3. Add the environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`,
    `OPENAI_API_KEY`), plus `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`
-   for analytics and `PLUNK_API_KEY` + `DATABASE_URL` for OTP sign-in (all
-   four of the latter are optional — the rest of the app works without them).
+   for analytics, and `PLUNK_API_KEY` + `DATABASE_URL` + `JWT_SECRET` for
+   sign-in/`/dashboard` (the rest of the app works without any of these).
 4. Deploy, then point the `axla.space` domain at the Vercel project
    (**Settings → Domains**).
 
@@ -278,12 +289,15 @@ src/lib/analytics.ts         PostHog event tracking (no-ops if unconfigured)
 src/lib/waitlist-stats.ts    Real waitlist count + avg hate level (server-only)
 src/lib/plunk.ts             Plunk transactional email client (server-only)
 src/lib/email-templates.ts   otpEmailTemplate + welcomeEmailTemplate (inline-CSS HTML)
-src/lib/otp-store.ts         Prisma-backed OTP generate/store/verify, 10-min expiry
+src/lib/otp-store.ts         Prisma-backed OtpToken generate/store/verify, 10-min expiry
 src/lib/prisma.ts            Singleton PrismaClient (server-only)
-src/lib/session.ts           getCurrentUser() — placeholder session lookup, see TODO
+src/lib/jwt.ts               Sign/verify the taxlaya_session JWT (JWT_SECRET)
+src/lib/session.ts           getCurrentUser() — verifies JWT, looks up User
 src/lib/session-cookie.ts    SESSION_COOKIE name only (dependency-free, edge-safe)
 src/middleware.ts            Redirects /dashboard/* to /login if no session cookie
-prisma/schema.prisma         OTP + User models (Postgres, via DATABASE_URL)
+prisma/schema.prisma         OtpToken + User models (Postgres, via DATABASE_URL)
+prisma/migrations/           Applied migration history (real, generated against
+                              a live Postgres — safe to `prisma migrate deploy`)
 supabase/schema.sql          Waitlist + chat_rate_limits + chat_messages
                               tables, RLS policies, RPC
 supabase/migrations/         Schema migrations for existing deployments

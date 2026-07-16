@@ -11,48 +11,47 @@ export function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-/**
- * Stores a fresh OTP for the email, replacing any codes issued earlier —
- * only the most recently sent code should ever be valid.
- */
-export async function storeOtp(email: string, otp: string): Promise<void> {
-  const normalizedEmail = normalizeEmail(email);
-
-  await prisma.oTP.deleteMany({ where: { email: normalizedEmail } });
-  await prisma.oTP.create({
+/** Stores a fresh OTP for the email. Earlier unused codes for that email are left alone
+ * (they'll just fail the `used: false` + `code` match once superseded) but expire on
+ * their own 10-minute clock, so there's no cleanup needed here. */
+export async function storeOtp(email: string, code: string): Promise<void> {
+  await prisma.otpToken.create({
     data: {
-      email: normalizedEmail,
-      otp,
+      email: normalizeEmail(email),
+      code,
       expiresAt: new Date(Date.now() + OTP_TTL_MS),
     },
   });
 }
 
-export type VerifyOtpResult =
-  | { ok: true }
-  | { ok: false; reason: "not_found" | "expired" | "mismatch" };
+export type VerifyOtpResult = { ok: true } | { ok: false };
 
-/** Verifies the OTP and deletes it — codes are single-use either way. */
-export async function verifyOtp(email: string, otp: string): Promise<VerifyOtpResult> {
+/**
+ * Verifies the code and marks it used — codes are single-use. Returns a
+ * single generic failure reason (not found / expired / already used /
+ * mismatched) so the API response can't be used to distinguish between them.
+ */
+export async function verifyOtp(email: string, code: string): Promise<VerifyOtpResult> {
   const normalizedEmail = normalizeEmail(email);
-  const entry = await prisma.oTP.findFirst({
-    where: { email: normalizedEmail },
+
+  const entry = await prisma.otpToken.findFirst({
+    where: {
+      email: normalizedEmail,
+      code,
+      used: false,
+      expiresAt: { gt: new Date() },
+    },
     orderBy: { createdAt: "desc" },
   });
 
   if (!entry) {
-    return { ok: false, reason: "not_found" };
+    return { ok: false };
   }
 
-  if (entry.expiresAt < new Date()) {
-    await prisma.oTP.deleteMany({ where: { email: normalizedEmail } });
-    return { ok: false, reason: "expired" };
-  }
+  await prisma.otpToken.update({
+    where: { id: entry.id },
+    data: { used: true },
+  });
 
-  if (entry.otp !== otp) {
-    return { ok: false, reason: "mismatch" };
-  }
-
-  await prisma.oTP.deleteMany({ where: { email: normalizedEmail } });
   return { ok: true };
 }
