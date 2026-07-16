@@ -146,6 +146,34 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
   `sm` breakpoint instead of the fixed 400×600 desktop size.
 - Avatar art: `public/taxlaya-avatar.png`.
 
+## OTP email sign-in (Plunk)
+
+A passwordless, email-OTP sign-in flow for TaxLaya, built on
+[Plunk](https://useplunk.com) for transactional email.
+
+- `src/components/auth/OTPForm.tsx` — two-step client form (email+name →
+  6-digit code), then redirects to `/dashboard` on success. Not yet mounted
+  on a route; drop it into a `/login` (or similar) page when ready.
+- `POST /api/auth/send-otp` — validates the email, generates a 6-digit code,
+  stores it (10-minute expiry), and emails it via Plunk using
+  `otpEmailTemplate`.
+- `POST /api/auth/verify-otp` — checks the code against the store, deletes
+  it once used (single-use), and sends a `welcomeEmailTemplate` email via
+  Plunk on success.
+- `src/lib/otp-store.ts` holds codes in a **module-level `Map`** — fine for
+  local dev, but it resets on every cold start/redeploy and isn't shared
+  across server instances. There's a `TODO` in that file to swap it for a
+  real table (e.g. Supabase) before relying on this in production.
+- Verifying an OTP does **not** yet create a user record — see the `TODO`
+  in `src/app/api/auth/verify-otp/route.ts`. There's no user database wired
+  up yet, so a "session" today is only "this email proved it owns its
+  inbox," not an authenticated account.
+- Both routes fail closed with a clear JSON error (`{ success: false, error }`)
+  if `PLUNK_API_KEY` is missing, instead of crashing.
+- Set `PLUNK_API_KEY` (from your Plunk project), and optionally
+  `PLUNK_FROM_EMAIL` / `PLUNK_FROM_NAME` (default to `hello@axla.space` /
+  `TaxLaya`) and `NEXT_PUBLIC_APP_URL` (used for links in future emails).
+
 ## Deploying to Vercel
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).
@@ -153,7 +181,9 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
 3. Add the environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`,
    `OPENAI_API_KEY`), plus `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`
-   if you want analytics (both optional).
+   for analytics and `PLUNK_API_KEY` for OTP/welcome email (all optional —
+   note the in-memory OTP store caveat above before relying on it in
+   production serverless).
 4. Deploy, then point the `axla.space` domain at the Vercel project
    (**Settings → Domains**).
 
@@ -164,10 +194,11 @@ src/app/                  Routes: / (landing), /chat (redirects to /),
                            /privacy, /terms, /robots.ts, /sitemap.ts,
                            /admin, /admin/login, /api/waitlist,
                            /api/waitlist-count, /api/admin/{waitlist,chat,auth,logout},
-                           /api/chat
+                           /api/chat, /api/auth/{send-otp,verify-otp}
 src/components/           Navbar, Hero, SocialProof, HowItWorks, WhyAxla,
                            PricingTeaser, WaitlistSection/WaitlistForm, Footer
                            (landing page), PostHogProvider (analytics)
+src/components/auth/      OTPForm (email → 6-digit code sign-in)
 src/components/admin/     AdminDashboard, StatsCards, GraphTabs,
                            TopQuestionsTable, RecentChatsFeed, WaitlistTable,
                            HateLevelDialog, DateRangeFilter
@@ -185,6 +216,9 @@ src/lib/chat-analytics.ts    Most-asked-form detection, question grouping,
 src/lib/notification-sound.ts  Synthesized reply chime (Web Audio API)
 src/lib/analytics.ts         PostHog event tracking (no-ops if unconfigured)
 src/lib/waitlist-stats.ts    Real waitlist count + avg hate level (server-only)
+src/lib/plunk.ts             Plunk transactional email client (server-only)
+src/lib/email-templates.ts   otpEmailTemplate + welcomeEmailTemplate (inline-CSS HTML)
+src/lib/otp-store.ts         In-memory OTP store, 10-min expiry (TODO: real DB)
 supabase/schema.sql          Waitlist + chat_rate_limits + chat_messages
                               tables, RLS policies, RPC
 supabase/migrations/         Schema migrations for existing deployments
