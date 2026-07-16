@@ -5,6 +5,7 @@ import { verifyOtp } from "@/lib/otp-store";
 import { prisma } from "@/lib/prisma";
 import { signSessionToken } from "@/lib/jwt";
 import { SESSION_COOKIE } from "@/lib/session-cookie";
+import { logError } from "@/lib/log-error";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const OTP_REGEX = /^\d{6}$/;
@@ -44,7 +45,10 @@ export async function POST(req: Request) {
   try {
     result = await verifyOtp(trimmedEmail, code);
   } catch (err) {
-    console.error("verify-otp: failed to check code", err);
+    // The client still sees the generic 401 below (never leak internals to
+    // an unauthenticated caller) — but this makes it obvious in server logs
+    // that "invalid code" was actually a DB error, not a real wrong code.
+    logError("verify-otp: DB READ FAILED (verifyOtp) — not a real invalid-code case", err);
     return NextResponse.json({ error: "Invalid or expired code" }, { status: 401 });
   }
 
@@ -62,7 +66,7 @@ export async function POST(req: Request) {
       create: { email: trimmedEmail, name: friendlyName, verified: true },
     });
   } catch (err) {
-    console.error("verify-otp: failed to upsert user", err);
+    logError("verify-otp: DB WRITE FAILED (user upsert)", err);
     return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 
@@ -70,7 +74,7 @@ export async function POST(req: Request) {
   try {
     token = signSessionToken({ userId: user.id, email: user.email });
   } catch (err) {
-    console.error("verify-otp: failed to sign session token", err);
+    logError("verify-otp: JWT SIGNING FAILED (check JWT_SECRET)", err);
     return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 
@@ -87,7 +91,7 @@ export async function POST(req: Request) {
     } catch (err) {
       // Verification itself succeeded — a failed welcome email shouldn't
       // block sign-in, so log and continue instead of returning an error.
-      console.error("verify-otp: welcome email failed to send", err);
+      logError("verify-otp: PLUNK WELCOME EMAIL FAILED (sign-in still succeeds)", err);
     }
   }
 

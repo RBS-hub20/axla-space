@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isPlunkConfigured, plunk, PLUNK_FROM_EMAIL, PLUNK_FROM_NAME } from "@/lib/plunk";
 import { otpEmailTemplate } from "@/lib/email-templates";
 import { generateOtp, storeOtp } from "@/lib/otp-store";
+import { logError } from "@/lib/log-error";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -34,21 +35,27 @@ export async function POST(req: Request) {
 
   try {
     await storeOtp(trimmedEmail, code);
-
-    if (isPlunkConfigured) {
-      await plunk.emails.send({
-        to: trimmedEmail,
-        subject: "Your TaxLaya Login Code",
-        body: otpEmailTemplate(code, friendlyName),
-        type: "html",
-        from: PLUNK_FROM_EMAIL,
-        name: PLUNK_FROM_NAME,
-      });
-    } else {
-      console.error("send-otp: PLUNK_API_KEY missing, code was stored but no email was sent");
-    }
   } catch (err) {
-    console.error("send-otp: failed to store/send OTP", err);
+    logError("send-otp: DB WRITE FAILED (storeOtp) — Plunk was never called", err);
+    return NextResponse.json({ success: true });
+  }
+
+  if (!isPlunkConfigured) {
+    console.error("send-otp: PLUNK_API_KEY missing, code was stored but no email was sent");
+    return NextResponse.json({ success: true });
+  }
+
+  try {
+    await plunk.emails.send({
+      to: trimmedEmail,
+      subject: "Your TaxLaya Login Code",
+      body: otpEmailTemplate(code, friendlyName),
+      type: "html",
+      from: PLUNK_FROM_EMAIL,
+      name: PLUNK_FROM_NAME,
+    });
+  } catch (err) {
+    logError("send-otp: PLUNK SEND FAILED (code was stored fine)", err);
   }
 
   return NextResponse.json({ success: true });
