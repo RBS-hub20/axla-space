@@ -193,15 +193,30 @@ code, verify it, get a real signed-in session, land on `/dashboard`.
 
 ### Prisma setup
 
-1. Add a Postgres `DATABASE_URL` to `.env.local` — this can be the same
-   Supabase project's Postgres instance (**Project Settings → Database →
-   Connection string → URI**) or any other Postgres.
-2. Run `npx prisma migrate dev` to apply `prisma/migrations/` (creates
-   `OtpToken` and `User`). This also runs on every `npm install` / `npm run
-   build` via the `postinstall`/`build` scripts calling `prisma generate`,
-   so the client stays in sync with the schema.
+1. Add `DATABASE_URL` (and, if you're on Supabase, `DIRECT_URL` too — see
+   `.env.example` for the exact pooled-vs-direct pattern and why both are
+   needed) to `.env.local`.
+2. Run `npx prisma migrate dev` locally / `npx prisma migrate deploy` in
+   production to apply `prisma/migrations/` (creates `OtpToken` and `User`).
+   This also runs on every `npm install` / `npm run build` via the
+   `postinstall`/`build` scripts calling `prisma generate`, so the client
+   stays in sync with the schema — but note `prisma generate` alone never
+   creates tables, only `migrate`/`db push` does.
 3. `src/lib/prisma.ts` exports a singleton `PrismaClient`, cached on
    `globalThis` in dev so hot-reload doesn't leak new connections.
+
+**On Supabase specifically:** `DATABASE_URL` must be the **pooled**
+connection (Project Settings → Database → Connection Pooling →
+**Transaction**, port `6543`, `?pgbouncer=true`) — that's what the deployed
+app queries through at runtime. `DIRECT_URL` must be a *different* string:
+same pooler host, port `5432` (**Session** mode) instead — `prisma migrate`
+needs this because PgBouncer's Transaction mode doesn't support the
+prepared statements Prisma Migrate relies on. Use the pooler hostname for
+`DIRECT_URL`, not Supabase's bare `db.<ref>.supabase.co` direct-connection
+host — the bare host can be IPv6-only, which breaks on platforms whose
+serverless functions lack outbound IPv6 (Vercel has historically been one).
+Missing `DIRECT_URL` (or pointing it at the wrong host) is a common source
+of `PrismaClientInitializationError` on Vercel + Supabase specifically.
 
 Set `PLUNK_API_KEY` (from your Plunk project), `JWT_SECRET` (a long random
 string — see `src/lib/jwt.ts` above for what happens if you don't), and
