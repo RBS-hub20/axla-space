@@ -36,6 +36,9 @@ to actually collect signups — see below.
    - Already ran `schema.sql` before chat rate limiting was added? Run
      [`supabase/migrations/002_chat_rate_limits.sql`](./supabase/migrations/002_chat_rate_limits.sql)
      to add the `chat_rate_limits` table + function.
+   - Already ran `schema.sql` before chat analytics were added? Run
+     [`supabase/migrations/003_chat_messages.sql`](./supabase/migrations/003_chat_messages.sql)
+     to add the `chat_messages` table.
 3. Go to **Project Settings → API** and copy:
    - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
    - **anon public** key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
@@ -49,17 +52,40 @@ Signups land in `public.waitlist` (`email`, `bir_hate_level` 1-10, `created_at`)
 
 ## Admin dashboard
 
-`/admin` — stats (total signups, average BIR hate level, signups today/this
-week), a 30-day signups chart, and a searchable/paginated waitlist table with
-CSV export. Auto-refreshes every 30s.
+`/admin` — a full analytics dashboard over the waitlist and TaxLaya chat
+activity. Auto-refreshes every 30s.
 
 - Set `ADMIN_PASSWORD` in your environment — this is the only credential
   gating `/admin`. Choose a strong, unique value; never commit the real value.
 - Visit `/admin` (redirects to `/admin/login` if you're not signed in), enter
   the password. A signed, httpOnly session cookie keeps you in for 7 days.
-- The dashboard reads data via `/api/admin/waitlist`, which checks the session
-  cookie server-side and queries Supabase with the service-role key — the
-  service-role key never reaches the browser.
+- The dashboard reads data via `/api/admin/waitlist` and `/api/admin/chat`,
+  both checking the session cookie server-side and querying Supabase with
+  the service-role key — the service-role key never reaches the browser.
+- **Date range filter** (Last 7 days / Last 30 days / All time) applies to
+  every stat, chart, table, and the CSV export.
+- **8 stat cards**: Total Signups, Average BIR Hate Level (click it for a
+  pie-chart breakdown by level), Signups Today, Signups This Week, Total
+  Messages, Active Users Today, Avg Messages per User, Most Asked Form.
+- **Signups / Chat Activity tabs**: a gradient bar chart of daily signups and
+  a gradient area chart of daily message volume, both with hover tooltips.
+- **Top 10 User Questions** and **Live Chat Feed** (last 5 conversations,
+  IPs masked to `123.45.XX.XX`) are built from the `chat_messages` table —
+  see the privacy note below.
+
+### Chat logging (`chat_messages`)
+
+To power "Total Messages," "Most Asked Form," "Top Questions," and "Live
+Chat Feed," `/api/chat` logs each **user** message (not TaxLaya's replies)
+to a `chat_messages` table (`ip`, `message`, `created_at`) — see
+`src/lib/chat-log.ts`. Row-level security blocks all public access; only
+the service-role key (used server-side in `/api/chat` and
+`/api/admin/chat`) can read or write it. This is new behavior introduced
+alongside the analytics dashboard — previously nothing about chat
+conversations was persisted. If that's more than you want to retain,
+the fix is either to stop calling `logUserMessage` in
+`src/app/api/chat/route.ts`, or to add a periodic delete/anonymize job
+against `chat_messages`.
 
 ## TaxLaya chat widget
 
@@ -111,10 +137,13 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
 ```
 src/app/                  Routes: / (landing), /chat (redirects to /),
                            /privacy, /terms,
-                           /admin, /admin/login, /api/waitlist, /api/admin/*, /api/chat
+                           /admin, /admin/login, /api/waitlist,
+                           /api/admin/{waitlist,chat,auth,logout}, /api/chat
 src/components/           Navbar, Hero, HowItWorks, WhyAxla, PricingTeaser,
                            WaitlistSection/WaitlistForm, Footer (landing page)
-src/components/admin/     AdminDashboard, StatsCards, SignupChart, WaitlistTable
+src/components/admin/     AdminDashboard, StatsCards, GraphTabs,
+                           TopQuestionsTable, RecentChatsFeed, WaitlistTable,
+                           HateLevelDialog, DateRangeFilter
 src/components/chat/      ChatWidget (floating bubble + panel), ChatHeader,
                            ChatMessage, ChatInput
 src/components/ui/        shadcn-style primitives (Card, Table, Button, Input,
@@ -123,8 +152,12 @@ src/lib/supabase/client.ts  Public anon Supabase client (landing page waitlist i
 src/lib/supabase/admin.ts   Service-role Supabase client (admin dashboard + rate limiting, server-only)
 src/lib/admin-session.ts    Signed httpOnly session cookie for /admin
 src/lib/rate-limit.ts        10 messages/IP/day limiter for /api/chat
+src/lib/chat-log.ts          Logs user questions to chat_messages (server-only)
+src/lib/chat-analytics.ts    Most-asked-form detection, question grouping,
+                              recent-chats grouping, IP blurring
 src/lib/notification-sound.ts  Synthesized reply chime (Web Audio API)
-supabase/schema.sql          Waitlist + chat_rate_limits tables, RLS policy, RPC
+supabase/schema.sql          Waitlist + chat_rate_limits + chat_messages
+                              tables, RLS policies, RPC
 supabase/migrations/         Schema migrations for existing deployments
 public/                      Axla logo, app icon, favicon, TaxLaya avatar assets
 ```

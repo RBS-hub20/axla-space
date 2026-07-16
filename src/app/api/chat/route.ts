@@ -1,6 +1,16 @@
 import { openai } from "@ai-sdk/openai";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
 import { CHAT_DAILY_LIMIT, checkChatRateLimit, getClientIp } from "@/lib/rate-limit";
+import { logUserMessage } from "@/lib/chat-log";
+
+function lastUserMessageText(messages: UIMessage[]): string {
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+  if (!lastUserMessage) return "";
+  return lastUserMessage.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("");
+}
 
 export const runtime = "edge";
 
@@ -49,6 +59,11 @@ export async function POST(req: Request) {
   }
 
   const { messages }: { messages: UIMessage[] } = await req.json();
+
+  const latestQuestion = lastUserMessageText(messages);
+  if (latestQuestion) {
+    await logUserMessage(ip, latestQuestion);
+  }
 
   const result = streamText({
     model: openai("gpt-4o-mini"),

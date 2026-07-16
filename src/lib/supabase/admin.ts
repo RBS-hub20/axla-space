@@ -24,3 +24,10 @@ export interface WaitlistRow {
   bir_hate_level: number;
   created_at: string;
 }
+
+export interface ChatMessageRow {
+  id: string;
+  ip: string;
+  message: string;
+  created_at: string;
+}

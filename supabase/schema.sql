@@ -52,3 +52,20 @@ begin
   return new_count;
 end;
 $$;
+
+-- Logs each user message sent to TaxLaya (question text only, no assistant
+-- replies) so the admin dashboard can show message volume, top questions,
+-- most-asked BIR forms, and a recent-activity feed. No public policies:
+-- only the service_role key (server-only, in /api/chat and /api/admin/chat)
+-- can read or write this table.
+create table if not exists public.chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  ip text not null,
+  message text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.chat_messages enable row level security;
+
+create index if not exists chat_messages_created_at_idx
+  on public.chat_messages (created_at desc);
