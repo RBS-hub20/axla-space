@@ -4,9 +4,10 @@ const KNOWN_BIR_FORMS = ["2551Q", "1701Q", "0619E", "1601C", "2550Q", "0605", "1
 
 /**
  * Finds every known BIR form code mentioned in a message, longest-code-first
- * so "1701Q" isn't double-counted as a "1701" match too.
+ * so "1701Q" isn't double-counted as a "1701" match too. Pure string logic,
+ * safe to call from either server or client code (e.g. analytics tracking).
  */
-function formsMentionedIn(message: string): string[] {
+export function formsMentionedIn(message: string): string[] {
   const upper = message.toUpperCase();
   const sortedForms = [...KNOWN_BIR_FORMS].sort((a, b) => b.length - a.length);
   const found: string[] = [];

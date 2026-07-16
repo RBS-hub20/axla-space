@@ -12,6 +12,8 @@ import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { playNotificationSound } from "@/lib/notification-sound";
+import { trackEvent } from "@/lib/analytics";
+import { formsMentionedIn } from "@/lib/chat-analytics";
 
 const SUGGESTED_PROMPTS = [
   "Paano mag-file ng 2551Q?",
@@ -85,17 +87,26 @@ export function ChatWidget() {
   function openChat() {
     setIsOpen(true);
     setShowToast(false);
+    trackEvent("widget_opened");
+  }
+
+  function sendChatMessage(text: string) {
+    trackEvent("message_sent", { length: text.length });
+    for (const form of formsMentionedIn(text)) {
+      trackEvent("form_mentioned", { form });
+    }
+    sendMessage({ text });
   }
 
   function handleSend() {
     const text = input.trim();
     if (!text) return;
     setInput("");
-    sendMessage({ text });
+    sendChatMessage(text);
   }
 
   function handlePromptClick(prompt: string) {
-    sendMessage({ text: prompt });
+    sendChatMessage(prompt);
   }
 
   function clearChat() {
@@ -207,6 +218,14 @@ export function ChatWidget() {
 
           <div className="border-t border-gray-800 px-3 py-1.5 text-center text-[10px] text-gray-500">
             ⚠️ Di ako CPA ha, best practice lang to. Consult your accountant for legal advice.
+            <br />
+            <a href="/privacy" className="underline hover:text-gray-300">
+              Privacy
+            </a>{" "}
+            ·{" "}
+            <a href="/terms" className="underline hover:text-gray-300">
+              Terms
+            </a>
           </div>
         </div>
       )}

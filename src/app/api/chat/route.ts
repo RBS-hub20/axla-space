@@ -53,7 +53,7 @@ export async function POST(req: Request) {
 
   if (!allowed) {
     return new Response(
-      `Bawal na, boss — ${CHAT_DAILY_LIMIT} messages/day na ang limit para sa TaxLaya. Bumalik ka na lang bukas! 🙏`,
+      `${CHAT_DAILY_LIMIT}/${CHAT_DAILY_LIMIT} messages used today. Reset at 12mn or upgrade to Pro 🙏`,
       { status: 429 },
     );
   }
@@ -73,5 +73,10 @@ export async function POST(req: Request) {
     temperature: 0.7,
   });
 
-  return result.toUIMessageStreamResponse();
+  return result.toUIMessageStreamResponse({
+    onError: (streamError) => {
+      console.error("Chat stream error:", streamError);
+      return "TaxLaya is resting 😴 Try again in 1 min";
+    },
+  });
 }

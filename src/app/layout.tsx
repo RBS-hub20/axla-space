@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { ChatWidget } from "@/components/chat/ChatWidget";
+import { PostHogProvider } from "@/components/PostHogProvider";
 import "./globals.css";
 
 const inter = Inter({
@@ -11,11 +12,12 @@ const inter = Inter({
 
 const siteUrl = "https://axla.space";
 
+const metaDescription = "Ask TaxLaya about 2551Q, 1701Q, BIR deadlines. Free 24/7.";
+
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: "Axla — Your AI agent for adulting",
-  description:
-    "Stop doing your BIR taxes. Axla files your 2551Q + 1701Q in minutes. No CPA, no pila, no stress. Join the waitlist for 3 months free.",
+  description: metaDescription,
   icons: {
     icon: [
       { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
@@ -25,13 +27,18 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Axla — Your AI agent for adulting",
-    description:
-      "Stop doing your BIR taxes. Axla files your 2551Q + 1701Q in minutes. No CPA, no pila, no stress.",
+    description: metaDescription,
     url: siteUrl,
     siteName: "Axla",
-    images: [{ url: "/axla-app-icon.png", width: 720, height: 720 }],
+    images: [{ url: "/og-image.png", width: 1200, height: 630 }],
     locale: "en_PH",
     type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Axla — Your AI agent for adulting",
+    description: metaDescription,
+    images: ["/og-image.png"],
   },
 };
 
@@ -43,6 +50,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className="font-sans antialiased">
+        <PostHogProvider />
         {children}
         <ChatWidget />
       </body>

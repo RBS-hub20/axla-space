@@ -10,6 +10,30 @@ Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase (waitlist +
 chat rate limiting) + a password-protected admin dashboard for the waitlist
 data.
 
+## Launch readiness
+
+- **Legal pages**: [`/privacy`](./src/app/privacy/page.tsx) and
+  [`/terms`](./src/app/terms/page.tsx) — real content (what we collect, that
+  we use OpenAI/Supabase, that we never sell data, rate limits, "not a CPA"
+  disclaimer). Linked from the landing page footer and the chat widget's
+  footer disclaimer.
+- **SEO**: `og-image.png` (1200×630) + a shared meta description
+  ("Ask TaxLaya about 2551Q, 1701Q, BIR deadlines. Free 24/7.") wired into
+  `openGraph`/`twitter` metadata in `src/app/layout.tsx`, plus
+  [`app/robots.ts`](./src/app/robots.ts) and
+  [`app/sitemap.ts`](./src/app/sitemap.ts).
+- **Social proof**: `src/components/SocialProof.tsx` shows the *real* live
+  waitlist count and average BIR hate rating (via `getWaitlistStats()` /
+  `/api/waitlist-count`) — no fabricated testimonials or user counts.
+- **Analytics**: [PostHog](https://posthog.com) via `src/lib/analytics.ts`
+  (`trackEvent`) and `src/components/PostHogProvider.tsx`. Tracks
+  `page_view`, `widget_opened`, `message_sent`, `form_mentioned`. Entirely
+  optional — no-ops safely if `NEXT_PUBLIC_POSTHOG_KEY` is unset.
+- **Friendly error handling**: if OpenAI errors mid-stream, the widget shows
+  "TaxLaya is resting 😴 Try again in 1 min" instead of a raw error; hitting
+  the daily limit shows "10/10 messages used today. Reset at 12mn or upgrade
+  to Pro 🙏" (see `onError` in `src/app/api/chat/route.ts`).
+
 ## Local development
 
 ```bash
@@ -126,9 +150,10 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).
 2. Import the repo in [Vercel](https://vercel.com/new).
-3. Add all five environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
+3. Add the environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`,
-   `OPENAI_API_KEY`).
+   `OPENAI_API_KEY`), plus `NEXT_PUBLIC_POSTHOG_KEY` / `NEXT_PUBLIC_POSTHOG_HOST`
+   if you want analytics (both optional).
 4. Deploy, then point the `axla.space` domain at the Vercel project
    (**Settings → Domains**).
 
@@ -136,11 +161,13 @@ round avatar button with a pulsing green "online" dot; clicking it opens a
 
 ```
 src/app/                  Routes: / (landing), /chat (redirects to /),
-                           /privacy, /terms,
+                           /privacy, /terms, /robots.ts, /sitemap.ts,
                            /admin, /admin/login, /api/waitlist,
-                           /api/admin/{waitlist,chat,auth,logout}, /api/chat
-src/components/           Navbar, Hero, HowItWorks, WhyAxla, PricingTeaser,
-                           WaitlistSection/WaitlistForm, Footer (landing page)
+                           /api/waitlist-count, /api/admin/{waitlist,chat,auth,logout},
+                           /api/chat
+src/components/           Navbar, Hero, SocialProof, HowItWorks, WhyAxla,
+                           PricingTeaser, WaitlistSection/WaitlistForm, Footer
+                           (landing page), PostHogProvider (analytics)
 src/components/admin/     AdminDashboard, StatsCards, GraphTabs,
                            TopQuestionsTable, RecentChatsFeed, WaitlistTable,
                            HateLevelDialog, DateRangeFilter
@@ -156,6 +183,8 @@ src/lib/chat-log.ts          Logs user questions to chat_messages (server-only)
 src/lib/chat-analytics.ts    Most-asked-form detection, question grouping,
                               recent-chats grouping, IP blurring
 src/lib/notification-sound.ts  Synthesized reply chime (Web Audio API)
+src/lib/analytics.ts         PostHog event tracking (no-ops if unconfigured)
+src/lib/waitlist-stats.ts    Real waitlist count + avg hate level (server-only)
 supabase/schema.sql          Waitlist + chat_rate_limits + chat_messages
                               tables, RLS policies, RPC
 supabase/migrations/         Schema migrations for existing deployments

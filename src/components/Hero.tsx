@@ -1,6 +1,9 @@
 import Image from "next/image";
+import { getWaitlistStats } from "@/lib/waitlist-stats";
 
-export function Hero() {
+export async function Hero() {
+  const { count } = await getWaitlistStats();
+
   return (
     <section id="top" className="relative overflow-hidden bg-navy text-white">
       <div className="pointer-events-none absolute -right-32 -top-32 h-96 w-96 rounded-full bg-accent/20 blur-3xl" />
@@ -14,7 +17,12 @@ export function Hero() {
             <br />
             Let <span className="text-accent">Axla</span> do it.
           </h1>
-          <p className="mx-auto mt-5 max-w-xl text-lg text-slate-300 lg:mx-0">
+          <p className="mt-4 text-sm font-semibold text-accent">
+            {count >= 10
+              ? `Join ${count.toLocaleString()}+ Filipinos who hate BIR paperwork 🔥`
+              : "Join the Filipinos who hate BIR paperwork 🔥"}
+          </p>
+          <p className="mx-auto mt-3 max-w-xl text-lg text-slate-300 lg:mx-0">
             Upload your GCash history. Axla files your 2551Q + 1701Q in
             minutes. No CPA, no pila, no stress.
           </p>
