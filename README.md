@@ -82,9 +82,7 @@ to anyone, no login required. `/chat` redirects here for old links.
   `supabase/migrations/002_chat_rate_limits.sql`). Fails open (chat still
   works, just unlimited) if Supabase isn't configured, so a rate-limiter
   outage never takes the chat down.
-- **`public/taxlaya-avatar.png` is currently a placeholder** (a copy of the
-  Axla app icon) — drop in the real TaxLaya character art under the same
-  filename whenever it's ready; no code changes needed.
+- Avatar art: `public/taxlaya-avatar.png`.
 
 ## Deploying to Vercel
 
