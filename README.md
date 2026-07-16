@@ -5,7 +5,8 @@ adulting**. First agent: **RDO Runner**, which files PH BIR quarterly taxes
 (2551Q + 1701Q) from your GCash history.
 
 Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase (waitlist) +
-a password-protected admin dashboard for the waitlist data.
+a password-protected admin dashboard for the waitlist data + TaxLaya, an
+AI tax support chat powered by xAI Grok.
 
 ## Local development
 
@@ -55,30 +56,46 @@ CSV export. Auto-refreshes every 30s.
   cookie server-side and queries Supabase with the service-role key — the
   service-role key never reaches the browser.
 
+## TaxLaya chat support
+
+`/chat` — a Taglish AI assistant for BIR tax questions (2551Q, 1701Q, 0619E,
+1601C, 2550Q, etc.), streaming responses via xAI's Grok.
+
+- Get an API key at [console.x.ai](https://console.x.ai) and set `XAI_API_KEY`.
+- Optionally set `XAI_MODEL` to override the default model (see
+  `.env.example` for the current default and where to find valid model IDs).
+- The system prompt and persona live in `src/app/api/chat/route.ts`.
+- **`public/taxlaya-avatar.png` is currently a placeholder** (a copy of the
+  Axla app icon) — drop in the real TaxLaya character art under the same
+  filename whenever it's ready; no code changes needed.
+
 ## Deploying to Vercel
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).
 2. Import the repo in [Vercel](https://vercel.com/new).
-3. Add all four environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`).
+3. Add all five environment variables from above (`NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_PASSWORD`,
+   `XAI_API_KEY`).
 4. Deploy, then point the `axla.space` domain at the Vercel project
    (**Settings → Domains**).
 
 ## Structure
 
 ```
-src/app/                  Routes: / (landing), /privacy, /terms,
-                           /admin, /admin/login, /api/waitlist, /api/admin/*
+src/app/                  Routes: / (landing), /privacy, /terms, /chat,
+                           /admin, /admin/login, /api/waitlist, /api/admin/*, /api/chat
 src/components/           Navbar, Hero, HowItWorks, WhyAxla, PricingTeaser,
                            WaitlistSection/WaitlistForm, Footer
 src/components/admin/     AdminDashboard, StatsCards, SignupChart, WaitlistTable
-src/components/ui/        shadcn-style primitives (Card, Table, Button, Input, Badge, Dialog)
+src/components/chat/      ChatHeader, ChatMessage, ChatInput (TaxLaya UI)
+src/components/ui/        shadcn-style primitives (Card, Table, Button, Input,
+                           Badge, Dialog, ScrollArea, Textarea)
 src/lib/supabase/client.ts  Public anon Supabase client (landing page waitlist insert)
 src/lib/supabase/admin.ts   Service-role Supabase client (admin dashboard, server-only)
 src/lib/admin-session.ts    Signed httpOnly session cookie for /admin
 supabase/schema.sql          Waitlist table + RLS policy
 supabase/migrations/         Schema migrations for existing deployments
-public/                      Axla logo, app icon, favicon assets
+public/                      Axla logo, app icon, favicon, TaxLaya avatar assets
 ```
 
 ## Brand
