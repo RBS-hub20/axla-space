@@ -1,12 +1,13 @@
-# Axla — landing page + admin dashboard
+# Axla — TaxLaya chat + waitlist + admin dashboard
 
-Landing page for [axla.space](https://axla.space) — **Axla: your AI agent for
-adulting**. First agent: **RDO Runner**, which files PH BIR quarterly taxes
-(2551Q + 1701Q) from your GCash history.
+[axla.space](https://axla.space) — **Axla: your AI agent for adulting**.
+The homepage (`/`) is **TaxLaya**, a free Taglish AI chat assistant for PH
+BIR tax questions (2551Q, 1701Q, 0619E, etc.), powered by xAI Grok. The
+original waitlist landing page lives on at `/waitlist`.
 
-Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase (waitlist) +
-a password-protected admin dashboard for the waitlist data + TaxLaya, an
-AI tax support chat powered by xAI Grok.
+Next.js 14 (App Router) + TypeScript + Tailwind CSS + Supabase (waitlist +
+chat rate limiting) + a password-protected admin dashboard for the waitlist
+data.
 
 ## Local development
 
@@ -31,6 +32,9 @@ to actually collect signups — see below.
    - Already ran an older version of this schema (with a text `hate` column)?
      Run [`supabase/migrations/001_bir_hate_level.sql`](./supabase/migrations/001_bir_hate_level.sql)
      instead — it migrates existing rows to the new `bir_hate_level` (1-10) column.
+   - Already ran `schema.sql` before chat rate limiting was added? Run
+     [`supabase/migrations/002_chat_rate_limits.sql`](./supabase/migrations/002_chat_rate_limits.sql)
+     to add the `chat_rate_limits` table + function.
 3. Go to **Project Settings → API** and copy:
    - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
    - **anon public** key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
@@ -41,6 +45,12 @@ to actually collect signups — see below.
    Environment Variables for production.
 
 Signups land in `public.waitlist` (`email`, `bir_hate_level` 1-10, `created_at`).
+
+## Waitlist landing page
+
+`/waitlist` — the original marketing page (hero, how it works, why Axla,
+pricing teaser, waitlist signup form). Linked from the chat homepage's
+header and footer.
 
 ## Admin dashboard
 
@@ -56,15 +66,22 @@ CSV export. Auto-refreshes every 30s.
   cookie server-side and queries Supabase with the service-role key — the
   service-role key never reaches the browser.
 
-## TaxLaya chat support
+## TaxLaya chat support (homepage)
 
-`/chat` — a Taglish AI assistant for BIR tax questions (2551Q, 1701Q, 0619E,
-1601C, 2550Q, etc.), streaming responses via xAI's Grok.
+`/` — a dark-themed, Taglish AI assistant for BIR tax questions (2551Q,
+1701Q, 0619E, 1601C, 2550Q, etc.), streaming responses via xAI's Grok. Open
+to anyone, no login required. `/chat` redirects here for old links.
 
 - Get an API key at [console.x.ai](https://console.x.ai) and set `XAI_API_KEY`.
 - Optionally set `XAI_MODEL` to override the default model (see
   `.env.example` for the current default and where to find valid model IDs).
 - The system prompt and persona live in `src/app/api/chat/route.ts`.
+- **Rate limited to 10 messages per IP per day**, tracked in the
+  `chat_rate_limits` Supabase table (atomic upsert via the
+  `increment_chat_rate_limit` Postgres function — see
+  `supabase/migrations/002_chat_rate_limits.sql`). Fails open (chat still
+  works, just unlimited) if Supabase isn't configured, so a rate-limiter
+  outage never takes the chat down.
 - **`public/taxlaya-avatar.png` is currently a placeholder** (a copy of the
   Axla app icon) — drop in the real TaxLaya character art under the same
   filename whenever it's ready; no code changes needed.
@@ -82,18 +99,20 @@ CSV export. Auto-refreshes every 30s.
 ## Structure
 
 ```
-src/app/                  Routes: / (landing), /privacy, /terms, /chat,
+src/app/                  Routes: / (TaxLaya chat), /chat (redirects to /),
+                           /waitlist, /privacy, /terms,
                            /admin, /admin/login, /api/waitlist, /api/admin/*, /api/chat
 src/components/           Navbar, Hero, HowItWorks, WhyAxla, PricingTeaser,
-                           WaitlistSection/WaitlistForm, Footer
+                           WaitlistSection/WaitlistForm, Footer (all used by /waitlist)
 src/components/admin/     AdminDashboard, StatsCards, SignupChart, WaitlistTable
 src/components/chat/      ChatHeader, ChatMessage, ChatInput (TaxLaya UI)
 src/components/ui/        shadcn-style primitives (Card, Table, Button, Input,
                            Badge, Dialog, ScrollArea, Textarea)
 src/lib/supabase/client.ts  Public anon Supabase client (landing page waitlist insert)
-src/lib/supabase/admin.ts   Service-role Supabase client (admin dashboard, server-only)
+src/lib/supabase/admin.ts   Service-role Supabase client (admin dashboard + rate limiting, server-only)
 src/lib/admin-session.ts    Signed httpOnly session cookie for /admin
-supabase/schema.sql          Waitlist table + RLS policy
+src/lib/rate-limit.ts        10 messages/IP/day limiter for /api/chat
+supabase/schema.sql          Waitlist + chat_rate_limits tables, RLS policy, RPC
 supabase/migrations/         Schema migrations for existing deployments
 public/                      Axla logo, app icon, favicon, TaxLaya avatar assets
 ```

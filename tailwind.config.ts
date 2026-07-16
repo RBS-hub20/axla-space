@@ -9,6 +9,7 @@ const config: Config = {
         "navy-light": "#1E293B",
         accent: "#22C55E",
         "accent-dark": "#16A34A",
+        "taxlaya-green": "#00FF88",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         card: {

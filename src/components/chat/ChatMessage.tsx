@@ -38,14 +38,14 @@ export function ChatMessage({ message }: ChatMessageProps) {
           alt="TaxLaya"
           width={40}
           height={40}
-          className="h-10 w-10 flex-shrink-0 rounded-full border-2 border-green-500/20 object-cover"
+          className="h-10 w-10 flex-shrink-0 rounded-full border-2 border-taxlaya-green/20 object-cover"
         />
       )}
 
       <div className={cn("flex max-w-[80%] flex-col gap-1", isUser && "items-end")}>
         {!isUser && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="font-semibold">TaxLaya</span>
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <span className="font-semibold text-gray-300">TaxLaya</span>
             <span className="text-xs">🔥 Freedom from BIR hassle</span>
           </div>
         )}
@@ -53,20 +53,27 @@ export function ChatMessage({ message }: ChatMessageProps) {
         <div
           className={cn(
             "rounded-2xl px-4 py-3 text-sm",
-            isUser ? "bg-gradient-to-r from-blue-600 to-blue-500 text-white" : "bg-muted",
+            isUser
+              ? "bg-gradient-to-r from-blue-600 to-blue-500 text-white"
+              : "bg-gray-800 text-gray-100",
           )}
         >
           {isUser ? (
             <p className="whitespace-pre-wrap">{text}</p>
           ) : (
-            <div className="prose prose-sm max-w-none dark:prose-invert">
+            <div className="prose prose-sm prose-invert max-w-none">
               <ReactMarkdown>{text}</ReactMarkdown>
             </div>
           )}
         </div>
 
         {!isUser && text && (
-          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={copyToClipboard}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs text-gray-500 hover:bg-gray-800 hover:text-gray-200"
+            onClick={copyToClipboard}
+          >
             {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
             {copied ? "Copied" : "Copy"}
           </Button>

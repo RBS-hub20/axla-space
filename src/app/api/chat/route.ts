@@ -1,5 +1,6 @@
 import { xai } from "@ai-sdk/xai";
 import { convertToModelMessages, streamText, type UIMessage } from "ai";
+import { CHAT_DAILY_LIMIT, checkChatRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export const runtime = "edge";
 
@@ -37,6 +38,16 @@ RULES:
 4. Keep responses under 300 words unless they ask for details`;
 
 export async function POST(req: Request) {
+  const ip = getClientIp(req);
+  const { allowed } = await checkChatRateLimit(ip);
+
+  if (!allowed) {
+    return new Response(
+      `Bawal na, boss — ${CHAT_DAILY_LIMIT} messages/day na ang limit para sa TaxLaya. Bumalik ka na lang bukas! 🙏`,
+      { status: 429 },
+    );
+  }
+
   const { messages }: { messages: UIMessage[] } = await req.json();
 
   const result = streamText({

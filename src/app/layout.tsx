@@ -12,9 +12,9 @@ const siteUrl = "https://axla.space";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: "Axla — Your AI agent for adulting",
+  title: "TaxLaya — Axla's AI tax assistant",
   description:
-    "Stop doing your BIR taxes. Axla files your 2551Q + 1701Q in minutes. No CPA, no pila, no stress. Join the waitlist for 3 months free.",
+    "Palayain kita sa BIR hassle. Chat with TaxLaya, Axla's free AI assistant for 2551Q, 1701Q, and every other BIR form headache.",
   icons: {
     icon: [
       { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
@@ -23,12 +23,12 @@ export const metadata: Metadata = {
     apple: "/apple-touch-icon.png",
   },
   openGraph: {
-    title: "Axla — Your AI agent for adulting",
+    title: "TaxLaya — Axla's AI tax assistant",
     description:
-      "Stop doing your BIR taxes. Axla files your 2551Q + 1701Q in minutes. No CPA, no pila, no stress.",
+      "Palayain kita sa BIR hassle. Chat with TaxLaya, Axla's free AI assistant for 2551Q, 1701Q, and every other BIR form headache.",
     url: siteUrl,
     siteName: "Axla",
-    images: [{ url: "/axla-app-icon.png", width: 720, height: 720 }],
+    images: [{ url: "/taxlaya-avatar.png", width: 720, height: 720 }],
     locale: "en_PH",
     type: "website",
   },
