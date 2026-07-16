@@ -38,7 +38,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const { error } = await supabase.from("waitlist").insert({ email, hate });
+  const { error } = await supabase.from("waitlist").insert({ 
+    email, 
+    bir_hate: hate  // ← ITO YUNG FIX: bir_hate dapat, hindi hate
+  });
 
   if (error) {
     if (error.code === "23505") {
@@ -47,6 +50,8 @@ export async function POST(request: Request) {
         { status: 200 },
       );
     }
+    // Para makita natin yung real error sa Vercel logs next time
+    console.error("Supabase insert error:", error);
     return NextResponse.json({ error: "Something went wrong. Try again." }, { status: 500 });
   }
 
