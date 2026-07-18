@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import { logError } from "@/lib/log-error";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
         { status: 200 },
       );
     }
-    console.error("Supabase insert error:", error);
+    logError("waitlist: Supabase insert failed", error);
     return NextResponse.json({ error: "Something went wrong. Try again." }, { status: 500 });
   }
 
