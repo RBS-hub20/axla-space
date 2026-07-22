@@ -145,6 +145,7 @@ export default function BirFormsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [isPro, setIsPro] = useState<boolean | null>(null);
+  const [plan, setPlan] = useState<"free" | "pro" | "business" | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [showProSuccessModal, setShowProSuccessModal] = useState(false);
@@ -154,7 +155,10 @@ export default function BirFormsPage() {
     try {
       const res = await fetch("/api/billing/status", { cache: "no-store" });
       const data = await res.json();
-      if (res.ok) setIsPro(Boolean(data.is_pro));
+      if (res.ok) {
+        setIsPro(Boolean(data.is_pro));
+        setPlan(data.plan ?? null);
+      }
     } catch {
       // Non-fatal — the paywall just stays up until this succeeds.
     }
@@ -199,6 +203,7 @@ export default function BirFormsPage() {
       // checkout for a redundant subscription — just correct the badge.
       if (data.alreadyPro) {
         setIsPro(true);
+        setPlan(data.plan ?? "pro");
         return;
       }
 
@@ -953,7 +958,11 @@ export default function BirFormsPage() {
                   <span className="rounded-full bg-[#22c55e]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#22c55e]">
                     New
                   </span>
-                  {isPro && <Badge variant="success">PRO Active ✅</Badge>}
+                  {isPro && (
+                    <Badge variant="success">
+                      {plan === "business" ? "BUSINESS Active ✅" : plan === "pro" ? "PRO Active ✅" : "FREE"}
+                    </Badge>
+                  )}
                 </div>
               </CardHeader>
               <CardContent className={`space-y-4 ${isPro === false ? "pointer-events-none select-none blur-sm" : ""}`}>
