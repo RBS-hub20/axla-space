@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -8,7 +8,12 @@ import {
   Calculator,
   FileText,
   FolderOpen,
+  Upload,
+  Bot,
+  Users,
+  BarChart3,
   Settings,
+  ShieldCheck,
   Menu,
   X,
 } from "lucide-react";
@@ -18,14 +23,35 @@ const NAV_ITEMS = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Tax Calculator", href: "/dashboard/calculator", icon: Calculator },
   { label: "BIR Forms", href: "/dashboard/forms", icon: FileText },
+  { label: "GCash Upload", href: "/dashboard/upload", icon: Upload },
   { label: "Documents", href: "/dashboard/documents", icon: FolderOpen },
+  { label: "Brain AI", href: "/dashboard/brain", icon: Bot },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
-function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+const BUSINESS_PLAN_ITEMS = [
+  { label: "Team", href: "/dashboard/team", icon: Users },
+  { label: "Annual ITR", href: "/dashboard/annual", icon: BarChart3 },
+];
+
+function NavLinks({
+  pathname,
+  onNavigate,
+  isAdmin,
+  pendingCount,
+  isBusinessPlan,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+  isAdmin?: boolean;
+  pendingCount?: number;
+  isBusinessPlan?: boolean;
+}) {
+  const items = isBusinessPlan ? [...NAV_ITEMS, ...BUSINESS_PLAN_ITEMS] : NAV_ITEMS;
+
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {NAV_ITEMS.map(({ label, href, icon: Icon }) => {
+      {items.map(({ label, href, icon: Icon }) => {
         const isActive = href === "/dashboard" ? pathname === href : pathname.startsWith(href);
 
         return (
@@ -45,13 +71,53 @@ function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
           </Link>
         );
       })}
+
+      {isAdmin && (
+        <Link
+          href="/admin/waitlist"
+          onClick={onNavigate}
+          className={cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+            pathname.startsWith("/admin/waitlist")
+              ? "bg-[#00FF85]/10 text-[#00FF85]"
+              : "text-slate-400 hover:bg-white/5 hover:text-slate-100",
+          )}
+        >
+          <ShieldCheck className="h-4 w-4 shrink-0" strokeWidth={pathname.startsWith("/admin/waitlist") ? 2.5 : 2} />
+          Admin Waitlist
+          {Boolean(pendingCount) && (
+            <span className="ml-auto rounded-full bg-[#00FF85] px-2 py-0.5 text-xs font-bold text-[#001A29]">
+              {pendingCount}
+            </span>
+          )}
+        </Link>
+      )}
     </nav>
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [isBusinessPlan, setIsBusinessPlan] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch("/api/admin/waitlist/list", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.counts?.pending !== undefined) setPendingCount(data.counts.pending);
+      })
+      .catch(() => {});
+  }, [isAdmin]);
+
+  useEffect(() => {
+    fetch("/api/dashboard/billing", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setIsBusinessPlan(data?.plan === "business"))
+      .catch(() => {});
+  }, []);
 
   return (
     <>
@@ -88,14 +154,20 @@ export function Sidebar() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <NavLinks pathname={pathname} onNavigate={() => setIsMobileOpen(false)} />
+            <NavLinks
+              pathname={pathname}
+              onNavigate={() => setIsMobileOpen(false)}
+              isAdmin={isAdmin}
+              pendingCount={pendingCount}
+              isBusinessPlan={isBusinessPlan}
+            />
           </div>
         </div>
       )}
 
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-white/10 bg-[#001A29] pt-6 md:flex">
-        <NavLinks pathname={pathname} />
+        <NavLinks pathname={pathname} isAdmin={isAdmin} pendingCount={pendingCount} isBusinessPlan={isBusinessPlan} />
       </aside>
     </>
   );

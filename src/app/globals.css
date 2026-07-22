@@ -24,3 +24,11 @@ body {
   background-color: #ffffff;
   color: #0f172a;
 }
+
+/* Subtle dot-grid texture for dark hero sections — Resend-style. Kept as a
+   utility class (not applied globally) so it never leaks into light-themed
+   pages like /pricing, /privacy, /terms. */
+.bg-dot-grid {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 28px 28px;
+}

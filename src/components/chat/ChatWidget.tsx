@@ -15,23 +15,28 @@ import { playNotificationSound } from "@/lib/notification-sound";
 import { trackEvent } from "@/lib/analytics";
 import { formsMentionedIn } from "@/lib/chat-analytics";
 
-const SUGGESTED_PROMPTS = [
-  "Paano mag-file ng 2551Q?",
-  "Kailan deadline ng 1701Q?",
-  "Nalate ako sa 0619E, magkano penalty?",
-];
+const WELCOME_MESSAGE =
+  "Hi! I'm TaxLaya 👋 Your AI BIR buddy! Hate BIR paperwork? Same! Upload your GCash and I'll file 2551Q in 3 mins. Want me to show you how? 😊";
 
-const QUICK_REPLIES = ["Compute my tax", "Check deadline", "What form do I need?"];
+const QUICK_REPLIES = ["How does Axla work?", "Magkano PRO?", "Paano GCash sync?"];
 
 const SOUND_PREF_KEY = "taxlaya-sound-enabled";
+const WELCOMED_KEY = "taxlaya_welcomed";
 const TOAST_DELAY_MS = 800;
 const TOAST_DURATION_MS = 5000;
+const AUTO_OPEN_DELAY_MS = 2000;
+const TYPING_BEFORE_WELCOME_MS = 1000;
+const BOUNCE_DURATION_MS = 1000;
 
 export function ChatWidget() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [hasShownWelcome, setHasShownWelcome] = useState(false);
+  const [isTypingWelcome, setIsTypingWelcome] = useState(false);
+  const [everOpened, setEverOpened] = useState(false);
+  const [bounceAvatar, setBounceAvatar] = useState(false);
 
   const transport = useMemo(() => new DefaultChatTransport({ api: "/api/chat" }), []);
   const { messages, sendMessage, status, error, clearError, setMessages } = useChat({ transport });
@@ -52,6 +57,44 @@ export function ChatWidget() {
     const hideTimer = setTimeout(() => setShowToast(false), TOAST_DURATION_MS);
     return () => clearTimeout(hideTimer);
   }, [showToast]);
+
+  // Auto-open once ever, only on the landing page, 2s after first visit —
+  // gated on localStorage (not sessionStorage) exactly as requested, so it
+  // genuinely only ever fires once per browser, not once per tab/session.
+  useEffect(() => {
+    if (pathname !== "/") return;
+    if (typeof window === "undefined") return;
+    if (localStorage.getItem(WELCOMED_KEY) === "true") return;
+
+    const timer = setTimeout(() => {
+      setIsOpen(true);
+      setShowToast(false);
+      setEverOpened(true);
+      setBounceAvatar(true);
+      localStorage.setItem(WELCOMED_KEY, "true");
+      trackEvent("widget_auto_opened");
+      setTimeout(() => setBounceAvatar(false), BOUNCE_DURATION_MS);
+    }, AUTO_OPEN_DELAY_MS);
+
+    return () => clearTimeout(timer);
+  }, [pathname]);
+
+  // Typing indicator, then the scripted first message — runs on ANY first
+  // open (auto or manual click), not just the auto-popup case, so the
+  // experience is consistent either way. Doesn't re-fire on reopen once
+  // shown, unless the chat is explicitly cleared.
+  useEffect(() => {
+    if (!isOpen || messages.length > 0 || hasShownWelcome) return;
+
+    setIsTypingWelcome(true);
+    const timer = setTimeout(() => {
+      setIsTypingWelcome(false);
+      setHasShownWelcome(true);
+      setMessages([{ id: "welcome", role: "assistant", parts: [{ type: "text", text: WELCOME_MESSAGE }] }]);
+    }, TYPING_BEFORE_WELCOME_MS);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, messages.length, hasShownWelcome, setMessages]);
 
   // Sound preference persists across visits.
   useEffect(() => {
@@ -87,6 +130,7 @@ export function ChatWidget() {
   function openChat() {
     setIsOpen(true);
     setShowToast(false);
+    setEverOpened(true);
     trackEvent("widget_opened");
   }
 
@@ -112,10 +156,15 @@ export function ChatWidget() {
   function clearChat() {
     setMessages([]);
     clearError();
+    setHasShownWelcome(false);
   }
 
   // Internal admin dashboard isn't a public support surface — skip the widget there.
-  if (pathname?.startsWith("/admin")) return null;
+  // /dashboard has its own dedicated Brain AI assistant now — showing this
+  // widget there too would be a confusing duplicate. /login has its own
+  // static TaxLaya avatar built into the page design — the floating widget
+  // would be a second, redundant TaxLaya on the same screen.
+  if (pathname?.startsWith("/admin") || pathname?.startsWith("/dashboard") || pathname === "/login") return null;
 
   const lastMessage = messages[messages.length - 1];
   const showQuickReplies = lastMessage?.role === "assistant" && !isLoading;
@@ -124,89 +173,62 @@ export function ChatWidget() {
     <>
       {isOpen && (
         <div
-          className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-gray-950 sm:inset-auto sm:bottom-24 sm:right-6 sm:h-[min(600px,calc(100vh-8rem))] sm:w-[min(400px,calc(100vw-2rem))] sm:rounded-2xl sm:border sm:border-gray-800 sm:shadow-2xl sm:shadow-black/50"
+          className="pointer-events-auto fixed bottom-4 right-[5vw] z-50 flex h-[min(70vh,600px)] w-[90vw] flex-col overflow-hidden rounded-2xl border border-gray-800 bg-gray-950 shadow-2xl shadow-black/50 sm:inset-auto sm:bottom-24 sm:right-6 sm:h-[min(600px,calc(100vh-8rem))] sm:w-[min(400px,calc(100vw-2rem))]"
           role="dialog"
           aria-label="TaxLaya chat"
         >
           <ChatHeader
             onClear={clearChat}
             onClose={() => setIsOpen(false)}
+            onMinimize={() => setIsOpen(false)}
             soundEnabled={soundEnabled}
             onToggleSound={toggleSound}
+            bounceAvatar={bounceAvatar}
           />
 
           <ScrollArea className="flex-1 p-3">
-            {messages.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center text-center">
-                <Image
-                  src="/taxlaya-avatar.png"
-                  alt="TaxLaya"
-                  width={64}
-                  height={64}
-                  className="mb-3 h-16 w-16 rounded-full border-4 border-taxlaya-green/20 object-cover shadow-[0_0_24px_rgba(0,255,136,0.25)]"
-                  priority
-                />
-                <h2 className="mb-1 text-lg font-bold text-gray-100">Hi, TaxLaya here 👋</h2>
-                <p className="mb-4 px-2 text-sm text-gray-400">
-                  Palayain kita sa BIR hassle. Ano problema natin today?
-                </p>
-                <div className="flex flex-col gap-2 px-2">
-                  {SUGGESTED_PROMPTS.map((prompt) => (
-                    <Button
-                      key={prompt}
-                      variant="outline"
-                      onClick={() => handlePromptClick(prompt)}
-                      className="border-gray-700 bg-gray-800 text-xs text-gray-200 hover:bg-gray-700"
+            <div className="space-y-4">
+              {messages.map((message) => (
+                <ChatMessage key={message.id} message={message} />
+              ))}
+              {(isTypingWelcome || isLoading) && (
+                <div className="flex items-center gap-2 px-1 text-gray-400">
+                  <Image
+                    src="/taxlaya-avatar.png"
+                    alt="TaxLaya"
+                    width={28}
+                    height={28}
+                    className="h-7 w-7 rounded-full object-cover"
+                  />
+                  <div className="flex gap-1 text-sm">
+                    <span className="animate-bounce">TaxLaya is typing</span>
+                    <span className="animate-bounce [animation-delay:0.1s]">.</span>
+                    <span className="animate-bounce [animation-delay:0.2s]">.</span>
+                    <span className="animate-bounce [animation-delay:0.3s]">.</span>
+                  </div>
+                </div>
+              )}
+              {showQuickReplies && (
+                <div className="flex flex-wrap gap-2 px-1">
+                  {QUICK_REPLIES.map((reply) => (
+                    <button
+                      key={reply}
+                      type="button"
+                      onClick={() => handlePromptClick(reply)}
+                      className="rounded-full border border-taxlaya-green/30 bg-gray-800 px-3 py-1.5 text-xs font-medium text-taxlaya-green transition hover:bg-gray-700"
                     >
-                      {prompt}
-                    </Button>
+                      {reply}
+                    </button>
                   ))}
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {messages.map((message) => (
-                  <ChatMessage key={message.id} message={message} />
-                ))}
-                {isLoading && (
-                  <div className="flex items-center gap-2 px-1 text-gray-400">
-                    <Image
-                      src="/taxlaya-avatar.png"
-                      alt="TaxLaya"
-                      width={28}
-                      height={28}
-                      className="h-7 w-7 rounded-full object-cover"
-                    />
-                    <div className="flex gap-1 text-sm">
-                      <span className="animate-bounce">TaxLaya is typing</span>
-                      <span className="animate-bounce [animation-delay:0.1s]">.</span>
-                      <span className="animate-bounce [animation-delay:0.2s]">.</span>
-                      <span className="animate-bounce [animation-delay:0.3s]">.</span>
-                    </div>
-                  </div>
-                )}
-                {showQuickReplies && (
-                  <div className="flex flex-wrap gap-2 px-1">
-                    {QUICK_REPLIES.map((reply) => (
-                      <button
-                        key={reply}
-                        type="button"
-                        onClick={() => handlePromptClick(reply)}
-                        className="rounded-full border border-taxlaya-green/30 bg-gray-800 px-3 py-1.5 text-xs font-medium text-taxlaya-green transition hover:bg-gray-700"
-                      >
-                        {reply}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {error && (
-                  <div className="rounded-xl border border-red-900 bg-red-950/50 px-3 py-2 text-xs text-red-300">
-                    {error.message}
-                  </div>
-                )}
-                <div ref={bottomRef} />
-              </div>
-            )}
+              )}
+              {error && (
+                <div className="rounded-xl border border-red-900 bg-red-950/50 px-3 py-2 text-xs text-red-300">
+                  {error.message}
+                </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
           </ScrollArea>
 
           <ChatInput
@@ -231,7 +253,7 @@ export function ChatWidget() {
       )}
 
       {!isOpen && (
-        <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3 sm:bottom-6 sm:right-6">
+        <div className="pointer-events-auto fixed bottom-4 right-4 z-50 flex flex-col items-end gap-3 sm:bottom-6 sm:right-6">
           {showToast && (
             <div className="relative w-64 rounded-2xl rounded-br-sm border border-gray-800 bg-gray-900 p-3 pr-8 text-sm text-gray-100 shadow-xl shadow-black/40">
               <button
@@ -248,21 +270,27 @@ export function ChatWidget() {
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={openChat}
-            aria-label="Open TaxLaya chat"
-            className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-taxlaya-green/40 bg-gray-900 shadow-[0_0_24px_rgba(0,255,136,0.35)] transition hover:scale-105 hover:shadow-[0_0_32px_rgba(0,255,136,0.5)]"
-          >
-            <Image
-              src="/taxlaya-avatar.png"
-              alt="TaxLaya"
-              width={64}
-              height={64}
-              className="h-full w-full rounded-full object-cover"
-            />
-            <span className="absolute right-0 top-0 h-4 w-4 animate-pulse rounded-full border-2 border-gray-900 bg-taxlaya-green shadow-[0_0_8px_rgba(0,255,136,0.8)]" />
-          </button>
+          <div className="relative">
+            {/* Pulsing attention ring — only until the user has ever opened the widget. */}
+            {!everOpened && (
+              <span className="absolute inset-0 animate-ping rounded-full bg-taxlaya-green/40" />
+            )}
+            <button
+              type="button"
+              onClick={openChat}
+              aria-label="Open TaxLaya chat"
+              className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-taxlaya-green/40 bg-gray-900 shadow-[0_0_24px_rgba(0,255,136,0.35)] transition hover:scale-105 hover:shadow-[0_0_32px_rgba(0,255,136,0.5)]"
+            >
+              <Image
+                src="/taxlaya-avatar.png"
+                alt="TaxLaya"
+                width={64}
+                height={64}
+                className="h-full w-full rounded-full object-cover"
+              />
+              <span className="absolute right-0 top-0 h-4 w-4 animate-pulse rounded-full border-2 border-gray-900 bg-taxlaya-green shadow-[0_0_8px_rgba(0,255,136,0.8)]" />
+            </button>
+          </div>
         </div>
       )}
     </>

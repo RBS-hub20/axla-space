@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE, verifySessionToken } from "@/lib/admin-session";
 import { isSupabaseAdminConfigured, supabaseAdmin } from "@/lib/supabase/admin";
+import { logError } from "@/lib/log-error";
 
 export async function GET() {
   const session = cookies().get(ADMIN_SESSION_COOKIE)?.value;
@@ -20,6 +21,7 @@ export async function GET() {
     .limit(5000);
 
   if (error) {
+    logError("admin/chat: Supabase query failed", error);
     return NextResponse.json({ error: "Failed to load chat messages." }, { status: 500 });
   }
 

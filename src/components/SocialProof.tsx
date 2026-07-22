@@ -1,4 +1,5 @@
 import { getWaitlistStats } from "@/lib/waitlist-stats";
+import { Reveal } from "@/components/Reveal";
 
 export async function SocialProof() {
   const { count, avgHateLevel } = await getWaitlistStats();
@@ -16,20 +17,21 @@ export async function SocialProof() {
   ];
 
   return (
-    <section className="bg-white py-14 sm:py-16">
+    <section className="bg-[#080F14] py-14 sm:py-16">
       <div className="mx-auto max-w-5xl px-4 sm:px-6">
-        <p className="text-center text-sm font-semibold uppercase tracking-wide text-slate-400">
+        <p className="text-center text-sm font-semibold uppercase tracking-wide text-slate-500">
           Real numbers, updated live — no fake testimonials here
         </p>
         <div className="mt-8 grid gap-6 sm:grid-cols-3">
-          {stats.map((stat) => (
-            <div
-              key={stat.label}
-              className="rounded-2xl border border-slate-100 bg-slate-50 p-6 text-center"
-            >
-              <p className="text-3xl font-extrabold text-navy">{stat.value}</p>
-              <p className="mt-1 text-sm text-slate-600">{stat.label}</p>
-            </div>
+          {stats.map((stat, i) => (
+            <Reveal key={stat.label} delayMs={i * 100}>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-8 text-center backdrop-blur-sm transition hover:border-[#00FF88]/30">
+                <p className="bg-gradient-to-b from-white to-slate-300 bg-clip-text text-5xl font-extrabold text-transparent">
+                  {stat.value}
+                </p>
+                <p className="mt-2 text-sm text-slate-400">{stat.label}</p>
+              </div>
+            </Reveal>
           ))}
         </div>
       </div>

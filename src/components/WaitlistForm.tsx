@@ -4,22 +4,14 @@ import { useState, type FormEvent } from "react";
 
 type Status = "idle" | "loading" | "success" | "error";
 
-const HASSLE_LEVELS = Array.from({ length: 10 }, (_, i) => i + 1);
-
 export function WaitlistForm() {
   const [email, setEmail] = useState("");
-  const [birHateLevel, setBirHateLevel] = useState<number | null>(null);
+  const [birHateLevel, setBirHateLevel] = useState(5);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (birHateLevel === null) {
-      setStatus("error");
-      setMessage("Please pick a hassle level from 1 to 10.");
-      return;
-    }
 
     setStatus("loading");
     setMessage("");
@@ -41,7 +33,7 @@ export function WaitlistForm() {
       setStatus("success");
       setMessage(data.message || "You're on the waitlist!");
       setEmail("");
-      setBirHateLevel(null);
+      setBirHateLevel(5);
     } catch {
       setStatus("error");
       setMessage("Network error. Please try again.");
@@ -50,9 +42,9 @@ export function WaitlistForm() {
 
   if (status === "success") {
     return (
-      <div className="rounded-2xl bg-accent/10 p-6 text-center ring-1 ring-accent/30">
-        <p className="text-lg font-semibold text-navy">{message} 🎉</p>
-        <p className="mt-1 text-sm text-slate-600">
+      <div className="rounded-2xl border border-[#00FF88]/30 bg-[#00FF88]/10 p-6 text-center">
+        <p className="text-lg font-semibold text-white">{message} 🎉</p>
+        <p className="mt-1 text-sm text-slate-400">
           Sasabihan ka namin sa email pag live na ang Axla.
         </p>
       </div>
@@ -60,9 +52,9 @@ export function WaitlistForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form onSubmit={handleSubmit} className="space-y-6">
       <div>
-        <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-navy">
+        <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-slate-300">
           Email address
         </label>
         <input
@@ -72,45 +64,38 @@ export function WaitlistForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@email.com"
-          className="w-full rounded-xl border border-slate-200 px-4 py-3 text-navy placeholder:text-slate-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+          className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder:text-slate-500 focus:border-[#00FF88] focus:outline-none focus:ring-2 focus:ring-[#00FF88]/30"
         />
       </div>
 
       <div>
-        <span className="mb-1.5 block text-sm font-medium text-navy">
-          Gaano ka-hassle ang BIR sa&apos;yo?
-        </span>
-        <div className="grid grid-cols-5 gap-2 sm:grid-cols-10">
-          {HASSLE_LEVELS.map((level) => (
-            <button
-              key={level}
-              type="button"
-              onClick={() => setBirHateLevel(level)}
-              aria-pressed={birHateLevel === level}
-              className={`rounded-lg py-2 text-sm font-semibold transition ${
-                birHateLevel === level
-                  ? "bg-accent text-navy"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-              }`}
-            >
-              {level}
-            </button>
-          ))}
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-medium text-slate-300">Gaano ka-hassle ang BIR sa&apos;yo?</span>
+          <span className="rounded-full bg-[#00FF88]/15 px-2.5 py-0.5 text-sm font-bold text-[#00FF88]">
+            {birHateLevel}/10
+          </span>
         </div>
-        <div className="mt-1.5 flex justify-between text-xs text-slate-400">
+        <input
+          type="range"
+          min={1}
+          max={10}
+          step={1}
+          value={birHateLevel}
+          onChange={(e) => setBirHateLevel(Number(e.target.value))}
+          className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-[#00FF88]"
+        />
+        <div className="mt-1.5 flex justify-between text-xs text-slate-500">
           <span>Chill lang</span>
           <span>Sobrang hassle</span>
         </div>
       </div>
 
-      {status === "error" && (
-        <p className="text-sm font-medium text-red-600">{message}</p>
-      )}
+      {status === "error" && <p className="text-sm font-medium text-red-400">{message}</p>}
 
       <button
         type="submit"
         disabled={status === "loading"}
-        className="w-full rounded-full bg-accent px-6 py-3.5 text-base font-semibold text-navy shadow-lg shadow-accent/25 transition hover:bg-accent-dark disabled:cursor-not-allowed disabled:opacity-60"
+        className="w-full rounded-full bg-[#00FF88] px-6 py-3.5 text-base font-semibold text-[#080F14] shadow-lg shadow-[#00FF88]/25 transition hover:bg-[#22C55E] disabled:cursor-not-allowed disabled:opacity-60"
       >
         {status === "loading" ? "Submitting..." : "Join waitlist — Get 3 months free"}
       </button>

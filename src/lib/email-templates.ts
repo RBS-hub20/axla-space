@@ -80,6 +80,61 @@ export function otpEmailTemplate(otp: string, name: string): string {
   return emailShell(`Your TaxLaya code is ${otp}`, body);
 }
 
+/**
+ * Waitlist-approval email: sent once by the admin approve flow. Bigger OTP
+ * digits than the regular sign-in email (28px on a dark navy tile) since
+ * this is the recipient's very first code and needs to read as a "big
+ * moment," plus a login CTA and a 3-step quick start.
+ */
+export function approvalEmailTemplate(otp: string, name: string): string {
+  const greeting = name ? `You're in, ${name}! 🎉` : "You're in! 🎉";
+  const digits = otp
+    .split("")
+    .map(
+      (digit) =>
+        `<td style="width:44px; height:56px; text-align:center; vertical-align:middle; background-color:#0f1a2a; border-radius:8px; color:#00ff88; font-size:28px; font-weight:700; font-family:'Courier New',monospace;">${digit}</td>`,
+    )
+    .join(`<td style="width:8px;"></td>`);
+
+  const body = `
+    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+      Your Axla TaxLaya account is ready. Use the code below to log in — and
+      heads up, Q2 1701Q is due <strong>August 15</strong>, so let's get your
+      numbers in early.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 24px;">
+      <tr>${digits}</tr>
+    </table>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 28px;">
+      <tr>
+        <td style="border-radius:9999px; background-color:#00ff88;">
+          <a href="https://www.axla.space/login" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:#001A29; text-decoration:none;">
+            Login →
+          </a>
+        </td>
+      </tr>
+    </table>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:8px;">
+      <tr>
+        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
+          <p style="margin:0 0 8px; font-size:13px; font-weight:700; color:#001A29;">Quick start:</p>
+          <ol style="margin:0; padding-left:18px; font-size:13px; line-height:1.8; color:#334155;">
+            <li>Log in with the code above</li>
+            <li>Add your TIN &amp; RDO code in Settings</li>
+            <li>Run your Q2 1701Q calculation before Aug 15</li>
+          </ol>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:16px 0 0; font-size:12px; line-height:1.6; color:#94a3b8;">
+      This code expires in 10 minutes. Didn't request this? You can safely ignore this email.
+    </p>
+  `;
+
+  return emailShell(`You're approved — your Axla TaxLaya code is ${otp}`, body);
+}
+
 /** Post-verification welcome email. `name` is the recipient's first name. */
 export function welcomeEmailTemplate(name: string): string {
   const greeting = name ? `Welcome, ${name}! 👋` : "Welcome! 👋";
@@ -111,4 +166,26 @@ export function welcomeEmailTemplate(name: string): string {
   `;
 
   return emailShell("You're verified — welcome to TaxLaya", body);
+}
+
+/** Business-plan team invite notification. Purely informational — accepting doesn't grant login access yet (no multi-user access model exists), so it says so plainly rather than implying a working invite flow. */
+export function teamInviteEmailTemplate(ownerName: string, role: string): string {
+  const body = `
+    <p style="margin:0 0 4px; font-size:18px; color:#001A29; font-weight:700;">You've been invited to Axla TaxLaya</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+      ${ownerName} added you as a <strong>${role}</strong> on their Axla TaxLaya account.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:20px;">
+      <tr>
+        <td style="padding:12px 16px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
+          <p style="margin:0; font-size:13px; line-height:1.6; color:#001A29;">
+            This is a heads-up, not an account yet — shared team access isn't live yet, so there's
+            nothing to log into just yet. ${ownerName} will follow up once it is.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell(`${ownerName} invited you to Axla TaxLaya`, body);
 }

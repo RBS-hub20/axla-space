@@ -21,7 +21,17 @@ import { RecentChatsFeed } from "@/components/admin/RecentChatsFeed";
 import { WaitlistTable } from "@/components/admin/WaitlistTable";
 import { HateLevelDialog } from "@/components/admin/HateLevelDialog";
 import { DateRangeFilter, type DateRange } from "@/components/admin/DateRangeFilter";
+import { PaymentsStatsCards } from "@/components/admin/PaymentsStatsCards";
+import { RevenueChart } from "@/components/admin/RevenueChart";
+import { RecentPaymentsFeed } from "@/components/admin/RecentPaymentsFeed";
+import { SubscribersTable } from "@/components/admin/SubscribersTable";
+import { UserMap } from "@/components/admin/UserMap";
+import { TopReferrerCard } from "@/components/admin/TopReferrerCard";
 import type { ChatMessageRow, WaitlistRow } from "@/lib/supabase/admin";
+import type { PaymentsPayload } from "@/lib/payments-stats";
+import type { ReferralStats } from "@/app/api/referral/stats/route";
+
+type Tab = "overview" | "subscribers";
 
 const AUTO_REFRESH_MS = 30_000;
 
@@ -47,20 +57,25 @@ export function AdminDashboard() {
   const router = useRouter();
   const [signups, setSignups] = useState<WaitlistRow[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessageRow[]>([]);
+  const [payments, setPayments] = useState<PaymentsPayload | null>(null);
+  const [referralStats, setReferralStats] = useState<ReferralStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
   const [hateDialogOpen, setHateDialogOpen] = useState(false);
   const [dateRange, setDateRange] = useState<DateRange>("30d");
+  const [tab, setTab] = useState<Tab>("overview");
 
   const fetchData = useCallback(async () => {
     try {
-      const [waitlistRes, chatRes] = await Promise.all([
+      const [waitlistRes, chatRes, paymentsRes, referralRes] = await Promise.all([
         fetch("/api/admin/waitlist", { cache: "no-store" }),
         fetch("/api/admin/chat", { cache: "no-store" }),
+        fetch("/api/admin/payments", { cache: "no-store" }),
+        fetch("/api/referral/stats", { cache: "no-store" }),
       ]);
 
-      if (waitlistRes.status === 401 || chatRes.status === 401) {
+      if (waitlistRes.status === 401 || chatRes.status === 401 || paymentsRes.status === 401) {
         router.replace("/admin/login");
         return;
       }
@@ -75,6 +90,8 @@ export function AdminDashboard() {
 
       setSignups(waitlistData.signups);
       setChatMessages(chatRes.ok ? chatData.messages : []);
+      setPayments(paymentsRes.ok ? await paymentsRes.json() : null);
+      setReferralStats(referralRes.ok ? await referralRes.json() : null);
       setError("");
     } catch {
       setError("Network error while loading dashboard data.");
@@ -127,6 +144,9 @@ export function AdminDashboard() {
               <h1 className="bg-gradient-to-r from-white to-accent bg-clip-text text-2xl font-extrabold text-transparent">
                 Axla Admin 🔥
               </h1>
+              <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold text-gray-300 ring-1 ring-inset ring-white/10">
+                Admin v2
+              </span>
               <span className="flex items-center gap-1.5 rounded-full bg-taxlaya-green/10 px-2 py-0.5 text-xs font-medium text-taxlaya-green">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-taxlaya-green" />
                 Real-time
@@ -186,8 +206,38 @@ export function AdminDashboard() {
           </div>
         )}
 
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1 rounded-lg bg-gray-800 p-1">
+            <button
+              type="button"
+              onClick={() => setTab("overview")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                tab === "overview" ? "bg-taxlaya-green text-gray-950" : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              Overview
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("subscribers")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                tab === "subscribers" ? "bg-taxlaya-green text-gray-950" : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              Subscribers
+            </button>
+          </div>
+          {payments?.isMock && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/30">
+              Demo data — no live payments yet
+            </span>
+          )}
+        </div>
+
         {loading ? (
           <p className="text-gray-500">Loading dashboard...</p>
+        ) : tab === "subscribers" ? (
+          payments && <SubscribersTable payments={payments.payments} stats={payments.stats} onRefresh={fetchData} />
         ) : (
           <>
             <StatsCards
@@ -195,17 +245,36 @@ export function AdminDashboard() {
               chatMessages={filteredChatMessages}
               onHateLevelClick={() => setHateDialogOpen(true)}
             />
+            <div className="grid gap-4 lg:grid-cols-3">
+              <UserMap signups={filteredSignups} className="lg:col-span-2" />
+              <TopReferrerCard stats={referralStats} />
+            </div>
             <GraphTabs
               signups={filteredSignups}
               chatMessages={filteredChatMessages}
               days={RANGE_TO_DAYS[dateRange]}
             />
+
+            {payments && (
+              <div className="space-y-4">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Revenue</h2>
+                <PaymentsStatsCards stats={payments.stats} />
+                <RevenueChart data={payments.revenueByDay} />
+                <RecentPaymentsFeed payments={payments.recentPayments} />
+              </div>
+            )}
+
             <PeakHoursCard chatMessages={filteredChatMessages} />
             <div className="grid gap-6 lg:grid-cols-2">
               <TopQuestionsTable chatMessages={filteredChatMessages} />
               <RecentChatsFeed chatMessages={filteredChatMessages} />
             </div>
-            <WaitlistTable signups={filteredSignups} />
+            <WaitlistTable
+              signups={filteredSignups}
+              subscriptionsByEmail={payments?.subscriptionsByEmail}
+              referralCounts={referralStats?.countsByEmail}
+              onActionComplete={fetchData}
+            />
           </>
         )}
       </main>

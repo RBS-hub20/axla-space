@@ -4,11 +4,9 @@ import { SESSION_COOKIE } from "@/lib/session-cookie";
 /**
  * TODO: this only checks whether `taxlaya_session` is present — it does not
  * verify a signature or expiry (middleware runs on the Edge runtime, so it
- * can't use Prisma directly). Replace with real session verification
- * (NextAuth, or an edge-compatible signed JWT check) once that exists.
- * Today nothing ever sets this cookie, so every /dashboard request bounces
- * to /login — that's the intended fail-closed behavior until real
- * sign-in issuance is wired up.
+ * can't use Prisma directly). Real verification happens in `getCurrentUser()`
+ * (src/lib/session.ts) on the server component/route side; this is just a
+ * fast, edge-safe redirect for the common case of no cookie at all.
  */
 export function middleware(request: NextRequest) {
   const hasSession = request.cookies.has(SESSION_COOKIE);

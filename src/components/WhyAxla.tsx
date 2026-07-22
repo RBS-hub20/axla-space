@@ -1,3 +1,5 @@
+import { Reveal } from "@/components/Reveal";
+
 const points = [
   {
     title: "Built for PH freelancers, not US startups",
@@ -18,18 +20,20 @@ const points = [
 
 export function WhyAxla() {
   return (
-    <section className="bg-navy py-16 text-white sm:py-20">
+    <section className="bg-[#080F14] py-16 sm:py-20">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
-        <div className="text-center">
-          <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Why Axla</h2>
-        </div>
+        <Reveal className="text-center">
+          <h2 className="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">Why Axla</h2>
+        </Reveal>
         <div className="mt-12 grid gap-6 sm:grid-cols-3">
-          {points.map((point) => (
-            <div key={point.title} className="rounded-2xl bg-white/5 p-6 ring-1 ring-white/10">
-              <div className="mb-4 h-10 w-10 rounded-full bg-accent/20" aria-hidden />
-              <h3 className="text-lg font-bold">{point.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-slate-300">{point.description}</p>
-            </div>
+          {points.map((point, i) => (
+            <Reveal key={point.title} delayMs={i * 120}>
+              <div className="group rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition duration-300 hover:-translate-y-1 hover:border-[#00FF88]/30 hover:shadow-[0_20px_60px_-15px_rgba(0,255,136,0.25)]">
+                <span className="mb-4 block h-2 w-2 rounded-full bg-[#00FF88] shadow-[0_0_12px_2px_rgba(0,255,136,0.5)]" />
+                <h3 className="text-lg font-bold text-white">{point.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-slate-400">{point.description}</p>
+              </div>
+            </Reveal>
           ))}
         </div>
       </div>

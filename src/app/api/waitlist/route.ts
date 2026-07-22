@@ -35,18 +35,14 @@ export async function POST(request: Request) {
     );
   }
 
+  // Upsert on email: re-submitting (e.g. to change your hassle level) updates
+  // the existing row instead of erroring on the unique constraint.
   const { error } = await supabase
     .from("waitlist")
-    .insert({ email, bir_hate_level: birHateLevel });
+    .upsert({ email, bir_hate_level: birHateLevel }, { onConflict: "email" });
 
   if (error) {
-    if (error.code === "23505") {
-      return NextResponse.json(
-        { message: "You're already on the list. Salamat!" },
-        { status: 200 },
-      );
-    }
-    logError("waitlist: Supabase insert failed", error);
+    logError(`waitlist: Supabase upsert failed (url=${process.env.NEXT_PUBLIC_SUPABASE_URL ?? "unset"})`, error);
     return NextResponse.json({ error: "Something went wrong. Try again." }, { status: 500 });
   }
 
