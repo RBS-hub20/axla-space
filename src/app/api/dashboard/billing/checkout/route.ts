@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { createPayMongoCheckoutLink, createXenditInvoice, isPayMongoConfigured, isXenditConfigured } from "@/lib/payments";
 import { PLAN_PRICING, type BillingCycle, type PaidPlan } from "@/lib/plans";
+import { PROMO, isPromoActive } from "@/lib/promo";
 import { logError } from "@/lib/log-error";
 
 interface CheckoutBody {
   plan?: unknown;
   billingCycle?: unknown;
+  promoCode?: unknown;
 }
 
 function isPaidPlan(value: unknown): value is PaidPlan {
@@ -44,13 +46,28 @@ export async function POST(req: Request) {
 
   const plan = body.plan;
   const billingCycle = body.billingCycle;
-  const amount = PLAN_PRICING[plan][billingCycle];
+
+  // Same LAUNCH50 rule as /api/billing/checkout, both reading from the one
+  // shared src/lib/promo.ts — PRO monthly only, never trust a client-
+  // supplied amount, only whether the code+plan+cycle+expiry are valid.
+  const promoApplied =
+    typeof body.promoCode === "string" &&
+    body.promoCode === PROMO.code &&
+    plan === "pro" &&
+    billingCycle === "monthly" &&
+    isPromoActive();
+  const amount = promoApplied ? PROMO.proPricePesos : PLAN_PRICING[plan][billingCycle];
+
+  if (promoApplied) {
+    console.log(`dashboard/billing/checkout: LAUNCH50 promo applied — email=${user.email} plan=${plan} amount=${amount}`);
+  }
+
   const params = { email: user.email, plan, billingCycle, amount };
 
   if (isPayMongoConfigured) {
     const result = await createPayMongoCheckoutLink(params);
     if (result.url) {
-      return NextResponse.json({ url: result.url, provider: "paymongo" });
+      return NextResponse.json({ url: result.url, provider: "paymongo", amount, promoApplied });
     }
     logError("dashboard/billing/checkout: PayMongo checkout failed", new Error(result.error ?? "unknown"));
   }
@@ -58,7 +75,7 @@ export async function POST(req: Request) {
   if (isXenditConfigured) {
     const result = await createXenditInvoice(params);
     if (result.url) {
-      return NextResponse.json({ url: result.url, provider: "xendit" });
+      return NextResponse.json({ url: result.url, provider: "xendit", amount, promoApplied });
     }
     logError("dashboard/billing/checkout: Xendit checkout failed", new Error(result.error ?? "unknown"));
   }

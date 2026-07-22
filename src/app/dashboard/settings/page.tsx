@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle2, ChevronDown, Star, Pencil, Trash2, Plus, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { RDO_LIST } from "@/lib/dashboard/rdo-list";
 import { PLAN_PRICING, type BillingCycle, type PaidPlan } from "@/lib/plans";
+import { PROMO, isPromoActive } from "@/lib/promo";
 import { cn } from "@/lib/utils";
 import { UsageMeter } from "@/components/dashboard/UsageMeter";
 import { ConfettiBurst } from "@/components/dashboard/ConfettiBurst";
@@ -472,11 +473,19 @@ function UsageSection() {
 }
 
 function BillingSection() {
+  const searchParams = useSearchParams();
   const [billing, setBilling] = useState<Billing | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
   const [checkoutPlan, setCheckoutPlan] = useState<PaidPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Carries the /pricing page's "Claim 50% OFF Now" link (?promo=LAUNCH50)
+  // through to checkout — only actually applied server-side when it's
+  // still the real code, still active, and the plan/cycle it's valid for
+  // (pro + monthly); this is just forwarding what's in the URL, the route
+  // itself is what enforces validity.
+  const promoCodeParam = searchParams.get("promo");
 
   useEffect(() => {
     fetch("/api/dashboard/billing", { cache: "no-store" })
@@ -491,10 +500,11 @@ function BillingSection() {
     setError(null);
     setCheckoutPlan(plan);
     try {
+      const applyPromo = promoCodeParam === PROMO.code && plan === "pro" && cycle === "monthly" && isPromoActive();
       const res = await fetch("/api/dashboard/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan, billingCycle: cycle }),
+        body: JSON.stringify({ plan, billingCycle: cycle, ...(applyPromo ? { promoCode: PROMO.code } : {}) }),
       });
       const data = await res.json();
       if (!res.ok || !data.url) {
@@ -565,13 +575,28 @@ function BillingSection() {
             <div className="grid gap-3 sm:grid-cols-2">
               {(Object.keys(PLAN_PRICING) as PaidPlan[]).map((plan) => {
                 const isCurrent = currentPlan === plan;
+                const promoEligible =
+                  promoCodeParam === PROMO.code && plan === "pro" && cycle === "monthly" && isPromoActive();
                 return (
                   <div key={plan} className="rounded-lg border border-slate-700 p-4">
                     <p className="text-sm font-semibold text-slate-100">{PLAN_LABEL[plan]}</p>
-                    <p className="mt-1 text-2xl font-bold text-white">
-                      ₱{PLAN_PRICING[plan][cycle].toLocaleString()}
-                      <span className="text-sm font-normal text-slate-400">/{cycle === "monthly" ? "mo" : "yr"}</span>
-                    </p>
+                    {promoEligible ? (
+                      <p className="mt-1 flex items-baseline gap-2">
+                        <span className="text-2xl font-bold text-white">₱{PROMO.proPricePesos}</span>
+                        <span className="text-sm font-normal text-slate-400">/mo</span>
+                        <span className="text-sm font-medium text-slate-500 line-through">
+                          ₱{PLAN_PRICING.pro.monthly}
+                        </span>
+                        <span className="rounded-full bg-[#00FF85]/15 px-2 py-0.5 text-[10px] font-bold uppercase text-[#00FF85]">
+                          50% OFF
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-2xl font-bold text-white">
+                        ₱{PLAN_PRICING[plan][cycle].toLocaleString()}
+                        <span className="text-sm font-normal text-slate-400">/{cycle === "monthly" ? "mo" : "yr"}</span>
+                      </p>
+                    )}
                     <Button
                       type="button"
                       className="mt-3 w-full"
