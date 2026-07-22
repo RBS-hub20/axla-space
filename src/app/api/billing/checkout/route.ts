@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/session";
 import { createPayMongoCheckoutSession, isPayMongoConfigured } from "@/lib/payments";
 import { PLAN_PRICING, type PaidPlan } from "@/lib/plans";
 import { getUserPlan } from "@/lib/usage";
+import { PROMO, isPromoActive } from "@/lib/promo";
 import { logError } from "@/lib/log-error";
 
 const SUCCESS_URL = "https://www.axla.space/dashboard/forms?pro=success";
@@ -10,6 +11,7 @@ const CANCEL_URL = "https://www.axla.space/dashboard/forms?pro=cancel";
 
 interface CheckoutBody {
   plan?: unknown;
+  promoCode?: unknown;
 }
 
 function isPaidPlan(value: unknown): value is PaidPlan {
@@ -59,8 +61,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Payments aren't set up yet. Please try again later." }, { status: 503 });
   }
 
-  const amount = PLAN_PRICING[plan].monthly;
-  const planLabel = plan === "business" ? "Business" : "PRO";
+  // PRO only, per explicit scope — Business isn't discounted by this promo.
+  // Never trust a client-supplied amount, only whether the code+expiry are
+  // valid; the actual charged amount always comes from PROMO/PLAN_PRICING.
+  const promoApplied = typeof body.promoCode === "string" && body.promoCode === PROMO.code && plan === "pro" && isPromoActive();
+  const amount = promoApplied ? PROMO.proPricePesos : PLAN_PRICING[plan].monthly;
+
+  if (promoApplied) {
+    console.log(`billing/checkout: LAUNCH50 promo applied — email=${user.email} plan=${plan} amount=${amount}`);
+  }
 
   const result = await createPayMongoCheckoutSession({
     email: user.email,
@@ -71,8 +80,13 @@ export async function POST(req: Request) {
     // derivePlan() already looks for (`.includes("business")`) — this is
     // the one signal the webhook has for which plan to activate, so it
     // must say "business" verbatim for a business checkout, not just rely
-    // on the line item name.
-    description: `Axla TaxLaya ${plan} plan (monthly) — unlimited official 2551Q PDF + XML/DAT export + GCash auto-fill`,
+    // on the line item name. Promo code included here too so it's visible
+    // in the resulting payment record (payments.description) for tracking
+    // usage, since PayMongo's Checkout Sessions API doesn't expose a
+    // separate arbitrary metadata field this app currently reads back.
+    description: promoApplied
+      ? `Axla TaxLaya ${plan} plan (monthly) — LAUNCH50 promo (50% off) — unlimited official 2551Q PDF + XML/DAT export + GCash auto-fill`
+      : `Axla TaxLaya ${plan} plan (monthly) — unlimited official 2551Q PDF + XML/DAT export + GCash auto-fill`,
     successUrl: SUCCESS_URL,
     cancelUrl: CANCEL_URL,
   });
@@ -82,5 +96,5 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Couldn't start checkout. Please try again." }, { status: 502 });
   }
 
-  return NextResponse.json({ checkoutUrl: result.url, plan, amount });
+  return NextResponse.json({ checkoutUrl: result.url, plan, amount, promoApplied });
 }

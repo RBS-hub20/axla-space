@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { PLAN_PRICING } from "@/lib/plans";
+import { PROMO, isPromoActive } from "@/lib/promo";
 import { Reveal } from "@/components/Reveal";
 
 const FREE_FEATURES = ["1 filing per quarter", "5 receipt scans per month", "5 TaxLaya AI chats per day"];
@@ -39,13 +40,21 @@ export function PricingTeaser() {
           <Reveal delayMs={100}>
             <div className="group relative flex h-full flex-col rounded-2xl border-2 border-[#00FF88]/60 bg-[#00FF88]/[0.04] p-7 shadow-[0_0_60px_-15px_rgba(0,255,136,0.35)] transition duration-300 hover:-translate-y-1 hover:shadow-[0_0_80px_-10px_rgba(0,255,136,0.5)]">
               <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-[#00FF88] px-3 py-1 text-xs font-bold uppercase tracking-wide text-[#080F14]">
-                Best Value
+                {isPromoActive() ? "50% OFF — 60 Days Only" : "Best Value"}
               </span>
               <h3 className="font-bold text-white">Pro</h3>
-              <p className="mt-3 text-3xl font-extrabold text-white">
-                ₱{PLAN_PRICING.pro.monthly}
-                <span className="text-sm font-normal text-slate-400">/mo</span>
-              </p>
+              {isPromoActive() ? (
+                <p className="mt-3 flex items-baseline gap-2">
+                  <span className="text-3xl font-extrabold text-white">₱{PROMO.proPricePesos}</span>
+                  <span className="text-sm font-normal text-slate-400">/mo</span>
+                  <span className="text-base font-medium text-slate-500 line-through">₱{PLAN_PRICING.pro.monthly}</span>
+                </p>
+              ) : (
+                <p className="mt-3 text-3xl font-extrabold text-white">
+                  ₱{PLAN_PRICING.pro.monthly}
+                  <span className="text-sm font-normal text-slate-400">/mo</span>
+                </p>
+              )}
               <ul className="mt-5 flex-1 space-y-2.5 text-sm text-slate-300">
                 {PRO_FEATURES.map((f) => (
                   <li key={f} className="flex items-start gap-2">
@@ -58,7 +67,7 @@ export function PricingTeaser() {
                 href="/pricing"
                 className="mt-6 rounded-full bg-[#00FF88] px-6 py-3 text-center text-sm font-semibold text-[#080F14] transition hover:bg-[#22C55E]"
               >
-                See Pro details
+                {isPromoActive() ? "Claim 50% OFF Now →" : "See Pro details"}
               </Link>
             </div>
           </Reveal>

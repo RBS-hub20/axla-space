@@ -27,6 +27,7 @@ import { Bir2551QPaperPreview } from "@/components/dashboard/Bir2551QPaperPrevie
 import { BirFilingsHistory, type BirFiling } from "@/components/dashboard/BirFilingsHistory";
 import { ConfettiBurst } from "@/components/dashboard/ConfettiBurst";
 import { PLAN_PRICING } from "@/lib/plans";
+import { PROMO, isPromoActive } from "@/lib/promo";
 import type { UsageType } from "@/lib/usage";
 
 interface BirForm {
@@ -194,7 +195,7 @@ export default function BirFormsPage() {
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: "pro" }),
+        body: JSON.stringify({ plan: "pro", ...(isPromoActive() ? { promoCode: PROMO.code } : {}) }),
       });
       const data = await res.json();
 
@@ -1045,7 +1046,9 @@ export default function BirFormsPage() {
                   <Lock className="h-4 w-4" />
                   {checkoutLoading
                     ? "Opening checkout..."
-                    : `Unlock Official BIR PDF — ₱${PLAN_PRICING.pro.monthly}/mo (PRO)`}
+                    : isPromoActive()
+                      ? `Unlock Official BIR PDF — ₱${PROMO.proPricePesos}/mo (50% OFF!)`
+                      : `Unlock Official BIR PDF — ₱${PLAN_PRICING.pro.monthly}/mo (PRO)`}
                 </Button>
                 <p className="max-w-xs text-xs text-gray-400">
                   Unlimited official 2551Q PDF + XML/DAT export + GCash auto-fill. Same PRO plan used across Axla —

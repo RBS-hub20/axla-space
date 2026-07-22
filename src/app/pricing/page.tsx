@@ -5,7 +5,9 @@ import Link from "next/link";
 import { Check, X } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
+import { PromoCountdown } from "@/components/PromoCountdown";
 import { PLAN_PRICING, type BillingCycle } from "@/lib/plans";
+import { PROMO, isPromoActive } from "@/lib/promo";
 import { cn } from "@/lib/utils";
 
 const FREE_FEATURES = [
@@ -64,7 +66,10 @@ export default function PricingPage() {
 
   return (
     <main>
-      <Navbar />
+      <div className="sticky top-0 z-50">
+        <PromoCountdown />
+        <Navbar />
+      </div>
 
       <section className="bg-white py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4 text-center sm:px-6">
@@ -131,13 +136,21 @@ export default function PricingPage() {
             {/* Pro */}
             <div className="relative flex flex-col rounded-2xl border-2 border-accent bg-navy p-8 text-left shadow-xl shadow-accent/10">
               <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-accent px-3 py-1 text-xs font-bold uppercase tracking-wide text-navy">
-                Best Value
+                {cycle === "monthly" && isPromoActive() ? "50% OFF — 60 DAYS ONLY" : "Best Value"}
               </span>
               <h2 className="text-lg font-bold text-white">Pro</h2>
-              <p className="mt-3 text-4xl font-extrabold text-white">
-                ₱{PLAN_PRICING.pro[cycle].toLocaleString()}
-                <span className="text-base font-normal text-slate-400">/{cycle === "monthly" ? "mo" : "yr"}</span>
-              </p>
+              {cycle === "monthly" && isPromoActive() ? (
+                <p className="mt-3 flex items-baseline gap-2">
+                  <span className="text-4xl font-extrabold text-white">₱{PROMO.proPricePesos}</span>
+                  <span className="text-base font-normal text-slate-400">/mo</span>
+                  <span className="text-lg font-medium text-slate-400 line-through">₱{PLAN_PRICING.pro.monthly}</span>
+                </p>
+              ) : (
+                <p className="mt-3 text-4xl font-extrabold text-white">
+                  ₱{PLAN_PRICING.pro[cycle].toLocaleString()}
+                  <span className="text-base font-normal text-slate-400">/{cycle === "monthly" ? "mo" : "yr"}</span>
+                </p>
+              )}
               <p className="mt-1 text-sm text-slate-400">
                 {cycle === "yearly" ? `₱4,990/yr — 2 months free` : "For solo freelancers ready to scale"}
               </p>
@@ -150,10 +163,10 @@ export default function PricingPage() {
                 ))}
               </ul>
               <Link
-                href="/dashboard/settings"
+                href={cycle === "monthly" && isPromoActive() ? "/dashboard/settings?promo=LAUNCH50" : "/dashboard/settings"}
                 className="mt-8 rounded-full bg-accent px-6 py-3 text-center text-sm font-semibold text-navy transition hover:bg-accent-dark"
               >
-                Upgrade to Pro
+                {cycle === "monthly" && isPromoActive() ? "Claim 50% OFF Now →" : "Upgrade to Pro"}
               </Link>
             </div>
 

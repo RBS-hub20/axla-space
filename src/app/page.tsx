@@ -8,6 +8,7 @@ import { PricingTeaser } from "@/components/PricingTeaser";
 import { WaitlistSection } from "@/components/WaitlistSection";
 import { Footer } from "@/components/Footer";
 import { ReferralTracker } from "@/components/ReferralTracker";
+import { PromoCountdown } from "@/components/PromoCountdown";
 
 export const revalidate = 60;
 
@@ -17,7 +18,10 @@ export default function Home() {
       <Suspense fallback={null}>
         <ReferralTracker />
       </Suspense>
-      <Navbar />
+      <div className="sticky top-0 z-50">
+        <PromoCountdown />
+        <Navbar />
+      </div>
       <Hero />
       <SocialProof />
       <HowItWorks />
