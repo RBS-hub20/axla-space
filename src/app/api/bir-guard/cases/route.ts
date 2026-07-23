@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { hasBirGuardAccess } from "@/lib/dashboard/bir-guard-access";
+import { resend, isResendConfigured, RESEND_FROM_EMAIL } from "@/lib/resend";
+import { birGuardAlertEmailTemplate } from "@/lib/email-templates";
 import { logError } from "@/lib/log-error";
 
 const VALID_STATUSES = ["open", "penalty", "filed"];
@@ -122,6 +124,29 @@ export async function POST(req: Request) {
   if (error || !data) {
     logError("bir-guard/cases POST: insert failed", error);
     return NextResponse.json({ error: "Failed to save case." }, { status: 500 });
+  }
+
+  // Best-effort alert email when the newly-logged case carries a penalty —
+  // never blocks the response the UI is waiting on.
+  if ((status === "penalty" || penaltyAmount > 0) && isResendConfigured) {
+    (async () => {
+      try {
+        const [{ data: openCases }, { data: profile }] = await Promise.all([
+          supabaseAdmin.from("bir_open_cases").select("penalty_amount").eq("user_id", user.id).neq("status", "filed"),
+          supabaseAdmin.from("profiles").select("full_name").eq("id", user.id).maybeSingle(),
+        ]);
+        const totalPenalty = (openCases ?? []).reduce((sum, c) => sum + Number(c.penalty_amount), 0);
+        const { error: sendError } = await resend.emails.send({
+          from: RESEND_FROM_EMAIL,
+          to: user.email,
+          subject: `⚠️ ${(openCases ?? []).length} open BIR case${(openCases ?? []).length === 1 ? "" : "s"} — action required`,
+          html: birGuardAlertEmailTemplate(profile?.full_name || user.name || "", (openCases ?? []).length, totalPenalty),
+        });
+        if (sendError) logError("bir-guard/cases POST: alert email send failed (non-fatal)", sendError);
+      } catch (err) {
+        logError("bir-guard/cases POST: alert email send threw (non-fatal)", err);
+      }
+    })();
   }
 
   return NextResponse.json({ case: data });

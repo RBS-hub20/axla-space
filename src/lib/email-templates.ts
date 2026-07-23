@@ -168,6 +168,160 @@ export function welcomeEmailTemplate(name: string): string {
   return emailShell("You're verified — welcome to TaxLaya", body);
 }
 
+/**
+ * Sent immediately on joining the public waitlist (before approval) — a
+ * genuinely new email, not a duplicate of approvalEmailTemplate below
+ * (which fires later, once an admin approves and includes the actual
+ * login OTP). No fabricated user-count claim here — deliberately, since
+ * this app's real signup numbers don't support a "30K users" line and a
+ * recipient could trivially tell it's made up.
+ */
+export function waitlistWelcomeEmailTemplate(name: string): string {
+  const greeting = name ? `You're on the list, ${name}! 🎉` : "You're on the list! 🎉";
+
+  const body = `
+    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+      Thanks for joining the Axla waitlist. We're onboarding freelancers and small business
+      owners in batches — we'll email you the moment your account is approved, with your
+      login code ready to go.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:8px;">
+      <tr>
+        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
+          <p style="margin:0; font-size:13px; line-height:1.6; color:#001A29;">
+            💡 In the meantime: TaxLaya, our free AI tax assistant, is live right now at
+            <a href="https://axla.space" style="color:#001A29; font-weight:600;">axla.space</a> —
+            no approval needed to ask it a BIR question.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell("You're on the Axla waitlist", body);
+}
+
+/** Sent when a subscription is newly activated (PayMongo webhook) — plan-aware (Pro vs Business get different unlocks listed). */
+export function proUpgradeEmailTemplate(name: string, plan: "pro" | "business"): string {
+  const greeting = name ? `You're PRO now, ${name}! 🚀` : "You're PRO now! 🚀";
+  const planLabel = plan === "business" ? "Business" : "PRO";
+
+  const body = `
+    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+      Your Axla ${planLabel} plan is active. Unlimited filings, unlimited GCash uploads,
+      unlimited TaxLaya AI chat, and clean BIR-ready PDFs are unlocked.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:24px;">
+      <tr>
+        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
+          <p style="margin:0 0 6px; font-size:13px; font-weight:700; color:#001A29;">Also unlocked: BIR Guard 🛡️ (Beta)</p>
+          <p style="margin:0; font-size:13px; line-height:1.6; color:#334155;">
+            Track open BIR cases and penalties in one place — head to your dashboard to set it up.
+          </p>
+        </td>
+      </tr>
+    </table>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+      <tr>
+        <td style="border-radius:9999px; background-color:${GREEN};">
+          <a href="https://www.axla.space/dashboard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+            Open Dashboard →
+          </a>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell(`Your Axla ${planLabel} plan is active`, body);
+}
+
+/** Sent when a newly-logged BIR Guard case has a penalty or is otherwise flagged — the user added this themselves (manual entry), this just confirms/reminds. */
+export function birGuardAlertEmailTemplate(name: string, openCaseCount: number, totalPenalty: number): string {
+  const greeting = name ? `Heads up, ${name}` : "Heads up";
+  const penaltyLine =
+    totalPenalty > 0
+      ? `with a combined penalty of <strong>₱${totalPenalty.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong> logged so far`
+      : "logged";
+
+  const body = `
+    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting} — action required ⚠️</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+      BIR Guard shows <strong>${openCaseCount} open case${openCaseCount === 1 ? "" : "s"}</strong> on your account, ${penaltyLine}.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:24px;">
+      <tr>
+        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid #ef4444;">
+          <p style="margin:0; font-size:13px; line-height:1.6; color:#334155;">
+            This was logged from what you recorded after checking mytax.bir.gov.ph yourself — Axla
+            doesn't monitor your BIR account automatically. Review it in your dashboard, and
+            consider drafting a response letter if a penalty needs addressing.
+          </p>
+        </td>
+      </tr>
+    </table>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+      <tr>
+        <td style="border-radius:9999px; background-color:${GREEN};">
+          <a href="https://www.axla.space/dashboard/bir-guard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+            Open BIR Guard →
+          </a>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell(`${openCaseCount} open BIR case${openCaseCount === 1 ? "" : "s"} — action required`, body);
+}
+
+/** Sent when a user's BIR Guard cases go to zero open — a good-news counterpart to the alert email. Not auto-triggered yet (see route comment), but ready to call. */
+export function noCasesEmailTemplate(name: string): string {
+  const greeting = name ? `You're clear, ${name}! ✅` : "You're clear! ✅";
+
+  const body = `
+    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+      BIR Guard shows no open cases or penalties on your account right now. Walang bitin — keep it that way.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+      <tr>
+        <td style="border-radius:9999px; background-color:${GREEN};">
+          <a href="https://www.axla.space/dashboard/bir-guard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+            View BIR Guard →
+          </a>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell("You're clear — no open BIR cases", body);
+}
+
+/** Sent as a manual/promotional touchpoint for the LAUNCH50 promo — not auto-scheduled (see route comment: no cron/audience-list system exists to page through all free users daily), but ready to call for a one-off send. */
+export function promoCountdownEmailTemplate(name: string, daysLeft: number): string {
+  const greeting = name ? `${name}, don't miss this` : "Don't miss this";
+
+  const body = `
+    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting} 🔥</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+      Our launch promo ends in <strong>${daysLeft} day${daysLeft === 1 ? "" : "s"}</strong> — PRO is
+      50% off at <strong>₱249/mo</strong> (regularly ₱499/mo) while it lasts.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+      <tr>
+        <td style="border-radius:9999px; background-color:${GREEN};">
+          <a href="https://www.axla.space/pricing" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+            Claim 50% OFF →
+          </a>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell(`${daysLeft} day${daysLeft === 1 ? "" : "s"} left — PRO 50% off`, body);
+}
+
 /** Business-plan team invite notification. Purely informational — accepting doesn't grant login access yet (no multi-user access model exists), so it says so plainly rather than implying a working invite flow. */
 export function teamInviteEmailTemplate(ownerName: string, role: string): string {
   const body = `

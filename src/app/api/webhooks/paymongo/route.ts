@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { resend, isResendConfigured, RESEND_FROM_EMAIL } from "@/lib/resend";
+import { proUpgradeEmailTemplate } from "@/lib/email-templates";
 import { logError } from "@/lib/log-error";
 
 const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET_KEY;
@@ -197,6 +199,27 @@ export async function POST(req: Request) {
         { onConflict: "email" },
       );
       if (subError) logError("webhooks/paymongo: subscriptions upsert failed", subError);
+
+      // Best-effort — a failed send here should never affect the actual
+      // subscription activation above, which has already happened.
+      if (isResendConfigured) {
+        try {
+          const { data: profile } = await supabaseAdmin
+            .from("profiles")
+            .select("full_name")
+            .eq("email", details.email)
+            .maybeSingle();
+          const { error: sendError } = await resend.emails.send({
+            from: RESEND_FROM_EMAIL,
+            to: details.email,
+            subject: `Your Axla ${plan === "business" ? "Business" : "PRO"} plan is active 🚀`,
+            html: proUpgradeEmailTemplate(profile?.full_name || details.email.split("@")[0], plan as "pro" | "business"),
+          });
+          if (sendError) logError("webhooks/paymongo: pro-upgrade email send failed (non-fatal)", sendError);
+        } catch (err) {
+          logError("webhooks/paymongo: pro-upgrade email send threw (non-fatal)", err);
+        }
+      }
     }
   } catch (err) {
     logError("webhooks/paymongo: DB write threw", err);

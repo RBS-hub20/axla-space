@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import { resend, isResendConfigured, RESEND_FROM_EMAIL } from "@/lib/resend";
+import { waitlistWelcomeEmailTemplate } from "@/lib/email-templates";
 import { logError } from "@/lib/log-error";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -44,6 +46,23 @@ export async function POST(request: Request) {
   if (error) {
     logError(`waitlist: Supabase upsert failed (url=${process.env.NEXT_PUBLIC_SUPABASE_URL ?? "unset"})`, error);
     return NextResponse.json({ error: "Something went wrong. Try again." }, { status: 500 });
+  }
+
+  // Best-effort, non-blocking — a flaky email send should never fail the
+  // signup itself. The real "you're approved, here's your login code"
+  // email (approvalEmailTemplate) is separate and comes later.
+  if (isResendConfigured) {
+    try {
+      const { error: sendError } = await resend.emails.send({
+        from: RESEND_FROM_EMAIL,
+        to: email,
+        subject: "You're on the Axla waitlist 🎉",
+        html: waitlistWelcomeEmailTemplate(""),
+      });
+      if (sendError) logError("waitlist: welcome email send failed (non-fatal)", sendError);
+    } catch (err) {
+      logError("waitlist: welcome email send threw (non-fatal)", err);
+    }
   }
 
   return NextResponse.json({ message: "You're on the waitlist!" }, { status: 201 });
