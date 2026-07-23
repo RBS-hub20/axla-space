@@ -13,23 +13,32 @@ import {
   Users,
   BarChart3,
   Settings,
+  Shield,
   ShieldCheck,
   Menu,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
+interface NavItem {
+  label: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+  badge?: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Tax Calculator", href: "/dashboard/calculator", icon: Calculator },
   { label: "BIR Forms", href: "/dashboard/forms", icon: FileText },
+  { label: "BIR Guard", href: "/dashboard/bir-guard", icon: Shield, badge: "BETA" },
   { label: "GCash Upload", href: "/dashboard/upload", icon: Upload },
   { label: "Documents", href: "/dashboard/documents", icon: FolderOpen },
   { label: "Brain AI", href: "/dashboard/brain", icon: Bot },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
-const BUSINESS_PLAN_ITEMS = [
+const BUSINESS_PLAN_ITEMS: NavItem[] = [
   { label: "Team", href: "/dashboard/team", icon: Users },
   { label: "Annual ITR", href: "/dashboard/annual", icon: BarChart3 },
 ];
@@ -51,7 +60,7 @@ function NavLinks({
 
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {items.map(({ label, href, icon: Icon }) => {
+      {items.map(({ label, href, icon: Icon, badge }) => {
         const isActive = href === "/dashboard" ? pathname === href : pathname.startsWith(href);
 
         return (
@@ -68,6 +77,11 @@ function NavLinks({
           >
             <Icon className="h-4 w-4 shrink-0" strokeWidth={isActive ? 2.5 : 2} />
             {label}
+            {badge && (
+              <span className="ml-auto rounded-full bg-[#00FF85]/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#00FF85]">
+                {badge}
+              </span>
+            )}
           </Link>
         );
       })}

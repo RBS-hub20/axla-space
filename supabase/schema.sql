@@ -514,3 +514,38 @@ $$;
 
 grant execute on function public.sum_quarter_transactions(text, integer, smallint, text) to service_role;
 
+-- BIR Guard [BETA] — manual-entry version (no stored BIR credentials, no
+-- automated portal scraping — see 011_bir_guard.sql for why).
+create table if not exists public.bir_open_cases (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null references public.profiles (id) on delete cascade,
+  form_type text not null,
+  tax_period text not null,
+  status text not null default 'open' check (status in ('open', 'penalty', 'filed')),
+  penalty_amount numeric not null default 0,
+  due_date date,
+  notes text,
+  screenshot_url text,
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz
+);
+
+create index if not exists bir_open_cases_user_idx on public.bir_open_cases (user_id, created_at desc);
+
+alter table public.bir_open_cases enable row level security;
+grant select, insert, update, delete on public.bir_open_cases to service_role;
+
+create table if not exists public.bir_sync_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null references public.profiles (id) on delete cascade,
+  status text not null check (status in ('success', 'error')),
+  error_message text,
+  duration_ms integer,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists bir_sync_logs_user_idx on public.bir_sync_logs (user_id, created_at desc);
+
+alter table public.bir_sync_logs enable row level security;
+grant select, insert, update, delete on public.bir_sync_logs to service_role;
+
