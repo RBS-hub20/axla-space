@@ -1,6 +1,7 @@
 import { Check } from "lucide-react";
 import { Reveal } from "@/components/Reveal";
 import { DashboardMockup } from "@/components/DashboardMockup";
+import { PROMO, isPromoActive } from "@/lib/promo";
 
 const MICROCOPY = ["No credit card", "2-min setup", "BIR compliant"];
 
@@ -25,20 +26,30 @@ export function Hero() {
             </span>{" "}
             do it.
           </h1>
-          <p className="mt-4 text-sm font-semibold text-[#00FF88]">
-            Join Filipinos who hate BIR paperwork 🔥
-          </p>
+          {isPromoActive() ? (
+            <p className="mt-4 text-sm font-semibold text-[#00FF88]">
+              🔥 60 days only — reg ₱499, now ₱{PROMO.proPricePesos}/mo. No credit card for FREE plan.
+            </p>
+          ) : (
+            <p className="mt-4 text-sm font-semibold text-[#00FF88]">
+              Join Filipinos who hate BIR paperwork 🔥
+            </p>
+          )}
           <p className="mx-auto mt-3 max-w-xl text-lg text-slate-400 lg:mx-0">
             Upload your GCash history. Axla files your 2551Q + 1701Q in
             minutes. No CPA, no pila, no stress.
           </p>
 
           <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
+            {/* Still the real waitlist anchor either way — there's no live
+                self-serve signup or checkout yet, so this can never point
+                anywhere else without being a dead end. Only the label
+                changes with the promo. */}
             <a
               href="#waitlist"
               className="w-full rounded-full bg-[#00FF88] px-7 py-3.5 text-center text-base font-semibold text-[#080F14] shadow-lg shadow-[#00FF88]/25 transition hover:bg-[#22C55E] sm:w-auto"
             >
-              Join waitlist — Get 3 months free
+              {isPromoActive() ? `Claim 50% OFF — ₱${PROMO.proPricePesos}/mo →` : "Join waitlist — Get 3 months free"}
             </a>
           </div>
 

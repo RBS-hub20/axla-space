@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { isPromoActive } from "@/lib/promo";
 
 export function Navbar() {
   return (
@@ -15,12 +16,23 @@ export function Navbar() {
             priority
           />
         </Link>
-        <Link
-          href="#waitlist"
-          className="rounded-full bg-[#00FF88] px-4 py-2 text-sm font-semibold text-[#080F14] transition hover:bg-[#22C55E] sm:px-5"
-        >
-          Join waitlist
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/login"
+            className="rounded-full px-3 py-2 text-sm font-medium text-slate-300 transition hover:text-white sm:px-4"
+          >
+            Login
+          </Link>
+          {/* Still the real waitlist anchor — there's no live self-serve
+              signup yet, so this can't point anywhere else without being a
+              dead end for anyone not already waitlist-approved. */}
+          <Link
+            href="#waitlist"
+            className="rounded-full bg-[#00FF88] px-4 py-2 text-sm font-semibold text-[#080F14] transition hover:bg-[#22C55E] sm:px-5"
+          >
+            {isPromoActive() ? "Claim 50% OFF" : "Join waitlist"}
+          </Link>
+        </div>
       </nav>
     </header>
   );
