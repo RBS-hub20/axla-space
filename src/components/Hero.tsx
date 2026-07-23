@@ -15,7 +15,7 @@ export function Hero() {
       <div className="relative mx-auto grid max-w-6xl items-center gap-10 px-4 py-20 sm:px-6 sm:py-24 lg:grid-cols-2 lg:gap-8 lg:py-32">
         <Reveal className="text-center lg:text-left">
           <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-[#00FF88]">
-            First agent: RDO Runner (PH BIR taxes)
+            First agent: TaxLaya - RDO Runner (PH BIR taxes)
           </span>
           <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-5xl lg:text-[64px]">
             Stop doing your BIR taxes.
