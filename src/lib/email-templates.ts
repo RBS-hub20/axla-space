@@ -1,42 +1,52 @@
-const NAVY = "#001A29";
-const GREEN = "#00FF85";
+// Dark-mode email design tokens — matching the official Axla logo/site
+// theme, not the site's own on-page Tailwind classes (email clients need
+// plain inline hex, no CSS variables/Tailwind). ACCENT is the green
+// literally sampled from the logo's arrow, used for every green element in
+// these emails (buttons, highlight-box borders, OTP digits) so nothing
+// drifts to a slightly-off shade.
+const HEADER_BG = "#23292F";
+const BODY_BG = "#2A3138";
+const BODY_TEXT = "#E2E8F0";
+const MUTED_TEXT = "#94A3B8";
+const HIGHLIGHT_BG = "#333B44";
+const ACCENT = "#00C853";
+const BUTTON_TEXT = "#0F1417";
+const LOGO_URL = "https://www.axla.space/axla-logo-dark.png"; // same file already live in the site's own dark Navbar/Footer — not a new asset
 
-/** Shared HTML shell: dark header band, white body card, mobile-responsive via a fluid max-width table layout. */
+/** Shared HTML shell: dark header with the official Axla logo (no text, no white background), dark body card, mobile-responsive via a fluid max-width table layout. */
 function emailShell(preheader: string, bodyHtml: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TaxLaya</title>
+    <title>Axla</title>
   </head>
-  <body style="margin:0; padding:0; background-color:#f1f5f9; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <body style="margin:0; padding:0; background-color:#181D21; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
     <div style="display:none; max-height:0; overflow:hidden; opacity:0;">${preheader}</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9; padding:24px 12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#181D21; padding:24px 12px;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px; background-color:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 4px 16px rgba(0,26,41,0.08);">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px; background-color:${BODY_BG}; border-radius:16px; overflow:hidden; box-shadow:0 4px 16px rgba(0,0,0,0.35);">
             <tr>
-              <td style="background-color:${NAVY}; padding:28px 24px; text-align:center;">
-                <span style="color:#ffffff; font-size:20px; font-weight:700; letter-spacing:-0.02em;">
-                  Tax<span style="color:${GREEN};">Laya</span>
-                </span>
+              <td style="background-color:${HEADER_BG}; padding:32px 24px; text-align:center;">
+                <img src="${LOGO_URL}" width="140" alt="Axla" style="display:block; width:140px; max-width:140px; height:auto; margin:0 auto; border:0;" />
               </td>
             </tr>
             <tr>
-              <td style="padding:32px 28px;">
+              <td style="padding:32px 28px; color:${BODY_TEXT};">
                 ${bodyHtml}
               </td>
             </tr>
             <tr>
-              <td style="padding:20px 28px; background-color:#f8fafc; text-align:center;">
-                <p style="margin:0; font-size:12px; color:#64748b;">
+              <td style="padding:20px 28px; background-color:${HEADER_BG}; text-align:center;">
+                <p style="margin:0; font-size:12px; color:${MUTED_TEXT};">
                   Axla · TaxLaya — the AI tax assistant for Filipino freelancers.
                 </p>
-                <p style="margin:6px 0 0; font-size:12px; color:#94a3b8;">
-                  <a href="https://axla.space/privacy" style="color:#94a3b8; text-decoration:underline;">Privacy</a>
+                <p style="margin:6px 0 0; font-size:12px; color:${MUTED_TEXT};">
+                  <a href="https://axla.space/privacy" style="color:${MUTED_TEXT}; text-decoration:underline;">Privacy</a>
                   &nbsp;·&nbsp;
-                  <a href="https://axla.space/terms" style="color:#94a3b8; text-decoration:underline;">Terms</a>
+                  <a href="https://axla.space/terms" style="color:${MUTED_TEXT}; text-decoration:underline;">Terms</a>
                 </p>
               </td>
             </tr>
@@ -55,36 +65,36 @@ export function otpEmailTemplate(otp: string, name: string): string {
     .split("")
     .map(
       (digit) =>
-        `<td style="width:40px; height:48px; text-align:center; vertical-align:middle; background-color:${NAVY}; border-radius:8px; color:#ffffff; font-size:24px; font-weight:700; font-family:'Courier New',monospace;">${digit}</td>`,
+        `<td style="width:40px; height:48px; text-align:center; vertical-align:middle; background-color:${HIGHLIGHT_BG}; border-radius:8px; color:${ACCENT}; font-size:24px; font-weight:700; font-family:'Courier New',monospace;">${digit}</td>`,
     )
     .join(`<td style="width:8px;"></td>`);
 
   const body = `
-    <p style="margin:0 0 4px; font-size:16px; color:#001A29; font-weight:600;">${greeting}</p>
-    <p style="margin:0 0 24px; font-size:15px; line-height:1.6; color:#334155;">
-      Here's your one-time code to sign in to TaxLaya. Enter it within the next
+    <p style="margin:0 0 4px; font-size:16px; color:#ffffff; font-weight:600;">${greeting}</p>
+    <p style="margin:0 0 24px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
+      Here's your one-time code to sign in to Axla. Enter it within the next
       <strong>10 minutes</strong> to continue.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 24px;">
       <tr>${digits}</tr>
     </table>
-    <p style="margin:0 0 8px; font-size:14px; line-height:1.6; color:#64748b; text-align:center;">
+    <p style="margin:0 0 8px; font-size:14px; line-height:1.6; color:${MUTED_TEXT}; text-align:center;">
       Didn't ask for this code? You can safely ignore this email.
     </p>
-    <hr style="border:none; border-top:1px solid #e2e8f0; margin:24px 0;" />
-    <p style="margin:0; font-size:12px; line-height:1.6; color:#94a3b8;">
+    <hr style="border:none; border-top:1px solid #3a4148; margin:24px 0;" />
+    <p style="margin:0; font-size:12px; line-height:1.6; color:${MUTED_TEXT};">
       For your security, never share this code with anyone — not even someone claiming to be from Axla.
     </p>
   `;
 
-  return emailShell(`Your TaxLaya code is ${otp}`, body);
+  return emailShell(`Your Axla code is ${otp}`, body);
 }
 
 /**
  * Waitlist-approval email: sent once by the admin approve flow. Bigger OTP
- * digits than the regular sign-in email (28px on a dark navy tile) since
- * this is the recipient's very first code and needs to read as a "big
- * moment," plus a login CTA and a 3-step quick start.
+ * digits than the regular sign-in email since this is the recipient's very
+ * first code and needs to read as a "big moment," plus a login CTA and a
+ * 3-step quick start.
  */
 export function approvalEmailTemplate(otp: string, name: string): string {
   const greeting = name ? `You're in, ${name}! 🎉` : "You're in! 🎉";
@@ -92,14 +102,14 @@ export function approvalEmailTemplate(otp: string, name: string): string {
     .split("")
     .map(
       (digit) =>
-        `<td style="width:44px; height:56px; text-align:center; vertical-align:middle; background-color:#0f1a2a; border-radius:8px; color:#00ff88; font-size:28px; font-weight:700; font-family:'Courier New',monospace;">${digit}</td>`,
+        `<td style="width:44px; height:56px; text-align:center; vertical-align:middle; background-color:${HIGHLIGHT_BG}; border-radius:8px; color:${ACCENT}; font-size:28px; font-weight:700; font-family:'Courier New',monospace;">${digit}</td>`,
     )
     .join(`<td style="width:8px;"></td>`);
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
-      Your Axla TaxLaya account is ready. Use the code below to log in — and
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
+      Your Axla account is ready. Use the code below to log in — and
       heads up, Q2 1701Q is due <strong>August 15</strong>, so let's get your
       numbers in early.
     </p>
@@ -108,8 +118,8 @@ export function approvalEmailTemplate(otp: string, name: string): string {
     </table>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 28px;">
       <tr>
-        <td style="border-radius:9999px; background-color:#00ff88;">
-          <a href="https://www.axla.space/login" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:#001A29; text-decoration:none;">
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="https://www.axla.space/login" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
             Login →
           </a>
         </td>
@@ -117,9 +127,9 @@ export function approvalEmailTemplate(otp: string, name: string): string {
     </table>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:8px;">
       <tr>
-        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
-          <p style="margin:0 0 8px; font-size:13px; font-weight:700; color:#001A29;">Quick start:</p>
-          <ol style="margin:0; padding-left:18px; font-size:13px; line-height:1.8; color:#334155;">
+        <td style="padding:16px 18px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
+          <p style="margin:0 0 8px; font-size:13px; font-weight:700; color:#ffffff;">Quick start:</p>
+          <ol style="margin:0; padding-left:18px; font-size:13px; line-height:1.8; color:${BODY_TEXT};">
             <li>Log in with the code above</li>
             <li>Add your TIN &amp; RDO code in Settings</li>
             <li>Run your Q2 1701Q calculation before Aug 15</li>
@@ -127,12 +137,12 @@ export function approvalEmailTemplate(otp: string, name: string): string {
         </td>
       </tr>
     </table>
-    <p style="margin:16px 0 0; font-size:12px; line-height:1.6; color:#94a3b8;">
+    <p style="margin:16px 0 0; font-size:12px; line-height:1.6; color:${MUTED_TEXT};">
       This code expires in 10 minutes. Didn't request this? You can safely ignore this email.
     </p>
   `;
 
-  return emailShell(`You're approved — your Axla TaxLaya code is ${otp}`, body);
+  return emailShell(`You're approved — your Axla code is ${otp}`, body);
 }
 
 /** Post-verification welcome email. `name` is the recipient's first name. */
@@ -140,15 +150,15 @@ export function welcomeEmailTemplate(name: string): string {
   const greeting = name ? `Welcome, ${name}! 👋` : "Welcome! 👋";
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
-      You're verified and signed in to TaxLaya — your AI kakampi for BIR forms, deadlines,
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
+      You're verified and signed in to Axla — your AI kakampi for BIR forms, deadlines,
       and everything tax-related na nakakastress.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:24px;">
       <tr>
-        <td style="padding:12px 16px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
-          <p style="margin:0; font-size:14px; line-height:1.6; color:#001A29;">
+        <td style="padding:12px 16px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
+          <p style="margin:0; font-size:14px; line-height:1.6; color:${BODY_TEXT};">
             💬 Ask about 2551Q, 1701Q, 0619E deadlines and penalties, anytime — free, 24/7.
           </p>
         </td>
@@ -156,16 +166,16 @@ export function welcomeEmailTemplate(name: string): string {
     </table>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
       <tr>
-        <td style="border-radius:9999px; background-color:${GREEN};">
-          <a href="https://axla.space" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
-            Open TaxLaya →
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="https://axla.space" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
+            Open Axla →
           </a>
         </td>
       </tr>
     </table>
   `;
 
-  return emailShell("You're verified — welcome to TaxLaya", body);
+  return emailShell("You're verified — welcome to Axla", body);
 }
 
 /**
@@ -180,18 +190,18 @@ export function waitlistWelcomeEmailTemplate(name: string): string {
   const greeting = name ? `You're on the list, ${name}! 🎉` : "You're on the list! 🎉";
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
       Thanks for joining the Axla waitlist. We're onboarding freelancers and small business
       owners in batches — we'll email you the moment your account is approved, with your
       login code ready to go.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:8px;">
       <tr>
-        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
-          <p style="margin:0; font-size:13px; line-height:1.6; color:#001A29;">
+        <td style="padding:16px 18px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
+          <p style="margin:0; font-size:13px; line-height:1.6; color:${BODY_TEXT};">
             💡 In the meantime: TaxLaya, our free AI tax assistant, is live right now at
-            <a href="https://axla.space" style="color:#001A29; font-weight:600;">axla.space</a> —
+            <a href="https://axla.space" style="color:${ACCENT}; font-weight:600;">axla.space</a> —
             no approval needed to ask it a BIR question.
           </p>
         </td>
@@ -208,16 +218,16 @@ export function proUpgradeEmailTemplate(name: string, plan: "pro" | "business"):
   const planLabel = plan === "business" ? "Business" : "PRO";
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
       Your Axla ${planLabel} plan is active. Unlimited filings, unlimited GCash uploads,
       unlimited TaxLaya AI chat, and clean BIR-ready PDFs are unlocked.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:24px;">
       <tr>
-        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
-          <p style="margin:0 0 6px; font-size:13px; font-weight:700; color:#001A29;">Also unlocked: BIR Guard 🛡️ (Beta)</p>
-          <p style="margin:0; font-size:13px; line-height:1.6; color:#334155;">
+        <td style="padding:16px 18px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
+          <p style="margin:0 0 6px; font-size:13px; font-weight:700; color:#ffffff;">Also unlocked: BIR Guard 🛡️ (Beta)</p>
+          <p style="margin:0; font-size:13px; line-height:1.6; color:${BODY_TEXT};">
             Track open BIR cases and penalties in one place — head to your dashboard to set it up.
           </p>
         </td>
@@ -225,8 +235,8 @@ export function proUpgradeEmailTemplate(name: string, plan: "pro" | "business"):
     </table>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
       <tr>
-        <td style="border-radius:9999px; background-color:${GREEN};">
-          <a href="https://www.axla.space/dashboard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="https://www.axla.space/dashboard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
             Open Dashboard →
           </a>
         </td>
@@ -246,14 +256,14 @@ export function birGuardAlertEmailTemplate(name: string, openCaseCount: number, 
       : "logged";
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting} — action required ⚠️</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting} — action required ⚠️</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
       BIR Guard shows <strong>${openCaseCount} open case${openCaseCount === 1 ? "" : "s"}</strong> on your account, ${penaltyLine}.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:24px;">
       <tr>
-        <td style="padding:16px 18px; background-color:#f8fafc; border-radius:12px; border-left:3px solid #ef4444;">
-          <p style="margin:0; font-size:13px; line-height:1.6; color:#334155;">
+        <td style="padding:16px 18px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid #ef4444;">
+          <p style="margin:0; font-size:13px; line-height:1.6; color:${BODY_TEXT};">
             This was logged from what you recorded after checking mytax.bir.gov.ph yourself — Axla
             doesn't monitor your BIR account automatically. Review it in your dashboard, and
             consider drafting a response letter if a penalty needs addressing.
@@ -263,8 +273,8 @@ export function birGuardAlertEmailTemplate(name: string, openCaseCount: number, 
     </table>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
       <tr>
-        <td style="border-radius:9999px; background-color:${GREEN};">
-          <a href="https://www.axla.space/dashboard/bir-guard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="https://www.axla.space/dashboard/bir-guard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
             Open BIR Guard →
           </a>
         </td>
@@ -280,14 +290,14 @@ export function noCasesEmailTemplate(name: string): string {
   const greeting = name ? `You're clear, ${name}! ✅` : "You're clear! ✅";
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting}</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
       BIR Guard shows no open cases or penalties on your account right now. Walang bitin — keep it that way.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
       <tr>
-        <td style="border-radius:9999px; background-color:${GREEN};">
-          <a href="https://www.axla.space/dashboard/bir-guard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="https://www.axla.space/dashboard/bir-guard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
             View BIR Guard →
           </a>
         </td>
@@ -303,15 +313,15 @@ export function promoCountdownEmailTemplate(name: string, daysLeft: number): str
   const greeting = name ? `${name}, don't miss this` : "Don't miss this";
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#001A29; font-weight:700;">${greeting} 🔥</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting} 🔥</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
       Our launch promo ends in <strong>${daysLeft} day${daysLeft === 1 ? "" : "s"}</strong> — PRO is
       50% off at <strong>₱249/mo</strong> (regularly ₱499/mo) while it lasts.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
       <tr>
-        <td style="border-radius:9999px; background-color:${GREEN};">
-          <a href="https://www.axla.space/pricing" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${NAVY}; text-decoration:none;">
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="https://www.axla.space/pricing" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
             Claim 50% OFF →
           </a>
         </td>
@@ -325,14 +335,14 @@ export function promoCountdownEmailTemplate(name: string, daysLeft: number): str
 /** Business-plan team invite notification. Purely informational — accepting doesn't grant login access yet (no multi-user access model exists), so it says so plainly rather than implying a working invite flow. */
 export function teamInviteEmailTemplate(ownerName: string, role: string): string {
   const body = `
-    <p style="margin:0 0 4px; font-size:18px; color:#001A29; font-weight:700;">You've been invited to Axla TaxLaya</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:#334155;">
-      ${ownerName} added you as a <strong>${role}</strong> on their Axla TaxLaya account.
+    <p style="margin:0 0 4px; font-size:18px; color:#ffffff; font-weight:700;">You've been invited to Axla</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
+      ${ownerName} added you as a <strong>${role}</strong> on their Axla account.
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:20px;">
       <tr>
-        <td style="padding:12px 16px; background-color:#f8fafc; border-radius:12px; border-left:3px solid ${GREEN};">
-          <p style="margin:0; font-size:13px; line-height:1.6; color:#001A29;">
+        <td style="padding:12px 16px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
+          <p style="margin:0; font-size:13px; line-height:1.6; color:${BODY_TEXT};">
             This is a heads-up, not an account yet — shared team access isn't live yet, so there's
             nothing to log into just yet. ${ownerName} will follow up once it is.
           </p>
@@ -341,5 +351,5 @@ export function teamInviteEmailTemplate(ownerName: string, role: string): string
     </table>
   `;
 
-  return emailShell(`${ownerName} invited you to Axla TaxLaya`, body);
+  return emailShell(`${ownerName} invited you to Axla`, body);
 }
