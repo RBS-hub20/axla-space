@@ -40,17 +40,36 @@ function getSpeechSynthesis(): SpeechSynthesis | null {
   return window.speechSynthesis;
 }
 
-/** Prefers an en-PH voice, then any English female-sounding voice, then whatever's default. */
-function pickVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  if (voices.length === 0) return null;
-  const enPh = voices.find((v) => v.lang.toLowerCase() === "en-ph");
-  if (enPh) return enPh;
-  const usFemale = voices.find((v) => v.lang.toLowerCase().startsWith("en-us") && /female|samantha|zira|susan/i.test(v.name));
-  if (usFemale) return usFemale;
-  const anyUs = voices.find((v) => v.lang.toLowerCase().startsWith("en-us"));
-  if (anyUs) return anyUs;
-  const anyEnglish = voices.find((v) => v.lang.toLowerCase().startsWith("en"));
-  return anyEnglish ?? voices[0];
+// Priority order for a Tony-Stark-Jarvis-ish male voice — checked as
+// case-insensitive substrings against each voice's name, in order. First
+// match wins; nothing here is guaranteed present in any given browser/OS.
+const MALE_VOICE_NAME_PRIORITY = [
+  "daniel", // macOS/iOS en-GB male
+  "google uk english male",
+  "microsoft david",
+  "guy", // Microsoft Edge "Guy" (en-US male)
+  "alex", // macOS en-US male
+  "fred", // macOS en-US male (novelty voice, still male)
+];
+
+/** Ranks every available voice by how "Jarvis-like male" it is, best first. Never mutates the input array. */
+function rankMaleVoices(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice[] {
+  function score(v: SpeechSynthesisVoice): number {
+    const name = v.name.toLowerCase();
+    const lang = v.lang.toLowerCase();
+    const priorityIndex = MALE_VOICE_NAME_PRIORITY.findIndex((keyword) => name.includes(keyword));
+    if (priorityIndex !== -1) return 1000 - priorityIndex; // exact known-name matches rank highest, in list order
+    if (/female|woman|samantha|zira|susan|victoria|karen|moira|tessa/i.test(name)) return -100; // actively avoid known female voices
+    const looksMale = /male/i.test(name) && !/female/i.test(name);
+    if (looksMale && lang.startsWith("en-gb")) return 50;
+    if (looksMale && lang.startsWith("en-us")) return 40;
+    if (looksMale) return 30;
+    if (lang.startsWith("en-gb")) return 10;
+    if (lang.startsWith("en-us")) return 5;
+    if (lang.startsWith("en")) return 1;
+    return 0;
+  }
+  return [...voices].filter((v) => v.lang.toLowerCase().startsWith("en")).sort((a, b) => score(b) - score(a));
 }
 
 export function JarvisBar() {
@@ -63,8 +82,11 @@ export function JarvisBar() {
   const [voiceOutSupported, setVoiceOutSupported] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
   const [unsupportedHint, setUnsupportedHint] = useState<string | null>(null);
+  const [rankedVoices, setRankedVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>("");
+  const [elevenLabsConfigured, setElevenLabsConfigured] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     setVoiceInSupported(Boolean(getSpeechRecognition()));
@@ -73,30 +95,71 @@ export function JarvisBar() {
     if (!synth) return;
 
     function loadVoices() {
-      voicesRef.current = synth!.getVoices();
+      const ranked = rankMaleVoices(synth!.getVoices());
+      setRankedVoices(ranked);
+      setSelectedVoiceURI((current) => current || ranked[0]?.voiceURI || "");
+      if (ranked.length === 0) {
+        console.warn("Jarvis: no male-ish English voice found on this browser/OS — falling back to the system default voice.");
+      }
     }
     loadVoices();
     synth.addEventListener("voiceschanged", loadVoices);
     return () => synth.removeEventListener("voiceschanged", loadVoices);
   }, []);
 
-  const speak = useCallback(
+  const speakBrowser = useCallback(
     (text: string) => {
       const synth = getSpeechSynthesis();
-      if (!synth || !voiceOn) return;
+      if (!synth) return;
       synth.cancel();
 
       const utterance = new SpeechSynthesisUtterance(text);
-      const voice = pickVoice(voicesRef.current.length ? voicesRef.current : synth.getVoices());
+      const voice = rankedVoices.find((v) => v.voiceURI === selectedVoiceURI) ?? rankedVoices[0] ?? null;
       if (voice) utterance.voice = voice;
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
+      // Slightly slower and deeper than default — reads less like a phone
+      // assistant, closer to a measured butler-AI cadence.
+      utterance.rate = 0.95;
+      utterance.pitch = 0.85;
+      utterance.volume = 1.0;
       utterance.onstart = () => setSpeaking(true);
       utterance.onend = () => setSpeaking(false);
       utterance.onerror = () => setSpeaking(false);
       synth.speak(utterance);
     },
-    [voiceOn],
+    [rankedVoices, selectedVoiceURI],
+  );
+
+  const speak = useCallback(
+    async (text: string) => {
+      if (!voiceOn) return;
+
+      if (elevenLabsConfigured) {
+        try {
+          audioRef.current?.pause();
+          setSpeaking(true);
+          const res = await fetch("/api/admin/jarvis/speak", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+          });
+          if (!res.ok) throw new Error("ElevenLabs request failed");
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onended = () => setSpeaking(false);
+          audio.onerror = () => setSpeaking(false);
+          await audio.play();
+          return;
+        } catch {
+          // Falls through to browser TTS below — never leave the admin with total silence just because ElevenLabs hiccuped.
+          setSpeaking(false);
+        }
+      }
+
+      speakBrowser(text);
+    },
+    [voiceOn, elevenLabsConfigured, speakBrowser],
   );
 
   const ask = useCallback(
@@ -111,6 +174,7 @@ export function JarvisBar() {
           setHistory((h) => [{ query: q, answer, voiceAnswer: answer, stats: {} }, ...h].slice(0, 3));
           return;
         }
+        setElevenLabsConfigured(Boolean(data.elevenLabsConfigured));
         setHistory((h) => [{ query: q, answer: data.answer, voiceAnswer: data.voiceAnswer, stats: data.stats }, ...h].slice(0, 3));
         speak(data.voiceAnswer);
       } catch {
@@ -157,7 +221,11 @@ export function JarvisBar() {
 
   function toggleVoiceOn() {
     setVoiceOn((on) => {
-      if (on) getSpeechSynthesis()?.cancel();
+      if (on) {
+        getSpeechSynthesis()?.cancel();
+        audioRef.current?.pause();
+        setSpeaking(false);
+      }
       return !on;
     });
   }
@@ -170,7 +238,7 @@ export function JarvisBar() {
             e.preventDefault();
             ask(query);
           }}
-          className="flex items-center gap-2"
+          className="flex flex-wrap items-center gap-2"
         >
           <div className="relative">
             <Button
@@ -193,20 +261,37 @@ export function JarvisBar() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={listening ? "Listening..." : `Ask Jarvis: "Report today" or "Invoice report" or "How many DTI?"`}
-            className={`border-gray-700 bg-gray-900 text-white transition ${listening ? "animate-pulse border-[#00FF88] ring-2 ring-[#00FF88]/40" : ""}`}
+            className={`min-w-[180px] flex-1 border-gray-700 bg-gray-900 text-white transition ${listening ? "animate-pulse border-[#00FF88] ring-2 ring-[#00FF88]/40" : ""}`}
           />
 
           {voiceOutSupported && (
-            <Button
-              type="button"
-              onClick={toggleVoiceOn}
-              title={voiceOn ? "Voice replies on" : "Voice replies off"}
-              variant="outline"
-              className={`shrink-0 gap-1.5 border-gray-700 ${voiceOn ? "text-[#00FF88]" : "text-gray-500"}`}
-            >
-              {voiceOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-              {voiceOn ? "On" : "Off"}
-            </Button>
+            <>
+              <Button
+                type="button"
+                onClick={toggleVoiceOn}
+                title={voiceOn ? "Voice replies on" : "Voice replies off"}
+                variant="outline"
+                className={`shrink-0 gap-1.5 border-gray-700 ${voiceOn ? "text-[#00FF88]" : "text-gray-500"}`}
+              >
+                {voiceOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                {voiceOn ? "On" : "Off"}
+              </Button>
+
+              {!elevenLabsConfigured && rankedVoices.length > 0 && (
+                <select
+                  value={selectedVoiceURI}
+                  onChange={(e) => setSelectedVoiceURI(e.target.value)}
+                  title="Jarvis voice"
+                  className="rounded-lg border border-gray-700 bg-gray-900 px-2 py-2 text-xs text-gray-200"
+                >
+                  {rankedVoices.slice(0, 5).map((v) => (
+                    <option key={v.voiceURI} value={v.voiceURI}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
           )}
 
           <Button type="submit" disabled={loading} className="shrink-0 gap-1.5 bg-[#00FF88] text-gray-950 hover:bg-[#00e07a]">
@@ -215,7 +300,10 @@ export function JarvisBar() {
           </Button>
         </form>
 
-        <p className="text-xs text-gray-600">Tip: Click the mic and say &ldquo;Jarvis report today&rdquo; or &ldquo;How many DTI?&rdquo;</p>
+        <p className="text-xs text-gray-600">
+          Tip: Click the mic and say &ldquo;Jarvis report today&rdquo; or &ldquo;How many DTI?&rdquo;
+          {elevenLabsConfigured ? " — ElevenLabs voice active." : ""}
+        </p>
 
         {history.length > 0 && (
           <div className="space-y-2">

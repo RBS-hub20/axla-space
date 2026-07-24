@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAdminRequestAuthorized } from "@/lib/admin";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { isElevenLabsConfigured } from "@/lib/voice/elevenlabs";
 import { logError } from "@/lib/log-error";
 
 interface JarvisStats {
@@ -17,6 +18,22 @@ interface JarvisStats {
   secCount: number;
   mayorsCount: number;
   paymongoRevenue: number;
+  /** Real business name of Axla's own DTI registration, if one is on file — never fabricated. */
+  axlaDtiName: string | null;
+}
+
+const JARVIS_EASTER_EGGS = [
+  "As you wish, sir.",
+  "I've taken the liberty of checking the latest figures.",
+  "Systems are at 100 percent, sir. Unlike your sleep schedule.",
+];
+
+function maybeEasterEgg(): string {
+  // 10% chance, real Math.random() — this runs in a normal Next.js API
+  // route, not a workflow script, so there's no determinism constraint here.
+  if (Math.random() >= 0.1) return "";
+  const line = JARVIS_EASTER_EGGS[Math.floor(Math.random() * JARVIS_EASTER_EGGS.length)];
+  return ` ${line}`;
 }
 
 function isSameDay(a: Date, b: Date) {
@@ -44,7 +61,7 @@ async function gatherStats(): Promise<JarvisStats> {
     supabaseAdmin.from("waitlist").select("bir_hate_level, created_at"),
     supabaseAdmin.from("chat_messages").select("created_at, message"),
     supabaseAdmin.from("invoices").select("total, status, created_at"),
-    supabaseAdmin.from("business_registrations").select("type"),
+    supabaseAdmin.from("business_registrations").select("type, data"),
     supabaseAdmin.from("payments").select("amount, status"),
   ]);
 
@@ -67,6 +84,13 @@ async function gatherStats(): Promise<JarvisStats> {
   const secCount = regRows.filter((r) => r.type === "SEC").length;
   const mayorsCount = regRows.filter((r) => r.type === "MAYORS").length;
 
+  function dtiBusinessName(row: (typeof regRows)[number]): string {
+    const data = row.data as Record<string, unknown>;
+    return Array.isArray(data.businessNameOptions) ? String(data.businessNameOptions[0] ?? "") : "";
+  }
+  const axlaDtiRow = regRows.find((r) => r.type === "DTI" && dtiBusinessName(r).toUpperCase().includes("AXLA"));
+  const axlaDtiName = axlaDtiRow ? dtiBusinessName(axlaDtiRow) : null;
+
   const paymongoRevenue = (payments ?? []).filter((p) => p.status === "paid").reduce((sum, p) => sum + Number(p.amount), 0);
 
   return {
@@ -83,6 +107,7 @@ async function gatherStats(): Promise<JarvisStats> {
     secCount,
     mayorsCount,
     paymongoRevenue,
+    axlaDtiName,
   };
 }
 
@@ -127,48 +152,61 @@ function buildAnswer(q: string, stats: JarvisStats): string {
 }
 
 /**
- * Same numbers as buildAnswer(), reworded for speech — no emojis (screen
- * readers/TTS engines mangle them), full words instead of symbols ("PHP"
- * spoken, "/10" said as "out of 10"), and a "Hello boss" greeting per spec.
+ * Same numbers as buildAnswer(), reworded for speech in a Jarvis/British-
+ * butler register — no emojis (TTS engines mangle them), full words
+ * instead of symbols ("pesos" not "PHP", "out of 10" not "/10"), "sir"
+ * instead of "boss". The AXLA DTI line only appears if a real DTI kit with
+ * "AXLA" in the business name is actually on file (axlaDtiName) — never
+ * asserted when there isn't one, and always says whatever name is really
+ * stored rather than a hardcoded string.
  */
 function buildVoiceAnswer(q: string, stats: JarvisStats): string {
   const query = q.toLowerCase();
+  const egg = maybeEasterEgg();
 
   if (query.includes("invoice")) {
     return (
-      `You have ${stats.invoicesTotal} invoices total, ${stats.invoicesToday} today. ` +
-      `Paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. Outstanding: ${stats.invoicesOutstanding.toLocaleString()} pesos.`
+      `Sir, you have ${stats.invoicesTotal} invoices total, ${stats.invoicesToday} today. ` +
+      `Paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. Outstanding: ${stats.invoicesOutstanding.toLocaleString()} pesos.${egg}`
     );
   }
 
   if (query.includes("dti") || query.includes("sec") || query.includes("mayor")) {
-    return `Business Toolkit registrations: ${stats.dtiCount} D T I, ${stats.secCount} SEC, ${stats.mayorsCount} Mayor's Permit.`;
+    const axlaLine = stats.axlaDtiName ? ` ${stats.axlaDtiName}, certified.` : "";
+    return `Business Toolkit registrations, sir: ${stats.dtiCount} D T I, ${stats.secCount} SEC, ${stats.mayorsCount} Mayor's Permit.${axlaLine}${egg}`;
   }
 
   if (query.includes("hate")) {
-    return `Average BIR hate level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups.`;
+    return `The average frustration level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups, sir.${egg}`;
   }
 
   if (query.includes("revenue") || query.includes("mrr") || query.includes("paymongo")) {
     return (
-      `PayMongo revenue is ${stats.paymongoRevenue.toLocaleString()} pesos. Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. ` +
-      `Combined total: ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()} pesos.`
+      `PayMongo revenue stands at ${stats.paymongoRevenue.toLocaleString()} pesos. Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. ` +
+      `Combined total: ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()} pesos, sir.${egg}`
     );
   }
 
+  const dtiLine = stats.axlaDtiName
+    ? `One DTI kit registered — ${stats.axlaDtiName}, certified. `
+    : stats.dtiCount > 0
+      ? `${stats.dtiCount} D T I kit${stats.dtiCount === 1 ? "" : "s"} on file. `
+      : "";
+
   if (query.includes("today") || query.includes("report")) {
     return (
-      `Hello boss, we have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, with average hate level ${stats.avgHateLevel} out of 10, ` +
-      `${stats.invoicesTotal} invoices, ${stats.dtiCount} D T I kit${stats.dtiCount === 1 ? "" : "s"}. ` +
-      `Today's signups ${stats.signupsToday}, messages ${stats.messagesToday}.`
+      `Good evening, sir. We currently have ${stats.totalUsers} users, ${stats.totalWaitlist} on the waitlist with an average ` +
+      `frustration level of ${stats.avgHateLevel} out of 10. ${dtiLine}` +
+      `${stats.invoicesTotal === 0 ? "No invoices yet." : `${stats.invoicesTotal} invoices on file.`} ` +
+      `Today's signups: ${stats.signupsToday}, messages: ${stats.messagesToday}. All systems operational, sir.${egg}`
     );
   }
 
   const kitTotal = stats.dtiCount + stats.secCount + stats.mayorsCount;
   return (
-    `Hello boss, we have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, with average hate level ${stats.avgHateLevel} out of 10, ` +
-    `${stats.invoicesTotal} invoices, and ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"}. ` +
-    `Try asking for a report today, an invoice report, or how many D T I.`
+    `Good evening, sir. We currently have ${stats.totalUsers} users and ${stats.totalWaitlist} on the waitlist, average frustration ` +
+    `level ${stats.avgHateLevel} out of 10. ${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"} in total. ` +
+    `You may ask for a report today, an invoice report, or how many D T I, sir.${egg}`
   );
 }
 
@@ -186,7 +224,7 @@ export async function GET(req: Request) {
     const stats = await gatherStats();
     const answer = buildAnswer(q, stats);
     const voiceAnswer = buildVoiceAnswer(q, stats);
-    return NextResponse.json({ answer, voiceAnswer, stats });
+    return NextResponse.json({ answer, voiceAnswer, stats, elevenLabsConfigured: isElevenLabsConfigured });
   } catch (err) {
     logError("admin/jarvis GET: query failed", err);
     return NextResponse.json({ error: "Jarvis couldn't pull the numbers right now." }, { status: 500 });

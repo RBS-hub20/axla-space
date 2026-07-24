@@ -1,0 +1,40 @@
+import { NextResponse } from "next/server";
+import { isAdminRequestAuthorized } from "@/lib/admin";
+import { synthesizeSpeech, isElevenLabsConfigured } from "@/lib/voice/elevenlabs";
+import { logError } from "@/lib/log-error";
+
+interface SpeakBody {
+  text?: unknown;
+}
+
+/** Proxies ElevenLabs TTS — the browser never sees ELEVENLABS_API_KEY, only this route does. */
+export async function POST(req: Request) {
+  if (!(await isAdminRequestAuthorized())) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 403 });
+  }
+  if (!isElevenLabsConfigured) {
+    return NextResponse.json({ error: "ElevenLabs is not configured." }, { status: 503 });
+  }
+
+  let body: SpeakBody;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  if (typeof body.text !== "string" || !body.text.trim()) {
+    return NextResponse.json({ error: "Text is required." }, { status: 400 });
+  }
+
+  const result = await synthesizeSpeech(body.text.slice(0, 2000));
+  if (!result.audio) {
+    logError("admin/jarvis/speak POST: synthesis failed", new Error(result.error ?? "unknown"));
+    return NextResponse.json({ error: result.error ?? "Speech synthesis failed." }, { status: 502 });
+  }
+
+  return new NextResponse(new Uint8Array(result.audio), {
+    status: 200,
+    headers: { "Content-Type": "audio/mpeg" },
+  });
+}
