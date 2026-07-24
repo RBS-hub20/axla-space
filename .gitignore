@@ -8,7 +8,13 @@
 /.next
 /out
 
-# env files — never commit secrets
+# env files — never commit secrets. Broad `.env*` catches accidental
+# duplicate/backup copies too (e.g. ".env 2", ".env 2.local" — a macOS
+# "keep both files" style duplicate found untracked on disk 2026-07-24,
+# confirmed never committed, deleted). Explicit lines kept below for
+# clarity even though the glob already covers them.
+.env*
+!.env.example
 .env
 .env.local
 .env.*.local
