@@ -553,7 +553,7 @@ grant select, insert, update, delete on public.bir_sync_logs to service_role;
 create table if not exists public.business_registrations (
   id uuid primary key default gen_random_uuid(),
   user_id text not null references public.profiles (id) on delete cascade,
-  type text not null check (type in ('DTI', 'SEC', 'MAYORS')),
+  type text not null check (type in ('OPEN', 'CLOSE', 'SPA', 'DTI', 'SEC', 'MAYORS')),
   data jsonb not null default '{}'::jsonb,
   status text not null default 'generated',
   created_at timestamptz not null default now()

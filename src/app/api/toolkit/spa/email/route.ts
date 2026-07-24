@@ -9,6 +9,7 @@ import {
   generateSpaNotaryGuide,
   type SpaData,
 } from "@/lib/pdf/generate-toolkit-pdf";
+import { saveBusinessRegistration } from "@/lib/dashboard/business-registrations";
 import { logError } from "@/lib/log-error";
 
 interface SpaEmailBody {
@@ -110,6 +111,8 @@ export async function POST(req: Request) {
       logError("toolkit/spa/email: send failed", error);
       return NextResponse.json({ error: error.message || "Couldn't send the email." }, { status: 502 });
     }
+
+    await saveBusinessRegistration(user.id, "SPA", { ...data, emailedTo: body.representativeEmail });
 
     return NextResponse.json({ success: true });
   } catch (err) {

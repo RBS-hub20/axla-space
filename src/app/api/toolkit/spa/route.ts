@@ -8,6 +8,7 @@ import {
   type SpaData,
 } from "@/lib/pdf/generate-toolkit-pdf";
 import { bundleAsZip } from "@/lib/pdf/zip-bundle";
+import { saveBusinessRegistration } from "@/lib/dashboard/business-registrations";
 import { logError } from "@/lib/log-error";
 
 interface SpaBody {
@@ -85,6 +86,8 @@ export async function POST(req: Request) {
       { name: "rdo-cover-letter.pdf", bytes: cover },
       { name: "notary-guide.pdf", bytes: guide },
     ]);
+
+    await saveBusinessRegistration(user.id, "SPA", { ...data });
 
     return new NextResponse(Buffer.from(zip), {
       status: 200,

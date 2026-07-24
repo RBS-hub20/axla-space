@@ -51,25 +51,79 @@ RULES:
 1. Never make up BIR laws. If unsure: "Di ko sure yan po, check mo sa bir.gov.ph or tawag ka sa BIR 8538-3200"
 2. Always be accurate sa deadlines and computations — if the CONTEXT below doesn't have enough real data to compute something (e.g. no transactions uploaded), say so plainly and tell them to upload their GCash history at /dashboard/upload first. Never invent numbers.
 3. If user is stressed: Calm them down first, then solve
-4. Keep responses under 300 words unless they ask for details`;
+4. Keep responses under 300 words unless they ask for details
+5. You now also see the user's Business Toolkit history (Open/Close/SPA/DTI/SEC/Mayor's kits) and recent BIR filings below, when present — reference them directly. If they ask what to do next after generating a DTI kit, check what's actually in CONTEXT and suggest the logical next step (typically Mayor's Permit, then BIR 1901 registration) instead of a generic answer.`;
+
+export interface RegistrationSummary {
+  type: "OPEN" | "CLOSE" | "SPA" | "DTI" | "SEC" | "MAYORS";
+  createdAt: string;
+  data: Record<string, unknown>;
+}
+
+export interface FilingSummary {
+  quarter: number;
+  year: number;
+  gross: number;
+  taxDue: number;
+  status: string;
+  finalizedAt: string;
+}
 
 export interface BrainAiUserContext {
   fullName?: string | null;
   taxType?: string | null;
   rdoCode?: string | null;
+  tin?: string | null;
+  businessName?: string | null;
+  plan?: "free" | "pro" | "business";
   currentQuarterLabel?: string;
   currentQuarterIncome?: number;
   currentQuarterExpenses?: number;
   transactionCount?: number;
   recentTransactions?: Array<{ date: string; description: string; amount: number; type: "income" | "expense" }>;
+  /** Most recent kit per type (OPEN/CLOSE/SPA/DTI/SEC/MAYORS) — not the full history, just what Brain AI needs to know "what's already been done." */
+  latestRegistrations?: RegistrationSummary[];
+  recentFilings?: FilingSummary[];
+  receiptsCount?: number;
+  receiptsTotal?: number;
 }
 
-/** Builds the full system prompt, injecting the user's real profile + transaction data so Brain AI can actually compute things instead of speaking in generalities. */
+const KIT_LABELS: Record<RegistrationSummary["type"], string> = {
+  OPEN: "Open Business Kit",
+  CLOSE: "Close Business Kit",
+  SPA: "SPA Kit",
+  DTI: "DTI Kit",
+  SEC: "SEC Kit",
+  MAYORS: "Mayor's Permit Kit",
+};
+
+function describeRegistration(reg: RegistrationSummary): string {
+  const when = new Date(reg.createdAt).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+  const detailParts: string[] = [];
+  const d = reg.data as Record<string, unknown>;
+  if (reg.type === "DTI" && Array.isArray(d.businessNameOptions) && d.businessNameOptions[0]) {
+    detailParts.push(`name option "${d.businessNameOptions[0]}"`);
+    if (typeof d.capital === "number" && d.capital > 0) detailParts.push(`capital ₱${d.capital.toLocaleString()}`);
+  }
+  if (reg.type === "SEC" && Array.isArray(d.companyNameOptions) && d.companyNameOptions[0]) {
+    detailParts.push(`name option "${d.companyNameOptions[0]}"`);
+  }
+  if (reg.type === "MAYORS" && typeof d.city === "string") {
+    detailParts.push(`city ${d.city}`);
+  }
+  const detail = detailParts.length ? ` (${detailParts.join(", ")})` : "";
+  return `${KIT_LABELS[reg.type]}${detail} — ${when}`;
+}
+
+/** Builds the full system prompt, injecting the user's real profile + transaction + toolkit/filings data so Brain AI can actually compute things instead of speaking in generalities. */
 export function buildBrainAiPrompt(context: BrainAiUserContext): string {
   const lines: string[] = [];
   if (context.fullName) lines.push(`Name: ${context.fullName}`);
+  if (context.tin) lines.push(`TIN: ${context.tin}`);
+  if (context.businessName) lines.push(`Business name: ${context.businessName}`);
   if (context.taxType) lines.push(`Registered tax type: ${context.taxType}`);
   if (context.rdoCode) lines.push(`RDO: ${context.rdoCode}`);
+  if (context.plan) lines.push(`Plan: ${context.plan.toUpperCase()}`);
 
   if (context.transactionCount !== undefined) {
     if (context.transactionCount === 0) {
@@ -89,7 +143,75 @@ export function buildBrainAiPrompt(context: BrainAiUserContext): string {
     }
   }
 
+  if (context.latestRegistrations?.length) {
+    lines.push(`Business Toolkit history (most recent per kit type):\n${context.latestRegistrations.map((r) => `  - ${describeRegistration(r)}`).join("\n")}`);
+  } else {
+    lines.push("No Business Toolkit kits generated yet (Open/Close/SPA/DTI/SEC/Mayor's) — mention /dashboard/toolkit if relevant.");
+  }
+
+  if (context.recentFilings?.length) {
+    const filingsList = context.recentFilings
+      .map((f) => `  - Q${f.quarter} ${f.year}: gross ₱${f.gross.toLocaleString()}, tax due ₱${f.taxDue.toLocaleString()} (${f.status})`)
+      .join("\n");
+    lines.push(`Recent filings:\n${filingsList}`);
+  }
+
+  if (context.receiptsCount !== undefined) {
+    lines.push(`Receipts: ${context.receiptsCount} on file, totaling ₱${(context.receiptsTotal ?? 0).toLocaleString()}.`);
+  }
+
   if (lines.length === 0) return BRAIN_AI_SYSTEM_PROMPT;
 
   return `${BRAIN_AI_SYSTEM_PROMPT}\n\nCONTEXT ON THIS USER (real data — use it directly, don't ask them to repeat what's already here):\n${lines.join("\n")}`;
+}
+
+const SUMMARY_TRIGGERS = [/\bsummary\b/i, /\bstatus\b/i, /\bano\s+(ba\s+|na\s+)?(ang\s+)?nagawa\s+ko\b/i];
+
+/** True for a small set of fixed Taglish/English "give me a status report" phrasings — handled deterministically instead of going through the LLM. */
+export function isSummaryCommand(message: string): boolean {
+  return SUMMARY_TRIGGERS.some((re) => re.test(message));
+}
+
+/**
+ * Deterministic "summary" reply — lists every kit generated (all 6 types,
+ * not just the latest per type) with timestamps, plus recent filings and
+ * receipts. Not an LLM call: this is a fixed report over real DB rows, so
+ * there's nothing for a model to add except risk of getting a date/number
+ * wrong.
+ */
+export function buildKitSummaryReply(
+  name: string | null | undefined,
+  allRegistrations: RegistrationSummary[],
+  recentFilings: FilingSummary[],
+  receiptsCount: number,
+  receiptsTotal: number,
+): string {
+  const greetName = name ? `${name}, ` : "";
+  const lines: string[] = [`Brain AI here. Here's ang status mo, ${greetName}base sa records namin: 📋`, ""];
+
+  if (allRegistrations.length === 0) {
+    lines.push("🧰 Business Toolkit: wala pang kit na na-generate. Puntahan mo /dashboard/toolkit para simulan.");
+  } else {
+    lines.push("🧰 Business Toolkit kits generated:");
+    for (const reg of allRegistrations) {
+      lines.push(`  • ${describeRegistration(reg)}`);
+    }
+  }
+
+  lines.push("");
+  if (recentFilings.length === 0) {
+    lines.push("📄 BIR Filings: wala pa. Puntahan mo /dashboard/forms para mag-file.");
+  } else {
+    lines.push("📄 Recent BIR filings:");
+    for (const f of recentFilings) {
+      lines.push(`  • Q${f.quarter} ${f.year}: gross ₱${f.gross.toLocaleString()}, tax due ₱${f.taxDue.toLocaleString()} (${f.status})`);
+    }
+  }
+
+  lines.push("");
+  lines.push(`🧾 Receipts: ${receiptsCount} on file, ₱${receiptsTotal.toLocaleString()} total.`);
+  lines.push("");
+  lines.push("Tanong mo lang kung ano next step mo — I-check ko yung records mo. 🧠");
+
+  return lines.join("\n");
 }

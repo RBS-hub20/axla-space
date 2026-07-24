@@ -9,6 +9,7 @@ import {
   type CloseKitData,
 } from "@/lib/pdf/generate-toolkit-pdf";
 import { bundleAsZip } from "@/lib/pdf/zip-bundle";
+import { saveBusinessRegistration } from "@/lib/dashboard/business-registrations";
 import { logError } from "@/lib/log-error";
 
 interface CloseKitBody {
@@ -79,6 +80,8 @@ export async function POST(req: Request) {
       { name: "close-checklist.pdf", bytes: checklist },
       { name: "rdo-guide.pdf", bytes: guide },
     ]);
+
+    await saveBusinessRegistration(user.id, "CLOSE", { ...data });
 
     return new NextResponse(Buffer.from(zip), {
       status: 200,

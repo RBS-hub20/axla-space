@@ -9,6 +9,7 @@ import {
   type OpenKitData,
 } from "@/lib/pdf/generate-toolkit-pdf";
 import { bundleAsZip } from "@/lib/pdf/zip-bundle";
+import { saveBusinessRegistration } from "@/lib/dashboard/business-registrations";
 import { logError } from "@/lib/log-error";
 
 interface OpenKitBody {
@@ -69,6 +70,8 @@ export async function POST(req: Request) {
       { name: "open-checklist.pdf", bytes: checklist },
       { name: "rdo-script.pdf", bytes: script },
     ]);
+
+    await saveBusinessRegistration(user.id, "OPEN", { ...data });
 
     return new NextResponse(Buffer.from(zip), {
       status: 200,
