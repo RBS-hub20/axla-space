@@ -93,7 +93,20 @@ export async function POST(req: Request) {
 
   if (!result.url) {
     logError("billing/checkout: PayMongo checkout failed", new Error(result.error ?? "unknown"));
-    return NextResponse.json({ error: "Couldn't start checkout. Please try again." }, { status: 502 });
+    // "No payment methods are available" surfaces when every type in
+    // payment_method_types happens to be inactive on the account (e.g.
+    // gcash-direct/card still pending DTI approval) — a friendlier,
+    // actionable message than PayMongo's raw error, in Taglish per the
+    // rest of the paywall copy.
+    const noMethodsAvailable = /no payment method/i.test(result.error ?? "");
+    return NextResponse.json(
+      {
+        error: noMethodsAvailable
+          ? "Payment method activating pa — please try QRPh, or email hello@axla.space kung need mo ng tulong."
+          : "Couldn't start checkout. Please try again.",
+      },
+      { status: 502 },
+    );
   }
 
   return NextResponse.json({ checkoutUrl: result.url, plan, amount, promoApplied });

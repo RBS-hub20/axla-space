@@ -96,7 +96,16 @@ export async function createPayMongoCheckoutSession(params: CheckoutSessionParam
                 description: params.description,
               },
             ],
-            payment_method_types: ["gcash", "card", "paymaya", "grab_pay"],
+            // qrph MUST be first — it's the only method currently live on
+            // the PayMongo account (gcash-direct/card/paymaya/grab_pay are
+            // pending DTI approval as of 2026-07-24). Listing an
+            // account-inactive method isn't harmless: PayMongo drops
+            // inactive types from the resulting checkout page, and if every
+            // type in this array happens to be inactive the page renders
+            // with zero payment options ("No payment methods are
+            // available"). Keep qrph present even after the others go live
+            // so this can't regress the same way twice.
+            payment_method_types: ["qrph", "gcash", "card", "paymaya", "grab_pay", "billease"],
             success_url: params.successUrl,
             cancel_url: params.cancelUrl,
             send_email_receipt: true,
