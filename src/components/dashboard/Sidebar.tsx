@@ -8,6 +8,7 @@ import {
   Calculator,
   FileText,
   FolderOpen,
+  Receipt,
   Upload,
   Bot,
   Users,
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Business Toolkit", href: "/dashboard/toolkit", icon: Briefcase, badge: "NEW" },
   { label: "GCash Upload", href: "/dashboard/upload", icon: Upload },
   { label: "Documents", href: "/dashboard/documents", icon: FolderOpen },
+  { label: "Invoices", href: "/dashboard/invoices", icon: Receipt, badge: "NEW" },
   { label: "Brain AI", href: "/dashboard/brain", icon: Bot },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
@@ -51,12 +53,14 @@ function NavLinks({
   isAdmin,
   pendingCount,
   isBusinessPlan,
+  outstandingInvoices,
 }: {
   pathname: string;
   onNavigate?: () => void;
   isAdmin?: boolean;
   pendingCount?: number;
   isBusinessPlan?: boolean;
+  outstandingInvoices?: number;
 }) {
   const items = isBusinessPlan ? [...NAV_ITEMS, ...BUSINESS_PLAN_ITEMS] : NAV_ITEMS;
 
@@ -64,6 +68,9 @@ function NavLinks({
     <nav className="flex flex-col gap-1 px-3">
       {items.map(({ label, href, icon: Icon, badge }) => {
         const isActive = href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+        // Invoices' badge shows the live outstanding count once there is
+        // one, instead of the static "NEW" label — same slot, more useful.
+        const effectiveBadge = href === "/dashboard/invoices" && outstandingInvoices ? String(outstandingInvoices) : badge;
 
         return (
           <Link
@@ -79,9 +86,9 @@ function NavLinks({
           >
             <Icon className="h-4 w-4 shrink-0" strokeWidth={isActive ? 2.5 : 2} />
             {label}
-            {badge && (
+            {effectiveBadge && (
               <span className="ml-auto rounded-full bg-[#00FF85]/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#00FF85]">
-                {badge}
+                {effectiveBadge}
               </span>
             )}
           </Link>
@@ -117,6 +124,7 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [isBusinessPlan, setIsBusinessPlan] = useState(false);
+  const [outstandingInvoices, setOutstandingInvoices] = useState(0);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -132,6 +140,16 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
     fetch("/api/dashboard/billing", { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => setIsBusinessPlan(data?.plan === "business"))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/invoices", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const count = (data?.invoices ?? []).filter((inv: { status: string }) => inv.status === "sent").length;
+        setOutstandingInvoices(count);
+      })
       .catch(() => {});
   }, []);
 
@@ -176,6 +194,7 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
               isAdmin={isAdmin}
               pendingCount={pendingCount}
               isBusinessPlan={isBusinessPlan}
+              outstandingInvoices={outstandingInvoices}
             />
           </div>
         </div>
@@ -183,7 +202,13 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
 
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-white/10 bg-[#001A29] pt-6 md:flex">
-        <NavLinks pathname={pathname} isAdmin={isAdmin} pendingCount={pendingCount} isBusinessPlan={isBusinessPlan} />
+        <NavLinks
+          pathname={pathname}
+          isAdmin={isAdmin}
+          pendingCount={pendingCount}
+          isBusinessPlan={isBusinessPlan}
+          outstandingInvoices={outstandingInvoices}
+        />
       </aside>
     </>
   );

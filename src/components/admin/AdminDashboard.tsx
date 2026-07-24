@@ -59,6 +59,7 @@ export function AdminDashboard() {
   const [chatMessages, setChatMessages] = useState<ChatMessageRow[]>([]);
   const [payments, setPayments] = useState<PaymentsPayload | null>(null);
   const [referralStats, setReferralStats] = useState<ReferralStats | null>(null);
+  const [totalInvoices, setTotalInvoices] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
@@ -68,11 +69,12 @@ export function AdminDashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [waitlistRes, chatRes, paymentsRes, referralRes] = await Promise.all([
+      const [waitlistRes, chatRes, paymentsRes, referralRes, invoicesCountRes] = await Promise.all([
         fetch("/api/admin/waitlist", { cache: "no-store" }),
         fetch("/api/admin/chat", { cache: "no-store" }),
         fetch("/api/admin/payments", { cache: "no-store" }),
         fetch("/api/referral/stats", { cache: "no-store" }),
+        fetch("/api/admin/invoices-count", { cache: "no-store" }),
       ]);
 
       if (waitlistRes.status === 401 || chatRes.status === 401 || paymentsRes.status === 401) {
@@ -92,6 +94,7 @@ export function AdminDashboard() {
       setChatMessages(chatRes.ok ? chatData.messages : []);
       setPayments(paymentsRes.ok ? await paymentsRes.json() : null);
       setReferralStats(referralRes.ok ? await referralRes.json() : null);
+      setTotalInvoices(invoicesCountRes.ok ? (await invoicesCountRes.json()).totalInvoices : null);
       setError("");
     } catch {
       setError("Network error while loading dashboard data.");
@@ -244,6 +247,7 @@ export function AdminDashboard() {
               signups={filteredSignups}
               chatMessages={filteredChatMessages}
               onHateLevelClick={() => setHateDialogOpen(true)}
+              totalInvoices={totalInvoices}
             />
             <div className="grid gap-4 lg:grid-cols-3">
               <UserMap signups={filteredSignups} className="lg:col-span-2" />

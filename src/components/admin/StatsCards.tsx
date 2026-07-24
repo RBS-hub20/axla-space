@@ -7,6 +7,7 @@ import {
   Users,
   TrendingUp,
   FileText,
+  Receipt,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { mostAskedForm } from "@/lib/chat-analytics";
@@ -20,9 +21,10 @@ interface StatsCardsProps {
   signups: WaitlistRow[];
   chatMessages: ChatMessageRow[];
   onHateLevelClick: () => void;
+  totalInvoices?: number | null;
 }
 
-export function StatsCards({ signups, chatMessages, onHateLevelClick }: StatsCardsProps) {
+export function StatsCards({ signups, chatMessages, onHateLevelClick, totalInvoices }: StatsCardsProps) {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
@@ -52,6 +54,9 @@ export function StatsCards({ signups, chatMessages, onHateLevelClick }: StatsCar
     { label: "Active Users Today", value: activeUsersToday.toLocaleString(), icon: Users },
     { label: "Avg Messages per User", value: avgMessagesPerUser.toFixed(1), icon: TrendingUp },
     { label: "Most Asked Form", value: topForm, icon: FileText },
+    ...(totalInvoices !== null && totalInvoices !== undefined
+      ? [{ label: "Invoices Created", value: totalInvoices.toLocaleString(), icon: Receipt }]
+      : []),
   ];
 
   return (

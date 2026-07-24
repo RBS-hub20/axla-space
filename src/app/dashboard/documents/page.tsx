@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import { Upload, Trash2, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Upload, Trash2, Loader2, FileText } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { UpgradeWallModal } from "@/components/dashboard/UpgradeWallModal";
@@ -179,6 +180,16 @@ export default function DocumentsPage() {
                   {receipt.amount != null ? `₱${receipt.amount.toLocaleString()}` : "Amount unknown"}
                 </p>
                 <Badge variant={CATEGORY_VARIANT[receipt.category]}>{CATEGORY_LABEL[receipt.category]}</Badge>
+                <Link
+                  href={`/dashboard/invoices?${new URLSearchParams({
+                    ...(receipt.vendor ? { client: receipt.vendor } : {}),
+                    ...(receipt.amount != null ? { amount: String(receipt.amount) } : {}),
+                  }).toString()}`}
+                  className="flex items-center gap-1 pt-1 text-xs font-medium text-accent hover:underline"
+                >
+                  <FileText className="h-3 w-3" />
+                  Generate Invoice
+                </Link>
               </CardContent>
             </Card>
           ))}
