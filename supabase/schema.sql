@@ -549,3 +549,18 @@ create index if not exists bir_sync_logs_user_idx on public.bir_sync_logs (user_
 alter table public.bir_sync_logs enable row level security;
 grant select, insert, update, delete on public.bir_sync_logs to service_role;
 
+-- Business Toolkit — DTI/SEC/Mayor's tab registration history.
+create table if not exists public.business_registrations (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null references public.profiles (id) on delete cascade,
+  type text not null check (type in ('DTI', 'SEC', 'MAYORS')),
+  data jsonb not null default '{}'::jsonb,
+  status text not null default 'generated',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists business_registrations_user_idx on public.business_registrations (user_id, created_at desc);
+
+alter table public.business_registrations enable row level security;
+grant select, insert, update, delete on public.business_registrations to service_role;
+

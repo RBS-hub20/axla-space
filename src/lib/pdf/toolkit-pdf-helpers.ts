@@ -1,5 +1,6 @@
 import "server-only";
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import QRCode from "qrcode";
 
 export const PAGE_WIDTH = 595;
 export const PAGE_HEIGHT = 842; // A4
@@ -146,6 +147,21 @@ export function drawDisclaimerFooter(doc: ToolkitDoc, text: string): void {
     doc.page.drawText(line, { x: MARGIN, y: fy, size: 7.5, font: doc.font, color: GRAY });
     fy -= 10;
   }
+}
+
+/**
+ * Embeds a QR code encoding `data` at the top-right of the current page,
+ * at the current `doc.y`. This is an Axla-generated tracking code for the
+ * user's own reference (e.g. "AXLA-DTI-{timestamp}") — it does not link to
+ * or represent any real government registration/tracking number, since
+ * this app never files anything with DTI/SEC/any LGU.
+ */
+export async function drawQrCode(doc: ToolkitDoc, data: string, size = 70): Promise<void> {
+  const pngBuffer = await QRCode.toBuffer(data, { type: "png", width: size * 4, margin: 1 });
+  const image = await doc.pdfDoc.embedPng(pngBuffer);
+  const x = PAGE_WIDTH - MARGIN - size;
+  doc.page.drawImage(image, { x, y: doc.y - size, width: size, height: size });
+  doc.page.drawText(data, { x, y: doc.y - size - 12, size: 6.5, font: doc.font, color: GRAY });
 }
 
 export async function finish(doc: ToolkitDoc): Promise<Uint8Array> {
