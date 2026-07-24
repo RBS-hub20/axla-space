@@ -1,0 +1,15 @@
+import "server-only";
+import JSZip from "jszip";
+
+export interface ZipFile {
+  name: string;
+  bytes: Uint8Array;
+}
+
+export async function bundleAsZip(files: ZipFile[]): Promise<Uint8Array> {
+  const zip = new JSZip();
+  for (const file of files) {
+    zip.file(file.name, file.bytes);
+  }
+  return zip.generateAsync({ type: "uint8array" });
+}

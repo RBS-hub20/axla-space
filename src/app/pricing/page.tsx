@@ -48,6 +48,7 @@ const COMPARISON_ROWS: Array<{ label: string; free: string; pro: string; busines
   { label: "1-click eBIR auto-fill", free: "—", pro: "✓", business: "✓" },
   { label: "Tax Forecast & Income Dashboard", free: "—", pro: "✓", business: "✓" },
   { label: "BIR Invoices", free: "—", pro: "✓", business: "✓" },
+  { label: "Business Toolkit (Open/Close/SPA)", free: "—", pro: "✓", business: "✓" },
   { label: "TINs / Branches", free: "1", pro: "1", business: "Up to 5" },
   { label: "Team members", free: "1", pro: "1", business: "Up to 5" },
   { label: "Client Management Portal", free: "—", pro: "—", business: "20 clients" },

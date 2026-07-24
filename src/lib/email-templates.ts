@@ -353,3 +353,25 @@ export function teamInviteEmailTemplate(ownerName: string, role: string): string
 
   return emailShell(`${ownerName} invited you to Axla`, body);
 }
+
+export function spaDocumentEmailTemplate(principalName: string, representativeName: string): string {
+  const body = `
+    <p style="margin:0 0 4px; font-size:18px; color:#ffffff; font-weight:700;">A Special Power of Attorney was sent to you</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
+      ${principalName} named you (${representativeName}) as their representative for BIR transactions and attached
+      the SPA template, an RDO cover letter, and a notary guide.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:20px;">
+      <tr>
+        <td style="padding:12px 16px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
+          <p style="margin:0; font-size:13px; line-height:1.6; color:${BODY_TEXT};">
+            <strong>Template only</strong> — it needs to be signed and notarized before it's valid. See the
+            attached notary guide for where to get that done.
+          </p>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell(`SPA from ${principalName} — attached`, body);
+}

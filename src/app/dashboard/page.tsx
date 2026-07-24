@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import {
   AlertTriangle,
+  Briefcase,
   Calculator,
   CalendarClock,
   CheckCircle2,
@@ -46,6 +47,12 @@ const QUICK_ACTIONS = [
     label: "Upload GCash",
     description: "Auto-import your transactions",
     icon: Upload,
+  },
+  {
+    href: "/dashboard/toolkit",
+    label: "Business Toolkit (NEW)",
+    description: "Open, close, or SPA docs in one click",
+    icon: Briefcase,
   },
 ];
 

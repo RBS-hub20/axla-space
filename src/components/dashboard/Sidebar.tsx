@@ -15,6 +15,7 @@ import {
   Settings,
   Shield,
   ShieldCheck,
+  Briefcase,
   Menu,
   X,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Tax Calculator", href: "/dashboard/calculator", icon: Calculator },
   { label: "BIR Forms", href: "/dashboard/forms", icon: FileText },
   { label: "BIR Guard", href: "/dashboard/bir-guard", icon: Shield, badge: "BETA" },
+  { label: "Business Toolkit", href: "/dashboard/toolkit", icon: Briefcase, badge: "NEW" },
   { label: "GCash Upload", href: "/dashboard/upload", icon: Upload },
   { label: "Documents", href: "/dashboard/documents", icon: FolderOpen },
   { label: "Brain AI", href: "/dashboard/brain", icon: Bot },
