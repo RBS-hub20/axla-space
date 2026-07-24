@@ -3,8 +3,8 @@ import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 
 export const metadata = {
-  title: "About — Axla Digital Solutions",
-  description: "Axla Digital Solutions builds AI agents for Filipino business admin — TaxLaya is our first, live now.",
+  title: "About — Axla Software Development Services",
+  description: "Axla Software Development Services builds AI agents for Filipino business admin — TaxLaya is our first, live now.",
 };
 
 const PRODUCTS = [
@@ -25,7 +25,7 @@ export default function AboutPage() {
       <section className="mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 sm:py-28">
         {/* Top: the company */}
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">The company behind Axla</p>
-        <h1 className="mt-3 text-3xl font-extrabold tracking-tight sm:text-5xl">AXLA DIGITAL SOLUTIONS</h1>
+        <h1 className="mt-3 text-3xl font-extrabold tracking-tight sm:text-5xl">AXLA SOFTWARE DEVELOPMENT SERVICES</h1>
         <p className="mx-auto mt-4 max-w-2xl text-lg text-slate-400">
           We build AI agents that handle the admin work Filipino freelancers and small businesses hate doing —
           starting with BIR taxes.

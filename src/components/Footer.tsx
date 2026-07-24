@@ -24,7 +24,7 @@ export function Footer() {
           </div>
         </div>
         <p className="mt-6 text-center text-[11px] uppercase tracking-wide text-slate-500">
-          © 2026 Powered by AXLA DIGITAL SOLUTIONS
+          © AXLA SOFTWARE DEVELOPMENT SERVICES - DTI Registered 2026 | BNRS PASSED 8/8
         </p>
       </div>
     </footer>
