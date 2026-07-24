@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { isAdminRequestAuthorized } from "@/lib/admin";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { isElevenLabsConfigured, JARVIS_VOICE_ID, FRIDAY_VOICE_ID } from "@/lib/voice/elevenlabs";
+import { getManilaGreeting, formatManilaTime, formatManilaDate } from "@/lib/manila-time";
+import { getBirDeadlines, type BirDeadline } from "@/lib/bir-deadlines";
 import { logError } from "@/lib/log-error";
 
 type Persona = "jarvis" | "friday";
@@ -44,6 +46,26 @@ function maybeEasterEgg(persona: Persona): string {
 
 function isSameDay(a: Date, b: Date) {
   return a.toDateString() === b.toDateString();
+}
+
+function formatDeadlineDate(iso: string): string {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** Spoken summary of the most urgent deadlines — never invents a number, just describes real computed daysLeft/status. */
+function buildBirVoiceSummary(deadlines: BirDeadline[]): string {
+  const overdue = deadlines.filter((d) => d.status === "OVERDUE");
+  const urgent = deadlines.filter((d) => d.status === "WARNING");
+
+  if (overdue.length > 0) {
+    const names = overdue.map((d) => `${d.name.split(" ")[0]} (${Math.abs(d.daysLeft)} days overdue)`).join(", ");
+    return `Boss, you have ${overdue.length} overdue filing${overdue.length === 1 ? "" : "s"}: ${names}. Let's get on that.`;
+  }
+  if (urgent.length === 0) {
+    return "No overdue or urgent BIR deadlines this week, Boss. All good.";
+  }
+  const parts = urgent.map((d) => `${d.name.split(" ")[0]} on ${formatDeadlineDate(d.date)}, ${d.daysLeft} day${d.daysLeft === 1 ? "" : "s"} left`);
+  return `Quick BIR check, Boss — you have ${urgent.length} deadline${urgent.length === 1 ? "" : "s"} this week: ${parts.join(", and ")}. No overdue, Boss. All good.`;
 }
 
 /**
@@ -119,8 +141,15 @@ async function gatherStats(): Promise<JarvisStats> {
 }
 
 /** Text-display answer (with emojis) — always addresses the admin as "Boss" too, just tersely. */
-function buildAnswer(q: string, stats: JarvisStats): string {
+function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[]): string {
   const query = q.toLowerCase();
+
+  if (query.includes("bir") || query.includes("deadline")) {
+    const lines = deadlines
+      .map((d) => `${d.status === "OVERDUE" ? "🔴" : d.status === "WARNING" ? "⚠️" : "🟢"} ${d.name}: ${formatDeadlineDate(d.date)} (${d.daysLeft}d)`)
+      .join(" | ");
+    return `📅 Boss, BIR deadlines: ${lines}`;
+  }
 
   if (query.includes("invoice")) {
     return (
@@ -169,10 +198,14 @@ function buildAnswer(q: string, stats: JarvisStats): string {
  * isn't one, and always says whatever name is really stored rather than a
  * hardcoded string.
  */
-function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona): string {
+function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadlines: BirDeadline[], greeting: string): string {
   const query = q.toLowerCase();
   const egg = maybeEasterEgg(persona);
   const isFriday = persona === "friday";
+
+  if (query.includes("bir") || query.includes("deadline")) {
+    return `${buildBirVoiceSummary(deadlines)}${egg}`;
+  }
 
   if (query.includes("invoice")) {
     return isFriday
@@ -204,24 +237,30 @@ function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona): stri
       ? `${stats.dtiCount} D T I kit${stats.dtiCount === 1 ? "" : "s"} on file. `
       : "";
 
+  const urgentDeadlines = deadlines.filter((d) => d.status !== "OK");
+  const deadlineMention =
+    urgentDeadlines.length > 0
+      ? ` Heads up, Boss: ${urgentDeadlines.length} BIR deadline${urgentDeadlines.length === 1 ? "" : "s"} need${urgentDeadlines.length === 1 ? "s" : ""} attention this week.`
+      : "";
+
   if (query.includes("today") || query.includes("report")) {
     return isFriday
-      ? `Good evening, Boss! FRIDAY here. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}. ` +
+      ? `${greeting}, Boss! FRIDAY here. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}. ` +
           `${dtiLine}${stats.invoicesTotal === 0 ? "No invoices yet." : `${stats.invoicesTotal} invoices on file.`} ` +
-          `Today: ${stats.signupsToday} signups, ${stats.messagesToday} messages. All good, Boss!${egg}`
-      : `Good evening, Boss. We currently have ${stats.totalUsers} users, ${stats.totalWaitlist} on the waitlist with an average ` +
+          `Today: ${stats.signupsToday} signups, ${stats.messagesToday} messages.${deadlineMention} All good, Boss!${egg}`
+      : `${greeting}, Boss. We currently have ${stats.totalUsers} users, ${stats.totalWaitlist} on the waitlist with an average ` +
           `frustration level of ${stats.avgHateLevel} out of 10. ${dtiLine}` +
           `${stats.invoicesTotal === 0 ? "No invoices yet." : `${stats.invoicesTotal} invoices on file.`} ` +
-          `Today's signups: ${stats.signupsToday}, messages: ${stats.messagesToday}. All systems operational, Boss.${egg}`;
+          `Today's signups: ${stats.signupsToday}, messages: ${stats.messagesToday}.${deadlineMention} All systems operational, Boss.${egg}`;
   }
 
   const kitTotal = stats.dtiCount + stats.secCount + stats.mayorsCount;
   return isFriday
-    ? `Good evening, Boss! FRIDAY here. We have ${stats.totalUsers} users and ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}. ` +
-        `${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} toolkit kit${kitTotal === 1 ? "" : "s"} total. ` +
+    ? `${greeting}, Boss! FRIDAY here. We have ${stats.totalUsers} users and ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}. ` +
+        `${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} toolkit kit${kitTotal === 1 ? "" : "s"} total.${deadlineMention} ` +
         `Ask me for a report today, an invoice report, or how many D T I, Boss!${egg}`
-    : `Good evening, Boss. We currently have ${stats.totalUsers} users and ${stats.totalWaitlist} on the waitlist, average frustration ` +
-        `level ${stats.avgHateLevel} out of 10. ${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"} in total. ` +
+    : `${greeting}, Boss. We currently have ${stats.totalUsers} users and ${stats.totalWaitlist} on the waitlist, average frustration ` +
+        `level ${stats.avgHateLevel} out of 10. ${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"} in total.${deadlineMention} ` +
         `You may ask for a report today, an invoice report, or how many D T I, Boss.${egg}`;
 }
 
@@ -238,13 +277,20 @@ export async function GET(req: Request) {
   const persona: Persona = url.searchParams.get("persona") === "friday" ? "friday" : "jarvis";
 
   try {
+    const now = new Date();
     const stats = await gatherStats();
-    const answer = buildAnswer(q, stats);
-    const voiceAnswer = buildVoiceAnswer(q, stats, persona);
+    const deadlines = getBirDeadlines(now);
+    const { greeting } = getManilaGreeting(now);
+    const answer = buildAnswer(q, stats, deadlines);
+    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, greeting);
     return NextResponse.json({
       answer,
       voiceAnswer,
       stats,
+      birDeadlines: deadlines,
+      greeting,
+      manilaTime: formatManilaTime(now),
+      manilaDate: formatManilaDate(now),
       elevenLabsConfigured: isElevenLabsConfigured,
       voiceId: persona === "friday" ? FRIDAY_VOICE_ID : JARVIS_VOICE_ID,
     });

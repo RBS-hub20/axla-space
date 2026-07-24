@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { JetBrains_Mono } from "next/font/google";
 import { Mic } from "lucide-react";
+import { getManilaGreeting, formatManilaTime, type ShiftLabel } from "@/lib/manila-time";
+import type { BirDeadline } from "@/lib/bir-deadlines";
 
 const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500", "700"] });
 
@@ -70,17 +72,20 @@ function makeParticles(count: number): Particle[] {
   }));
 }
 
-function useLiveClock(): string {
+function useManilaClock(): { time: string; shiftLabel: ShiftLabel } {
   const [time, setTime] = useState("");
+  const [shiftLabel, setShiftLabel] = useState<ShiftLabel>("☀️ DAY SHIFT");
   useEffect(() => {
     function tick() {
-      setTime(new Date().toLocaleTimeString("en-GB", { hour12: false }));
+      const now = new Date();
+      setTime(formatManilaTime(now));
+      setShiftLabel(getManilaGreeting(now).shiftLabel);
     }
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, []);
-  return time;
+  return { time, shiftLabel };
 }
 
 export function JarvisHUD({ active }: { active: boolean }) {
@@ -90,8 +95,10 @@ export function JarvisHUD({ active }: { active: boolean }) {
   const [subtitle, setSubtitle] = useState("");
   const [showSubtitle, setShowSubtitle] = useState(false);
   const [stats, setStats] = useState<JarvisStats | null>(null);
+  const [birDeadlines, setBirDeadlines] = useState<BirDeadline[]>([]);
   const [elevenLabsConfigured, setElevenLabsConfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasGreetedRef = useRef(false);
 
   const orbCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const waveCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -105,7 +112,7 @@ export function JarvisHUD({ active }: { active: boolean }) {
   const subtitleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const typewriterRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clock = useLiveClock();
+  const { time: manilaClock, shiftLabel } = useManilaClock();
 
   useEffect(() => {
     speakingRef.current = speaking;
@@ -126,7 +133,12 @@ export function JarvisHUD({ active }: { active: boolean }) {
       if (!res.ok) return;
       const data = await res.json();
       setStats(data.stats);
+      setBirDeadlines(data.birDeadlines ?? []);
       setElevenLabsConfigured(Boolean(data.elevenLabsConfigured));
+      if (!hasGreetedRef.current && typeof data.greeting === "string") {
+        hasGreetedRef.current = true;
+        typewrite(`${data.greeting}, Boss. Systems operational.`);
+      }
     } catch {
       // Vitals panel just stays on its last known values — not worth surfacing an error banner for a background refresh.
     }
@@ -363,6 +375,7 @@ export function JarvisHUD({ active }: { active: boolean }) {
           return;
         }
         setStats(data.stats);
+        setBirDeadlines(data.birDeadlines ?? []);
         setElevenLabsConfigured(Boolean(data.elevenLabsConfigured));
         speak(data.voiceAnswer);
       } catch {
@@ -452,18 +465,21 @@ export function JarvisHUD({ active }: { active: boolean }) {
       />
 
       {/* Top bar */}
-      <div className="relative flex items-center justify-between px-6 py-4 text-[#00D4FF]">
+      <div className="relative flex flex-wrap items-center justify-between gap-2 px-6 py-4 text-[#00D4FF]">
         <p className="text-xs tracking-widest">J.A.R.V.I.S. — JUST A RATHER VERY INTELLIGENT SYSTEM</p>
         <div className="flex items-center gap-3">
           <span className="rounded-full border border-[#00D4FF]/40 bg-[#00D4FF]/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide">
             {persona === "friday" ? "Eva Mode" : "Adam Mode"}
           </span>
-          <p className="text-sm tabular-nums">{clock}</p>
+          <span className="rounded-full border border-[#00D4FF]/40 bg-[#00D4FF]/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide">
+            {shiftLabel}
+          </span>
+          <p className="text-sm tabular-nums">MANILA {manilaClock} PHT</p>
         </div>
       </div>
 
       {/* Left panel — System Vitals */}
-      <div className="absolute left-5 top-20 w-56 space-y-3 text-[#00D4FF]">
+      <div className="absolute left-5 top-20 w-60 space-y-3 text-[#00D4FF]">
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">System Vitals</p>
         <VitalRow label="Users" value={vitals ? String(vitals.users) : "—"} />
         <VitalBar label="Waitlist" value={vitals ? `${vitals.waitlist} (${vitals.hateLevel}/10 hate)` : "—"} pct={vitals?.hatePct ?? 0} color="#FF3B5C" />
@@ -474,6 +490,15 @@ export function JarvisHUD({ active }: { active: boolean }) {
           value={vitals ? `${vitals.dtiCount}${vitals.dtiCertified ? " PASSED" : ""}` : "—"}
           valueClassName={vitals?.dtiCertified ? "text-[#00FF88]" : "text-[#00D4FF]"}
         />
+
+        {birDeadlines.length > 0 && (
+          <div className="space-y-2 pt-2">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">BIR Deadlines</p>
+            {birDeadlines.map((d) => (
+              <DeadlineRow key={d.name} deadline={d} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Right panel — gauge + waveform */}
@@ -572,6 +597,33 @@ function VitalBar({ label, value, pct, color }: { label: string; value: string; 
         <div
           className="h-full rounded-full transition-all"
           style={{ width: `${pct}%`, backgroundColor: color, boxShadow: `0 0 8px ${color}` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DeadlineRow({ deadline }: { deadline: BirDeadline }) {
+  const color = deadline.status === "OVERDUE" ? "#FF3B5C" : deadline.status === "WARNING" ? "#FFB020" : GREEN;
+  const pct = deadline.status === "OVERDUE" ? 100 : Math.max(5, 100 - Math.min(100, deadline.daysLeft * 4));
+  const dateLabel = new Date(`${deadline.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const daysLabel = deadline.status === "OVERDUE" ? `${Math.abs(deadline.daysLeft)}d overdue` : `${deadline.daysLeft}d left`;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2 text-[10px]">
+        <span className="truncate text-white/60" title={deadline.name}>
+          {deadline.name}
+        </span>
+        <span className={`shrink-0 font-semibold ${deadline.status === "OVERDUE" ? "animate-pulse" : ""}`} style={{ color }}>
+          {dateLabel} · {daysLabel}
+          {deadline.status === "OVERDUE" ? " ⚠️" : deadline.status === "WARNING" ? " ⚠️" : ""}
+        </span>
+      </div>
+      <div className="h-1 w-full overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full rounded-full transition-all ${deadline.status === "OVERDUE" ? "animate-pulse" : ""}`}
+          style={{ width: `${pct}%`, backgroundColor: color, boxShadow: `0 0 6px ${color}` }}
         />
       </div>
     </div>
