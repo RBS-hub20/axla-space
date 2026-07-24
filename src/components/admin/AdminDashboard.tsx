@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { StatsCards } from "@/components/admin/StatsCards";
 import { JarvisBar } from "@/components/admin/JarvisBar";
+import { JarvisHUD } from "@/components/admin/JarvisHUD";
 import { InvoicesAdminTable } from "@/components/admin/InvoicesAdminTable";
 import { ComplianceTable } from "@/components/admin/ComplianceTable";
 import { GraphTabs } from "@/components/admin/GraphTabs";
@@ -34,7 +35,7 @@ import type { ChatMessageRow, WaitlistRow } from "@/lib/supabase/admin";
 import type { PaymentsPayload } from "@/lib/payments-stats";
 import type { ReferralStats } from "@/app/api/referral/stats/route";
 
-type Tab = "overview" | "subscribers" | "compliance";
+type Tab = "overview" | "subscribers" | "compliance" | "jarvis-hud";
 
 const AUTO_REFRESH_MS = 30_000;
 
@@ -255,6 +256,16 @@ export function AdminDashboard() {
             >
               DTI &amp; Compliance
             </button>
+            <button
+              type="button"
+              onClick={() => setTab("jarvis-hud")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                tab === "jarvis-hud" ? "bg-taxlaya-green text-gray-950" : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full bg-[#00D4FF] ${tab === "jarvis-hud" ? "animate-pulse" : ""}`} />
+              🤵‍♂️ JARVIS COMMAND CENTER
+            </button>
           </div>
           {payments?.isMock && (
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/30">
@@ -269,6 +280,8 @@ export function AdminDashboard() {
           payments && <SubscribersTable payments={payments.payments} stats={payments.stats} onRefresh={fetchData} />
         ) : tab === "compliance" ? (
           <ComplianceTable />
+        ) : tab === "jarvis-hud" ? (
+          <JarvisHUD active={tab === "jarvis-hud"} />
         ) : (
           <>
             <StatsCards
