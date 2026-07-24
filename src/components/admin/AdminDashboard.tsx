@@ -14,6 +14,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { StatsCards } from "@/components/admin/StatsCards";
+import { JarvisBar } from "@/components/admin/JarvisBar";
+import { InvoicesAdminTable } from "@/components/admin/InvoicesAdminTable";
+import { ComplianceTable } from "@/components/admin/ComplianceTable";
 import { GraphTabs } from "@/components/admin/GraphTabs";
 import { PeakHoursCard } from "@/components/admin/PeakHoursCard";
 import { TopQuestionsTable } from "@/components/admin/TopQuestionsTable";
@@ -31,7 +34,7 @@ import type { ChatMessageRow, WaitlistRow } from "@/lib/supabase/admin";
 import type { PaymentsPayload } from "@/lib/payments-stats";
 import type { ReferralStats } from "@/app/api/referral/stats/route";
 
-type Tab = "overview" | "subscribers";
+type Tab = "overview" | "subscribers" | "compliance";
 
 const AUTO_REFRESH_MS = 30_000;
 
@@ -60,6 +63,8 @@ export function AdminDashboard() {
   const [payments, setPayments] = useState<PaymentsPayload | null>(null);
   const [referralStats, setReferralStats] = useState<ReferralStats | null>(null);
   const [totalInvoices, setTotalInvoices] = useState<number | null>(null);
+  const [invoicesPaidTotal, setInvoicesPaidTotal] = useState<number | null>(null);
+  const [invoicesExpanded, setInvoicesExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
@@ -69,12 +74,12 @@ export function AdminDashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [waitlistRes, chatRes, paymentsRes, referralRes, invoicesCountRes] = await Promise.all([
+      const [waitlistRes, chatRes, paymentsRes, referralRes, invoicesRes] = await Promise.all([
         fetch("/api/admin/waitlist", { cache: "no-store" }),
         fetch("/api/admin/chat", { cache: "no-store" }),
         fetch("/api/admin/payments", { cache: "no-store" }),
         fetch("/api/referral/stats", { cache: "no-store" }),
-        fetch("/api/admin/invoices-count", { cache: "no-store" }),
+        fetch("/api/admin/invoices", { cache: "no-store" }),
       ]);
 
       if (waitlistRes.status === 401 || chatRes.status === 401 || paymentsRes.status === 401) {
@@ -94,7 +99,14 @@ export function AdminDashboard() {
       setChatMessages(chatRes.ok ? chatData.messages : []);
       setPayments(paymentsRes.ok ? await paymentsRes.json() : null);
       setReferralStats(referralRes.ok ? await referralRes.json() : null);
-      setTotalInvoices(invoicesCountRes.ok ? (await invoicesCountRes.json()).totalInvoices : null);
+      if (invoicesRes.ok) {
+        const invoicesData = await invoicesRes.json();
+        setTotalInvoices(invoicesData.stats?.count ?? null);
+        setInvoicesPaidTotal(invoicesData.stats?.paid ?? null);
+      } else {
+        setTotalInvoices(null);
+        setInvoicesPaidTotal(null);
+      }
       setError("");
     } catch {
       setError("Network error while loading dashboard data.");
@@ -156,6 +168,9 @@ export function AdminDashboard() {
               </span>
             </div>
             <p className="text-sm text-gray-500">Waitlist + TaxLaya analytics</p>
+            <p className="mt-0.5 text-xs text-gray-600">
+              AXLA SOFTWARE DEVELOPMENT SERVICES — DTI Registered 2026 | BNRS 8/8 PASSED | E-Invoice Live | Jarvis Enabled
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <DateRangeFilter value={dateRange} onChange={setDateRange} />
@@ -202,6 +217,8 @@ export function AdminDashboard() {
         </div>
       </header>
 
+      <JarvisBar />
+
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
         {error && (
           <div className="rounded-lg border border-red-900 bg-red-950/50 px-4 py-3 text-sm text-red-300">
@@ -229,6 +246,15 @@ export function AdminDashboard() {
             >
               Subscribers
             </button>
+            <button
+              type="button"
+              onClick={() => setTab("compliance")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                tab === "compliance" ? "bg-taxlaya-green text-gray-950" : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              DTI &amp; Compliance
+            </button>
           </div>
           {payments?.isMock && (
             <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/30">
@@ -241,6 +267,8 @@ export function AdminDashboard() {
           <p className="text-gray-500">Loading dashboard...</p>
         ) : tab === "subscribers" ? (
           payments && <SubscribersTable payments={payments.payments} stats={payments.stats} onRefresh={fetchData} />
+        ) : tab === "compliance" ? (
+          <ComplianceTable />
         ) : (
           <>
             <StatsCards
@@ -248,7 +276,9 @@ export function AdminDashboard() {
               chatMessages={filteredChatMessages}
               onHateLevelClick={() => setHateDialogOpen(true)}
               totalInvoices={totalInvoices}
+              onInvoicesClick={() => setInvoicesExpanded((v) => !v)}
             />
+            {invoicesExpanded && <InvoicesAdminTable />}
             <div className="grid gap-4 lg:grid-cols-3">
               <UserMap signups={filteredSignups} className="lg:col-span-2" />
               <TopReferrerCard stats={referralStats} />
@@ -263,6 +293,15 @@ export function AdminDashboard() {
               <div className="space-y-4">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Revenue</h2>
                 <PaymentsStatsCards stats={payments.stats} />
+                {invoicesPaidTotal !== null && (
+                  <p className="text-xs text-gray-500">
+                    Invoices Paid Total: <span className="text-gray-300">PHP {invoicesPaidTotal.toLocaleString()}</span> + PayMongo{" "}
+                    <span className="text-gray-300">PHP {payments.stats.totalRevenue.toLocaleString()}</span> = Total Revenue{" "}
+                    <span className="font-semibold text-[#00FF88]">
+                      PHP {(invoicesPaidTotal + payments.stats.totalRevenue).toLocaleString()}
+                    </span>
+                  </p>
+                )}
                 <RevenueChart data={payments.revenueByDay} />
                 <RecentPaymentsFeed payments={payments.recentPayments} />
               </div>

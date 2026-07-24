@@ -22,9 +22,10 @@ interface StatsCardsProps {
   chatMessages: ChatMessageRow[];
   onHateLevelClick: () => void;
   totalInvoices?: number | null;
+  onInvoicesClick?: () => void;
 }
 
-export function StatsCards({ signups, chatMessages, onHateLevelClick, totalInvoices }: StatsCardsProps) {
+export function StatsCards({ signups, chatMessages, onHateLevelClick, totalInvoices, onInvoicesClick }: StatsCardsProps) {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
@@ -55,7 +56,7 @@ export function StatsCards({ signups, chatMessages, onHateLevelClick, totalInvoi
     { label: "Avg Messages per User", value: avgMessagesPerUser.toFixed(1), icon: TrendingUp },
     { label: "Most Asked Form", value: topForm, icon: FileText },
     ...(totalInvoices !== null && totalInvoices !== undefined
-      ? [{ label: "Invoices Created", value: totalInvoices.toLocaleString(), icon: Receipt }]
+      ? [{ label: "Invoices Created", value: totalInvoices.toLocaleString(), icon: Receipt, onClick: onInvoicesClick }]
       : []),
   ];
 
