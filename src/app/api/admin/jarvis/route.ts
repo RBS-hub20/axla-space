@@ -126,6 +126,52 @@ function buildAnswer(q: string, stats: JarvisStats): string {
   );
 }
 
+/**
+ * Same numbers as buildAnswer(), reworded for speech — no emojis (screen
+ * readers/TTS engines mangle them), full words instead of symbols ("PHP"
+ * spoken, "/10" said as "out of 10"), and a "Hello boss" greeting per spec.
+ */
+function buildVoiceAnswer(q: string, stats: JarvisStats): string {
+  const query = q.toLowerCase();
+
+  if (query.includes("invoice")) {
+    return (
+      `You have ${stats.invoicesTotal} invoices total, ${stats.invoicesToday} today. ` +
+      `Paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. Outstanding: ${stats.invoicesOutstanding.toLocaleString()} pesos.`
+    );
+  }
+
+  if (query.includes("dti") || query.includes("sec") || query.includes("mayor")) {
+    return `Business Toolkit registrations: ${stats.dtiCount} D T I, ${stats.secCount} SEC, ${stats.mayorsCount} Mayor's Permit.`;
+  }
+
+  if (query.includes("hate")) {
+    return `Average BIR hate level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups.`;
+  }
+
+  if (query.includes("revenue") || query.includes("mrr") || query.includes("paymongo")) {
+    return (
+      `PayMongo revenue is ${stats.paymongoRevenue.toLocaleString()} pesos. Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. ` +
+      `Combined total: ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()} pesos.`
+    );
+  }
+
+  if (query.includes("today") || query.includes("report")) {
+    return (
+      `Hello boss, we have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, with average hate level ${stats.avgHateLevel} out of 10, ` +
+      `${stats.invoicesTotal} invoices, ${stats.dtiCount} D T I kit${stats.dtiCount === 1 ? "" : "s"}. ` +
+      `Today's signups ${stats.signupsToday}, messages ${stats.messagesToday}.`
+    );
+  }
+
+  const kitTotal = stats.dtiCount + stats.secCount + stats.mayorsCount;
+  return (
+    `Hello boss, we have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, with average hate level ${stats.avgHateLevel} out of 10, ` +
+    `${stats.invoicesTotal} invoices, and ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"}. ` +
+    `Try asking for a report today, an invoice report, or how many D T I.`
+  );
+}
+
 export async function GET(req: Request) {
   if (!(await isAdminRequestAuthorized())) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 403 });
@@ -139,7 +185,8 @@ export async function GET(req: Request) {
   try {
     const stats = await gatherStats();
     const answer = buildAnswer(q, stats);
-    return NextResponse.json({ answer, stats });
+    const voiceAnswer = buildVoiceAnswer(q, stats);
+    return NextResponse.json({ answer, voiceAnswer, stats });
   } catch (err) {
     logError("admin/jarvis GET: query failed", err);
     return NextResponse.json({ error: "Jarvis couldn't pull the numbers right now." }, { status: 500 });
