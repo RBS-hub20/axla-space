@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { isAdminRequestAuthorized } from "@/lib/admin";
-import { synthesizeSpeech, isElevenLabsConfigured } from "@/lib/voice/elevenlabs";
+import { synthesizeSpeech, isElevenLabsConfigured, JARVIS_VOICE_ID, FRIDAY_VOICE_ID } from "@/lib/voice/elevenlabs";
 import { logError } from "@/lib/log-error";
 
 interface SpeakBody {
   text?: unknown;
+  voiceId?: unknown;
 }
 
 /** Proxies ElevenLabs TTS — the browser never sees ELEVENLABS_API_KEY, only this route does. */
@@ -27,7 +28,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Text is required." }, { status: 400 });
   }
 
-  const result = await synthesizeSpeech(body.text.slice(0, 2000));
+  // Only the two known-good IDs are accepted here, never an arbitrary
+  // client-supplied string passed straight to ElevenLabs — synthesizeSpeech
+  // validates shape too, but pinning to an allowlist here is simpler to
+  // reason about for a 2-voice feature.
+  const voiceId = body.voiceId === FRIDAY_VOICE_ID ? FRIDAY_VOICE_ID : JARVIS_VOICE_ID;
+
+  const result = await synthesizeSpeech(body.text.slice(0, 2000), voiceId);
   if (!result.audio) {
     logError("admin/jarvis/speak POST: synthesis failed", new Error(result.error ?? "unknown"));
     return NextResponse.json({ error: result.error ?? "Speech synthesis failed." }, { status: 502 });

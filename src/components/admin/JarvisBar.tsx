@@ -5,6 +5,16 @@ import { Mic, Send, Loader2, Volume2, VolumeX } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
+type Persona = "jarvis" | "friday";
+
+// Same IDs as src/lib/voice/elevenlabs.ts — not secrets (an ElevenLabs
+// voice ID is just a public catalog reference, unlike the API key itself,
+// which never leaves the server). Kept in sync manually since this is a
+// 2-voice feature, not worth a shared-constants module yet.
+const JARVIS_VOICE_ID = "pFZP5JQG7iQjIQuC4Bku"; // "Adam" / Jarvis Male
+const FRIDAY_VOICE_ID = "c6SfcYrb2t09NHXiT80T"; // "Eva" / FRIDAY Female
+const PERSONA_STORAGE_KEY = "axla-admin-jarvis-persona";
+
 interface JarvisAnswer {
   query: string;
   answer: string;
@@ -40,30 +50,24 @@ function getSpeechSynthesis(): SpeechSynthesis | null {
   return window.speechSynthesis;
 }
 
-// Priority order for a Tony-Stark-Jarvis-ish male voice — checked as
-// case-insensitive substrings against each voice's name, in order. First
-// match wins; nothing here is guaranteed present in any given browser/OS.
-const MALE_VOICE_NAME_PRIORITY = [
-  "daniel", // macOS/iOS en-GB male
-  "google uk english male",
-  "microsoft david",
-  "guy", // Microsoft Edge "Guy" (en-US male)
-  "alex", // macOS en-US male
-  "fred", // macOS en-US male (novelty voice, still male)
-];
+const MALE_VOICE_NAME_PRIORITY = ["daniel", "google uk english male", "microsoft david", "guy", "alex", "fred"];
+const FEMALE_VOICE_NAME_PRIORITY = ["samantha", "google uk english female", "microsoft zira", "zira", "victoria", "karen", "moira", "tessa"];
 
-/** Ranks every available voice by how "Jarvis-like male" it is, best first. Never mutates the input array. */
-function rankMaleVoices(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice[] {
+/** Ranks browser voices best-first for the given gender preference. Never mutates the input array. */
+function rankVoicesByGender(voices: SpeechSynthesisVoice[], gender: "male" | "female"): SpeechSynthesisVoice[] {
+  const priority = gender === "male" ? MALE_VOICE_NAME_PRIORITY : FEMALE_VOICE_NAME_PRIORITY;
+  const avoidPattern = gender === "male" ? /female|woman|samantha|zira|susan|victoria|karen|moira|tessa/i : /\bmale\b|\bman\b|daniel|alex|fred|\bguy\b/i;
+
   function score(v: SpeechSynthesisVoice): number {
     const name = v.name.toLowerCase();
     const lang = v.lang.toLowerCase();
-    const priorityIndex = MALE_VOICE_NAME_PRIORITY.findIndex((keyword) => name.includes(keyword));
-    if (priorityIndex !== -1) return 1000 - priorityIndex; // exact known-name matches rank highest, in list order
-    if (/female|woman|samantha|zira|susan|victoria|karen|moira|tessa/i.test(name)) return -100; // actively avoid known female voices
-    const looksMale = /male/i.test(name) && !/female/i.test(name);
-    if (looksMale && lang.startsWith("en-gb")) return 50;
-    if (looksMale && lang.startsWith("en-us")) return 40;
-    if (looksMale) return 30;
+    const priorityIndex = priority.findIndex((keyword) => name.includes(keyword));
+    if (priorityIndex !== -1) return 1000 - priorityIndex;
+    if (avoidPattern.test(name)) return -100;
+    const matchesGenderWord = new RegExp(gender, "i").test(name);
+    if (matchesGenderWord && lang.startsWith("en-gb")) return 50;
+    if (matchesGenderWord && lang.startsWith("en-us")) return 40;
+    if (matchesGenderWord) return 30;
     if (lang.startsWith("en-gb")) return 10;
     if (lang.startsWith("en-us")) return 5;
     if (lang.startsWith("en")) return 1;
@@ -81,12 +85,22 @@ export function JarvisBar() {
   const [voiceInSupported, setVoiceInSupported] = useState(false);
   const [voiceOutSupported, setVoiceOutSupported] = useState(false);
   const [voiceOn, setVoiceOn] = useState(true);
+  const [persona, setPersona] = useState<Persona>("jarvis");
   const [unsupportedHint, setUnsupportedHint] = useState<string | null>(null);
-  const [rankedVoices, setRankedVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [allVoices, setAllVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>("");
   const [elevenLabsConfigured, setElevenLabsConfigured] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(PERSONA_STORAGE_KEY);
+    if (stored === "friday" || stored === "jarvis") setPersona(stored);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(PERSONA_STORAGE_KEY, persona);
+  }, [persona]);
 
   useEffect(() => {
     setVoiceInSupported(Boolean(getSpeechRecognition()));
@@ -95,17 +109,22 @@ export function JarvisBar() {
     if (!synth) return;
 
     function loadVoices() {
-      const ranked = rankMaleVoices(synth!.getVoices());
-      setRankedVoices(ranked);
-      setSelectedVoiceURI((current) => current || ranked[0]?.voiceURI || "");
-      if (ranked.length === 0) {
-        console.warn("Jarvis: no male-ish English voice found on this browser/OS — falling back to the system default voice.");
-      }
+      setAllVoices(synth!.getVoices());
     }
     loadVoices();
     synth.addEventListener("voiceschanged", loadVoices);
     return () => synth.removeEventListener("voiceschanged", loadVoices);
   }, []);
+
+  const rankedVoices = rankVoicesByGender(allVoices, persona === "friday" ? "female" : "male");
+
+  useEffect(() => {
+    // Re-pick the top-ranked voice for the current persona whenever persona
+    // or the available voice list changes, unless the admin already chose
+    // one from the dropdown for this exact list.
+    setSelectedVoiceURI((current) => (rankedVoices.some((v) => v.voiceURI === current) ? current : rankedVoices[0]?.voiceURI ?? ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [persona, allVoices.length]);
 
   const speakBrowser = useCallback(
     (text: string) => {
@@ -116,17 +135,17 @@ export function JarvisBar() {
       const utterance = new SpeechSynthesisUtterance(text);
       const voice = rankedVoices.find((v) => v.voiceURI === selectedVoiceURI) ?? rankedVoices[0] ?? null;
       if (voice) utterance.voice = voice;
-      // Slightly slower and deeper than default — reads less like a phone
-      // assistant, closer to a measured butler-AI cadence.
-      utterance.rate = 0.95;
-      utterance.pitch = 0.85;
+      // Male Jarvis: slower and deeper, butler cadence. Female FRIDAY:
+      // closer to natural pace, slightly higher — confident, not cartoonish.
+      utterance.rate = persona === "friday" ? 1.0 : 0.95;
+      utterance.pitch = persona === "friday" ? 1.1 : 0.85;
       utterance.volume = 1.0;
       utterance.onstart = () => setSpeaking(true);
       utterance.onend = () => setSpeaking(false);
       utterance.onerror = () => setSpeaking(false);
       synth.speak(utterance);
     },
-    [rankedVoices, selectedVoiceURI],
+    [rankedVoices, selectedVoiceURI, persona],
   );
 
   const speak = useCallback(
@@ -137,10 +156,11 @@ export function JarvisBar() {
         try {
           audioRef.current?.pause();
           setSpeaking(true);
+          const voiceId = persona === "friday" ? FRIDAY_VOICE_ID : JARVIS_VOICE_ID;
           const res = await fetch("/api/admin/jarvis/speak", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text }),
+            body: JSON.stringify({ text, voiceId }),
           });
           if (!res.ok) throw new Error("ElevenLabs request failed");
           const blob = await res.blob();
@@ -159,7 +179,7 @@ export function JarvisBar() {
 
       speakBrowser(text);
     },
-    [voiceOn, elevenLabsConfigured, speakBrowser],
+    [voiceOn, elevenLabsConfigured, persona, speakBrowser],
   );
 
   const ask = useCallback(
@@ -167,7 +187,7 @@ export function JarvisBar() {
       if (!q.trim()) return;
       setLoading(true);
       try {
-        const res = await fetch(`/api/admin/jarvis?q=${encodeURIComponent(q)}`, { cache: "no-store" });
+        const res = await fetch(`/api/admin/jarvis?q=${encodeURIComponent(q)}&persona=${persona}`, { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) {
           const answer = data.error || "Jarvis couldn't answer that.";
@@ -184,7 +204,7 @@ export function JarvisBar() {
         setLoading(false);
       }
     },
-    [speak],
+    [persona, speak],
   );
 
   function handleMicClick() {
@@ -233,6 +253,43 @@ export function JarvisBar() {
   return (
     <div className="sticky top-0 z-20 border-b border-gray-800 bg-gray-950/95 backdrop-blur">
       <div className="mx-auto max-w-7xl space-y-2 px-4 py-3 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 rounded-lg bg-gray-900 p-1">
+            <button
+              type="button"
+              onClick={() => setPersona("jarvis")}
+              className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                persona === "jarvis" ? "bg-[#00FF88] text-gray-950" : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              🤵‍♂️ Jarvis Male
+            </button>
+            <button
+              type="button"
+              onClick={() => setPersona("friday")}
+              className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                persona === "friday" ? "bg-[#00FF88] text-gray-950" : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              👩‍💻 FRIDAY Female
+            </button>
+          </div>
+          {!elevenLabsConfigured && rankedVoices.length > 0 && (
+            <select
+              value={selectedVoiceURI}
+              onChange={(e) => setSelectedVoiceURI(e.target.value)}
+              title="Browser voice"
+              className="rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-xs text-gray-200"
+            >
+              {rankedVoices.slice(0, 5).map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -265,33 +322,16 @@ export function JarvisBar() {
           />
 
           {voiceOutSupported && (
-            <>
-              <Button
-                type="button"
-                onClick={toggleVoiceOn}
-                title={voiceOn ? "Voice replies on" : "Voice replies off"}
-                variant="outline"
-                className={`shrink-0 gap-1.5 border-gray-700 ${voiceOn ? "text-[#00FF88]" : "text-gray-500"}`}
-              >
-                {voiceOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                {voiceOn ? "On" : "Off"}
-              </Button>
-
-              {!elevenLabsConfigured && rankedVoices.length > 0 && (
-                <select
-                  value={selectedVoiceURI}
-                  onChange={(e) => setSelectedVoiceURI(e.target.value)}
-                  title="Jarvis voice"
-                  className="rounded-lg border border-gray-700 bg-gray-900 px-2 py-2 text-xs text-gray-200"
-                >
-                  {rankedVoices.slice(0, 5).map((v) => (
-                    <option key={v.voiceURI} value={v.voiceURI}>
-                      {v.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </>
+            <Button
+              type="button"
+              onClick={toggleVoiceOn}
+              title={voiceOn ? "Voice replies on" : "Voice replies off"}
+              variant="outline"
+              className={`shrink-0 gap-1.5 border-gray-700 ${voiceOn ? "text-[#00FF88]" : "text-gray-500"}`}
+            >
+              {voiceOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              {voiceOn ? "On" : "Off"}
+            </Button>
           )}
 
           <Button type="submit" disabled={loading} className="shrink-0 gap-1.5 bg-[#00FF88] text-gray-950 hover:bg-[#00e07a]">
@@ -301,8 +341,8 @@ export function JarvisBar() {
         </form>
 
         <p className="text-xs text-gray-600">
-          Tip: Click the mic and say &ldquo;Jarvis report today&rdquo; or &ldquo;How many DTI?&rdquo;
-          {elevenLabsConfigured ? " — ElevenLabs voice active." : ""}
+          Tip: Click the mic and say &ldquo;Jarvis, report today, Boss&rdquo; — wait, he&apos;ll call YOU Boss!
+          {elevenLabsConfigured ? " ElevenLabs voice active." : ""}
         </p>
 
         {history.length > 0 && (

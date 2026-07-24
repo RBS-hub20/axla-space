@@ -11,28 +11,40 @@ import "server-only";
  * thing that ever touches the real key.
  *
  * TODO: set ELEVENLABS_API_KEY to enable this path for real. Get a key at
- * elevenlabs.io. Default voice below (pFZP5JQG7iQjIQuC4Bku) is ElevenLabs'
- * own "Lily" voice as a placeholder — swap in a cloned/custom Jarvis voice
- * ID via ELEVENLABS_VOICE_ID once you have one.
+ * elevenlabs.io.
  */
 
-const DEFAULT_VOICE_ID = "pFZP5JQG7iQjIQuC4Bku";
+// pFZP5JQG7iQjIQuC4Bku was used in an earlier version of this file as a
+// generic placeholder default — from prior knowledge of ElevenLabs' stock
+// voice library that ID is commonly cited as "Lily" (typically a female
+// voice), not "Adam". Kept here labeled per the current spec ("Jarvis
+// Male") since only the account owner can see what it actually sounds like
+// in their own ElevenLabs dashboard — worth a quick listen to confirm it's
+// the voice you expect before relying on the Male/Female split.
+export const JARVIS_VOICE_ID = "pFZP5JQG7iQjIQuC4Bku"; // "Adam" / Jarvis Male
+export const FRIDAY_VOICE_ID = "c6SfcYrb2t09NHXiT80T"; // "Eva" / FRIDAY Female
 
 export const isElevenLabsConfigured = Boolean(process.env.ELEVENLABS_API_KEY);
+
+// ElevenLabs voice IDs are short alphanumeric tokens interpolated straight
+// into the request URL path — validate the shape before it ever reaches
+// fetch() so a malformed/hostile value can't smuggle extra path segments.
+const VOICE_ID_PATTERN = /^[a-zA-Z0-9]{10,40}$/;
 
 export interface ElevenLabsResult {
   audio: Buffer | null;
   error?: string;
 }
 
-/** Calls ElevenLabs' text-to-speech endpoint and returns the raw MP3 bytes, or an error. */
-export async function synthesizeSpeech(text: string): Promise<ElevenLabsResult> {
+/** Calls ElevenLabs' text-to-speech endpoint for the given voice and returns the raw MP3 bytes, or an error. */
+export async function synthesizeSpeech(text: string, voiceId: string = JARVIS_VOICE_ID): Promise<ElevenLabsResult> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     return { audio: null, error: "ElevenLabs is not configured." };
   }
-
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_ID;
+  if (!VOICE_ID_PATTERN.test(voiceId)) {
+    return { audio: null, error: "Invalid voice id." };
+  }
 
   try {
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
