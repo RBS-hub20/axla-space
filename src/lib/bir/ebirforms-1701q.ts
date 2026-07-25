@@ -14,6 +14,7 @@
  */
 
 import { normalizeTin } from "@/lib/bir/ebirforms-2551q";
+import { formatIAF, generateFileName, AXLA_REF_FORMAT_VERSION } from "@/lib/bir/dat-formatter";
 
 export interface EBIR1701QData {
   tin: string;
@@ -81,4 +82,83 @@ export function generateEBIR1701QDAT(data: EBIR1701QData): string {
     data.taxDue.toFixed(2),
     data.taxDue.toFixed(2),
   ].join("|");
+}
+
+export interface Generate1701QDatInput {
+  tin: string;
+  rdo: string;
+  name: string;
+  quarter: number;
+  year: number;
+  grossSales: number;
+  prevQuarterGross?: number;
+  deductions?: number;
+  taxableIncome: number;
+  taxRate?: 0.08 | "graduated";
+  taxDue: number;
+  filingDate?: Date;
+}
+
+export interface Generate1701QDatResult {
+  datContent: string;
+  fileName: string;
+  jsonDebug: Record<string, unknown>;
+}
+
+/**
+ * Multi-record (header/detail/footer) structured reference export — same
+ * "backup, accountant handoff, re-verify in eBIRForms" framing as
+ * generateEBIR1701QDAT above, richer line-item layout. See
+ * src/lib/bir/dat-formatter.ts for the format itself and why it's an
+ * Axla-designed reference, not a BIR-published spec.
+ */
+export function generate1701QDat(input: Generate1701QDatInput): Generate1701QDatResult {
+  const { digits: tin, isValid: tinValid } = normalizeTin(input.tin);
+  const filingDate = input.filingDate ?? new Date();
+  const filingDateStr = filingDate.toISOString().slice(0, 10).replace(/-/g, "");
+  const period = `Q${input.quarter}`;
+  const rateLabel = input.taxRate === 0.08 ? "8%" : "Graduated";
+  const cumulativeGross = input.grossSales + (input.prevQuarterGross ?? 0);
+
+  const details = [
+    { label: "GrossSalesQtr", value: input.grossSales.toFixed(2) },
+    ...(input.prevQuarterGross !== undefined
+      ? [{ label: "PrevQuartersGross", value: input.prevQuarterGross.toFixed(2) }]
+      : []),
+    { label: "CumulativeGross", value: cumulativeGross.toFixed(2) },
+    ...(input.deductions !== undefined ? [{ label: "Deductions", value: input.deductions.toFixed(2) }] : []),
+    { label: "TaxableIncome", value: input.taxableIncome.toFixed(2) },
+    { label: "TaxRateBasis", value: rateLabel },
+    { label: "TaxDue", value: input.taxDue.toFixed(2) },
+  ];
+
+  const datContent = formatIAF(
+    { formType: "1701Q", tin, rdo: input.rdo, taxpayerName: input.name, period, year: input.year, filingDate: filingDateStr },
+    details,
+    { lineCount: 1, totalGross: cumulativeGross, totalTaxDue: input.taxDue },
+  );
+
+  const fileName = generateFileName("1701Q", period, input.year);
+
+  const jsonDebug = {
+    formType: "1701Q",
+    tin,
+    tinValid,
+    rdo: input.rdo,
+    name: input.name,
+    quarter: input.quarter,
+    year: input.year,
+    grossSalesQtr: input.grossSales,
+    prevQuarterGross: input.prevQuarterGross ?? null,
+    cumulativeGross,
+    deductions: input.deductions ?? null,
+    taxableIncome: input.taxableIncome,
+    taxRate: input.taxRate ?? "graduated",
+    taxDue: input.taxDue,
+    filingDate: filingDateStr,
+    formatVersion: AXLA_REF_FORMAT_VERSION,
+    generatedAt: filingDate.toISOString(),
+  };
+
+  return { datContent, fileName, jsonDebug };
 }

@@ -26,6 +26,7 @@ import { TaxHealthGauge } from "@/components/dashboard/TaxHealthGauge";
 import { MiniSparkline } from "@/components/dashboard/MiniSparkline";
 import { RevenueTimelineChart } from "@/components/dashboard/RevenueTimelineChart";
 import { RecentActivityTimeline } from "@/components/dashboard/RecentActivityTimeline";
+import { DownloadBirFiles } from "@/components/bir/DownloadBirFiles";
 
 const PESO = (n: number) => `₱${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
@@ -165,6 +166,26 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
             </span>
           </Link>
         )}
+
+        <DownloadBirFiles
+          quarter={quarter}
+          year={year}
+          // 2551Q (percentage tax) only applies to taxpayers on the 3% regime
+          // — the 8% income-tax election is filed under 1701Q instead and
+          // exempts them from 2551Q entirely, so this only passes real data
+          // when it's genuinely a 2551Q figure. No real YTD income-tax
+          // aggregate exists anywhere in this page's data yet, so the 1701Q
+          // row is intentionally left as a sample rather than mislabeling a
+          // single quarter's figure as "YTD".
+          gcashSummary={
+            timeline.hasData && taxType === "3%"
+              ? { gross: stats.totalIncomeThisQuarter, tax: stats.taxDueThisQuarter, taxRate: 0.03 }
+              : undefined
+          }
+          tin={profile?.tin_number}
+          rdoCode={profile?.rdo_code}
+          taxpayerName={profile?.full_name}
+        />
 
         {/* Top row: 4 stat cards */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

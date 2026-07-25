@@ -25,6 +25,8 @@
  * "II012" — that prefix belongs to income tax forms, not 2551Q.
  */
 
+import { formatIAF, generateFileName, AXLA_REF_FORMAT_VERSION } from "@/lib/bir/dat-formatter";
+
 export interface EBIR2551QData {
   tin: string;
   rdoCode: string;
@@ -106,4 +108,71 @@ export function generateEBIR2551QDAT(data: EBIR2551QData): string {
     data.taxDue.toFixed(2),
     data.taxDue.toFixed(2),
   ].join("|");
+}
+
+export interface Generate2551QDatInput {
+  tin: string;
+  rdo: string;
+  name: string;
+  quarter: number;
+  year: number;
+  grossSales: number;
+  taxRate: number; // e.g. 0.08 or 0.03
+  taxDue: number;
+  filingDate?: Date;
+  prevGross?: number;
+}
+
+export interface Generate2551QDatResult {
+  datContent: string;
+  fileName: string;
+  jsonDebug: Record<string, unknown>;
+}
+
+/**
+ * Multi-record (header/detail/footer) structured reference export — same
+ * "backup, accountant handoff, re-verify in eBIRForms" framing as
+ * generateEBIR2551QDAT above, just a richer line-item layout instead of one
+ * flat pipe-delimited row. See src/lib/bir/dat-formatter.ts for the format
+ * itself and why it's an Axla-designed reference, not a BIR-published spec.
+ */
+export function generate2551QDat(input: Generate2551QDatInput): Generate2551QDatResult {
+  const { digits: tin, isValid: tinValid } = normalizeTin(input.tin);
+  const filingDate = input.filingDate ?? new Date();
+  const filingDateStr = filingDate.toISOString().slice(0, 10).replace(/-/g, "");
+  const period = `Q${input.quarter}`;
+  const ratePct = `${Math.round(input.taxRate * 100)}%`;
+
+  const datContent = formatIAF(
+    { formType: "2551Q", tin, rdo: input.rdo, taxpayerName: input.name, period, year: input.year, filingDate: filingDateStr },
+    [
+      { label: "GrossSales", value: input.grossSales.toFixed(2) },
+      { label: "TaxRate", value: ratePct },
+      { label: "TaxDue", value: input.taxDue.toFixed(2) },
+      ...(input.prevGross !== undefined ? [{ label: "PrevQuarterGross", value: input.prevGross.toFixed(2) }] : []),
+    ],
+    { lineCount: 1, totalGross: input.grossSales, totalTaxDue: input.taxDue },
+  );
+
+  const fileName = generateFileName("2551Q", period, input.year);
+
+  const jsonDebug = {
+    formType: "2551Q",
+    tin,
+    tinValid,
+    rdo: input.rdo,
+    name: input.name,
+    quarter: input.quarter,
+    year: input.year,
+    grossSales: input.grossSales,
+    taxRate: input.taxRate,
+    taxRatePct: ratePct,
+    taxDue: input.taxDue,
+    prevGross: input.prevGross ?? null,
+    filingDate: filingDateStr,
+    formatVersion: AXLA_REF_FORMAT_VERSION,
+    generatedAt: filingDate.toISOString(),
+  };
+
+  return { datContent, fileName, jsonDebug };
 }
