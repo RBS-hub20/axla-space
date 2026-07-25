@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UpgradeWallModal, type UpgradeWallType } from "@/components/dashboard/UpgradeWallModal";
+import { FeatureBadge } from "@/components/dashboard/FeatureBadge";
 
 interface Transaction {
   id: string;
@@ -129,6 +130,18 @@ export default function UploadPage() {
           <p className="text-sm text-slate-400">
             Upload GCash (CSV or PDF), Maya (CSV), or a bank statement (BPI/BDO/UnionBank — CSV or XLSX) — Axla
             auto-detects the source and categorizes income vs expenses.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-[#1E293B] px-2.5 py-1 text-xs font-medium text-slate-300">GCash</span>
+            <span className="flex items-center gap-1.5 rounded-full border border-[#1E293B] px-2.5 py-1 text-xs font-medium text-slate-300">
+              Maya <FeatureBadge />
+            </span>
+            <span className="flex items-center gap-1.5 rounded-full border border-[#1E293B] px-2.5 py-1 text-xs font-medium text-slate-300">
+              BPI / BDO / UnionBank <FeatureBadge />
+            </span>
+          </div>
+          <p className="mt-2 text-xs font-medium text-[#22c55e]">
+            Now supports Maya wallet, BPI/BDO/UnionBank CSV/XLSX — no reformat needed!
           </p>
         </div>
 

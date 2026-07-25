@@ -14,6 +14,7 @@ type VisualState = "idle" | "listening" | "thinking" | "speaking";
 const JARVIS_VOICE_ID = "IRHApOXLvnW57QJPQH2P"; // "Adam - Deep Jarvis" / default male voice (server keeps the old ID accepted as a fallback)
 const FRIDAY_VOICE_ID = "c6SfcYrb2t09NHXiT80T"; // "Eva" / FRIDAY Female
 const PERSONA_STORAGE_KEY = "axla-admin-jarvis-persona"; // shared with JarvisBar so both stay in sync
+const NEW_FEATURES_ANNOUNCED_KEY = "axla-admin-jarvis-new-features-announced-v2";
 
 const CYAN = "#00D4FF";
 const GREEN = "#00FF88";
@@ -612,6 +613,23 @@ export function JarvisHUD({ active }: { active: boolean }) {
     },
     [elevenLabsConfigured, persona, speakBrowser],
   );
+
+  // One-time voice announcement for the Maya/banks/BIR-forms/exports/RDO-packet
+  // launch — fires once per browser (localStorage-gated) and only when
+  // Jarvis is idle, same "don't interrupt an active interaction" guard the
+  // live-sync announcements use.
+  const hasAnnouncedNewFeaturesRef = useRef(false);
+  useEffect(() => {
+    if (hasAnnouncedNewFeaturesRef.current) return;
+    if (localStorage.getItem(NEW_FEATURES_ANNOUNCED_KEY)) return;
+    if (visualStateRef.current !== "idle") return;
+    hasAnnouncedNewFeaturesRef.current = true;
+    localStorage.setItem(NEW_FEATURES_ANNOUNCED_KEY, "1");
+    speak(
+      "Sir, 6 new features deployed — Maya, banks, 5 BIR forms, exports, RDO packet — all genuinely live and tested, Sir.",
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const ask = useCallback(
     async (q: string) => {

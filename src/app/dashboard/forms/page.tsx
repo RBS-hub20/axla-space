@@ -26,6 +26,7 @@ import { UpgradeWallModal } from "@/components/dashboard/UpgradeWallModal";
 import { Bir2551QPaperPreview } from "@/components/dashboard/Bir2551QPaperPreview";
 import { BirFilingsHistory, type BirFiling } from "@/components/dashboard/BirFilingsHistory";
 import { ConfettiBurst } from "@/components/dashboard/ConfettiBurst";
+import { FeatureBadge } from "@/components/dashboard/FeatureBadge";
 import { PLAN_PRICING } from "@/lib/plans";
 import { PROMO, isPromoActive } from "@/lib/promo";
 import type { UsageType } from "@/lib/usage";
@@ -79,12 +80,12 @@ const FORM_TYPES = [
 ];
 
 type EbirFormType = "2551Q" | "1701Q" | "1701" | "0619E" | "2307";
-const EBIR_FORM_TYPES: { value: EbirFormType; label: string }[] = [
+const EBIR_FORM_TYPES: { value: EbirFormType; label: string; isNew?: boolean }[] = [
   { value: "2551Q", label: "2551Q" },
-  { value: "1701Q", label: "1701Q" },
-  { value: "1701", label: "1701 (Annual)" },
-  { value: "0619E", label: "0619E" },
-  { value: "2307", label: "2307" },
+  { value: "1701Q", label: "1701Q", isNew: true },
+  { value: "1701", label: "1701 (Annual)", isNew: true },
+  { value: "0619E", label: "0619E", isNew: true },
+  { value: "2307", label: "2307", isNew: true },
 ];
 
 const PREMIUM_CARD = "rounded-2xl border-[#1E293B] bg-[#121A22] shadow-sm transition hover:border-[#22c55e]/30 hover:shadow-lg hover:shadow-green-500/10";
@@ -1070,13 +1071,14 @@ export default function BirFormsPage() {
                       key={ft.value}
                       type="button"
                       onClick={() => setExportFormType(ft.value)}
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
                         exportFormType === ft.value
                           ? "border-[#22c55e] bg-[#22c55e]/10 text-[#22c55e]"
                           : "border-[#1E293B] text-slate-300 hover:bg-white/5"
                       }`}
                     >
                       {ft.label}
+                      {ft.isNew && <FeatureBadge />}
                     </button>
                   ))}
                 </div>

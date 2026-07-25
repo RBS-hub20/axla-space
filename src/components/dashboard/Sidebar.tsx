@@ -21,21 +21,24 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FeatureBadge } from "@/components/dashboard/FeatureBadge";
 
 interface NavItem {
   label: string;
   href: string;
   icon: typeof LayoutDashboard;
   badge?: string;
+  /** Pulsing FeatureBadge instead of the plain text badge above — used for the Maya/bank/BIR-forms/exports launch, distinct from the older static BETA/NEW pills. */
+  pulseNew?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "Tax Calculator", href: "/dashboard/calculator", icon: Calculator },
-  { label: "BIR Forms", href: "/dashboard/forms", icon: FileText },
+  { label: "BIR Forms", href: "/dashboard/forms", icon: FileText, pulseNew: true },
   { label: "BIR Guard", href: "/dashboard/bir-guard", icon: Shield, badge: "BETA" },
   { label: "Business Toolkit", href: "/dashboard/toolkit", icon: Briefcase, badge: "NEW" },
-  { label: "GCash Upload", href: "/dashboard/upload", icon: Upload },
+  { label: "GCash Upload", href: "/dashboard/upload", icon: Upload, pulseNew: true },
   { label: "Documents", href: "/dashboard/documents", icon: FolderOpen },
   { label: "Invoices", href: "/dashboard/invoices", icon: Receipt, badge: "NEW" },
   { label: "Brain AI", href: "/dashboard/brain", icon: Bot },
@@ -66,7 +69,7 @@ function NavLinks({
 
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {items.map(({ label, href, icon: Icon, badge }) => {
+      {items.map(({ label, href, icon: Icon, badge, pulseNew }) => {
         const isActive = href === "/dashboard" ? pathname === href : pathname.startsWith(href);
         // Invoices' badge shows the live outstanding count once there is
         // one, instead of the static "NEW" label — same slot, more useful.
@@ -86,10 +89,14 @@ function NavLinks({
           >
             <Icon className="h-4 w-4 shrink-0" strokeWidth={isActive ? 2.5 : 2} />
             {label}
-            {effectiveBadge && (
-              <span className="ml-auto rounded-full bg-[#00FF85]/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#00FF85]">
-                {effectiveBadge}
-              </span>
+            {pulseNew ? (
+              <FeatureBadge className="ml-auto" />
+            ) : (
+              effectiveBadge && (
+                <span className="ml-auto rounded-full bg-[#00FF85]/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#00FF85]">
+                  {effectiveBadge}
+                </span>
+              )
             )}
           </Link>
         );
