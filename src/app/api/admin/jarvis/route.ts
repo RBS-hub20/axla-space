@@ -22,8 +22,15 @@ interface JarvisStats {
   secCount: number;
   mayorsCount: number;
   paymongoRevenue: number;
+  /** Real Monthly Recurring Revenue from active subscriptions (yearly plans divided by 12) — the same formula src/lib/payments-stats.ts uses for the Revenue section's own MRR figure, so this never disagrees with what's already on screen elsewhere in the dashboard. Distinct from paymongoRevenue, which is lifetime payment total, not "recurring." */
+  mrr: number;
   /** Real business name of Axla's own DTI registration, if one is on file — never fabricated. */
   axlaDtiName: string | null;
+}
+
+interface RecentSignup {
+  email: string;
+  createdAt: string;
 }
 
 // Each egg contributes at most one "Sir" — some contribute none — so
@@ -113,7 +120,7 @@ function managedSystemsBullets(stats: JarvisStats, deadlines: BirDeadline[]): st
 
   return [
     `${stats.totalUsers} active users and ${stats.totalWaitlist} waitlisted — average frustration ${stats.avgHateLevel} out of 10`,
-    `PHP ${stats.paymongoRevenue.toLocaleString()} MRR — revenue tracking`,
+    `PHP ${stats.mrr.toLocaleString()} MRR — revenue tracking`,
     `${stats.invoicesTotal} invoice${stats.invoicesTotal === 1 ? "" : "s"} — toolkit monitoring`,
     dtiBullet,
     `BIR deadlines — 2551Q, 1701Q, 1601C, Annual ITR — I track the countdown so you never get penalized${urgentCount > 0 ? ` (${urgentCount} need${urgentCount === 1 ? "s" : ""} attention this week)` : ""}`,
@@ -151,7 +158,7 @@ function buildIntroAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting
 function buildManagedAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
   const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
   const summary =
-    `Users ${stats.totalUsers}, Waitlist ${stats.totalWaitlist}, Revenue PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+    `Users ${stats.totalUsers}, Waitlist ${stats.totalWaitlist}, Revenue PHP ${stats.mrr.toLocaleString()} MRR, ` +
     `Invoices ${stats.invoicesTotal}, DTI ${stats.dtiCount}${stats.axlaDtiName ? " passed" : ""}, ` +
     `BIR deadlines with countdown${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, system health 100%`;
   return persona === "friday"
@@ -163,7 +170,7 @@ function buildManagedAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeti
 function buildWakeUpAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
   const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
   const managing =
-    `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+    `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, PHP ${stats.mrr.toLocaleString()} MRR, ` +
     `BIR deadlines${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, DTI kits`;
   return persona === "friday"
     ? `${greeting}, Sir! FRIDAY online. Managing ${managing} — all operational.`
@@ -182,7 +189,7 @@ function buildGreetingAnswer(
     ? ` You said good ${saidWord}, but it's actually ${manila.greeting.toLowerCase().replace("good ", "")} here in Manila — no worries, I've got you.`
     : "";
   const dtiBit = stats.axlaDtiName ? `1 DTI passed` : `${stats.dtiCount} DTI on file`;
-  const summary = `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist at ${stats.avgHateLevel} hate, ${stats.paymongoRevenue.toLocaleString()} MRR, ${dtiBit}, BIR deadlines tracked`;
+  const summary = `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist at ${stats.avgHateLevel} hate, ${stats.mrr.toLocaleString()} MRR, ${dtiBit}, BIR deadlines tracked`;
 
   return persona === "friday"
     ? `${manila.greeting}, Sir! ${manila.vibe} FRIDAY here, online and managing your Axla empire — ${summary}.${mismatch} All green!`
@@ -196,7 +203,7 @@ function buildGreetingAnswer(
  * for an LLM call fed the same `stats` object, without touching the
  * data-gathering half.
  */
-async function gatherStats(): Promise<JarvisStats> {
+async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentSignup[]; latestWaitlist: RecentSignup[] }> {
   const now = new Date();
 
   const [
@@ -206,6 +213,9 @@ async function gatherStats(): Promise<JarvisStats> {
     { data: invoices },
     { data: registrations },
     { data: payments },
+    { data: subscriptions },
+    { data: recentProfiles },
+    { data: recentWaitlist },
   ] = await Promise.all([
     supabaseAdmin.from("profiles").select("id", { count: "exact", head: true }),
     supabaseAdmin.from("waitlist").select("bir_hate_level, created_at"),
@@ -213,6 +223,9 @@ async function gatherStats(): Promise<JarvisStats> {
     supabaseAdmin.from("invoices").select("total, status, created_at"),
     supabaseAdmin.from("business_registrations").select("type, data"),
     supabaseAdmin.from("payments").select("amount, status"),
+    supabaseAdmin.from("subscriptions").select("amount, status, billing_cycle"),
+    supabaseAdmin.from("profiles").select("email, created_at").order("created_at", { ascending: false }).limit(3),
+    supabaseAdmin.from("waitlist").select("email, created_at").order("created_at", { ascending: false }).limit(3),
   ]);
 
   const waitlistRows = waitlist ?? [];
@@ -243,21 +256,36 @@ async function gatherStats(): Promise<JarvisStats> {
 
   const paymongoRevenue = (payments ?? []).filter((p) => p.status === "paid").reduce((sum, p) => sum + Number(p.amount), 0);
 
+  // Same formula as src/lib/payments-stats.ts's own MRR figure (active
+  // subscriptions, yearly plans divided by 12) — kept identical on purpose
+  // so this never quietly disagrees with the number already shown in the
+  // dashboard's Revenue section.
+  const mrr = Math.round(
+    (subscriptions ?? [])
+      .filter((s) => s.status === "active")
+      .reduce((sum, s) => sum + (s.billing_cycle === "yearly" ? Number(s.amount) / 12 : Number(s.amount)), 0),
+  );
+
   return {
-    totalUsers: totalUsers ?? 0,
-    totalWaitlist: waitlistRows.length,
-    avgHateLevel: Math.round(avgHateLevel * 10) / 10,
-    signupsToday,
-    messagesToday,
-    invoicesTotal: invoiceRows.length,
-    invoicesToday,
-    invoicesPaidTotal,
-    invoicesOutstanding,
-    dtiCount,
-    secCount,
-    mayorsCount,
-    paymongoRevenue,
-    axlaDtiName,
+    stats: {
+      totalUsers: totalUsers ?? 0,
+      totalWaitlist: waitlistRows.length,
+      avgHateLevel: Math.round(avgHateLevel * 10) / 10,
+      signupsToday,
+      messagesToday,
+      invoicesTotal: invoiceRows.length,
+      invoicesToday,
+      invoicesPaidTotal,
+      invoicesOutstanding,
+      dtiCount,
+      secCount,
+      mayorsCount,
+      paymongoRevenue,
+      mrr,
+      axlaDtiName,
+    },
+    latestUsers: (recentProfiles ?? []).map((p) => ({ email: p.email, createdAt: p.created_at })),
+    latestWaitlist: (recentWaitlist ?? []).map((w) => ({ email: w.email, createdAt: w.created_at })),
   };
 }
 
@@ -386,9 +414,9 @@ function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadl
       : "";
 
     return isFriday
-      ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+      ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.mrr.toLocaleString()} MRR, ` +
           `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention} All systems operational!${egg}`
-      : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+      : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.mrr.toLocaleString()} MRR, ` +
           `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention} All systems operational.${egg}`;
   }
 
@@ -422,7 +450,7 @@ export async function GET(req: Request) {
 
   try {
     const now = new Date();
-    const stats = await gatherStats();
+    const { stats, latestUsers, latestWaitlist } = await gatherStats();
     const deadlines = getBirDeadlines(now);
     const manila = getManilaGreeting(now);
     const answer = buildAnswer(q, stats, deadlines, manila, persona);
@@ -431,6 +459,8 @@ export async function GET(req: Request) {
       answer,
       voiceAnswer,
       stats,
+      latestUsers,
+      latestWaitlist,
       birDeadlines: deadlines,
       greeting: manila.greeting,
       manilaTime: formatManilaTime(now),

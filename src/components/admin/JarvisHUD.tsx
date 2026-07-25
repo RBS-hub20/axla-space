@@ -25,8 +25,30 @@ interface JarvisStats {
   invoicesTotal: number;
   invoicesPaidTotal: number;
   paymongoRevenue: number;
+  mrr: number;
   dtiCount: number;
   axlaDtiName: string | null;
+}
+
+interface RecentSignup {
+  email: string;
+  createdAt: string;
+}
+
+interface LiveToast {
+  id: number;
+  message: string;
+}
+
+const POLL_INTERVAL_MS = 10_000;
+const ORB_PULSE_DURATION_MS = 1000;
+const VITALS_PULSE_DURATION_MS = 1000;
+const TOAST_DURATION_MS = 4000;
+
+function secondsAgoLabel(lastSyncedAt: number | null): string {
+  if (lastSyncedAt === null) return "—";
+  const seconds = Math.max(0, Math.round((Date.now() - lastSyncedAt) / 1000));
+  return seconds <= 1 ? "just now" : `${seconds}s ago`;
 }
 
 interface SpeechRecognitionLike {
@@ -168,6 +190,11 @@ export function JarvisHUD({ active }: { active: boolean }) {
   const [birDeadlines, setBirDeadlines] = useState<BirDeadline[]>([]);
   const [elevenLabsConfigured, setElevenLabsConfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [vitalsPulse, setVitalsPulse] = useState(false);
+  const [toasts, setToasts] = useState<LiveToast[]>([]);
+  const [, setClockTick] = useState(0); // forces "Updated Ns ago" to recompute every second
 
   const orbCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const waveCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -179,6 +206,10 @@ export function JarvisHUD({ active }: { active: boolean }) {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const hasOverdueRef = useRef(false);
+  const orbPulseUntilRef = useRef(0);
+  const prevStatsRef = useRef<JarvisStats | null>(null);
+  const hasLoadedOnceRef = useRef(false);
+  const toastIdRef = useRef(0);
 
   const { time: manilaClock, shiftLabel } = useManilaClock();
 
@@ -200,23 +231,103 @@ export function JarvisHUD({ active }: { active: boolean }) {
     window.localStorage.setItem(PERSONA_STORAGE_KEY, persona);
   }, [persona]);
 
+  function pushToast(message: string) {
+    const id = ++toastIdRef.current;
+    setToasts((t) => [...t, { id, message }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), TOAST_DURATION_MS);
+  }
+
+  function pulseVitalsNow() {
+    setVitalsPulse(true);
+    setTimeout(() => setVitalsPulse(false), VITALS_PULSE_DURATION_MS);
+  }
+
+  function pulseOrbNow() {
+    orbPulseUntilRef.current = Date.now() + ORB_PULSE_DURATION_MS;
+  }
+
+  // Ticks the "Updated Ns ago" label every second without re-fetching anything.
+  useEffect(() => {
+    const id = setInterval(() => setClockTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   const loadStats = useCallback(async () => {
+    setSyncing(true);
     try {
       const res = await fetch(`/api/admin/jarvis?q=status&persona=${persona}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
-      setStats(data.stats);
+      const newStats: JarvisStats = data.stats;
+      const latestUsers: RecentSignup[] = data.latestUsers ?? [];
+      const latestWaitlist: RecentSignup[] = data.latestWaitlist ?? [];
+
+      // Delta detection against the last known snapshot — this is real
+      // polling (every 10s), not a live Postgres CDC subscription: Supabase
+      // Realtime's `postgres_changes` would need these tables readable by
+      // the browser's `anon` role, but they're RLS-locked to service_role
+      // only (waitlist emails, revenue, invoices) — opening that up so the
+      // browser could subscribe would make all of it publicly readable via
+      // the already-public anon key, which is a real data leak, not a
+      // theoretical one. Polling + diffing gets the same "no refresh
+      // needed, updates within ~10s" result without that trade-off.
+      const prev = prevStatsRef.current;
+      if (hasLoadedOnceRef.current && prev) {
+        const events: string[] = [];
+        let spokenLine: string | null = null;
+
+        if (newStats.mrr > prev.mrr) {
+          const line = `New subscription — MRR now PHP ${newStats.mrr.toLocaleString()}, Sir.`;
+          events.push(line);
+          spokenLine = spokenLine ?? line;
+        }
+        if (newStats.totalUsers > prev.totalUsers) {
+          const who = latestUsers[0]?.email ? ` (${latestUsers[0].email})` : "";
+          const line = `New user joined${who} — ${newStats.totalUsers} total now, Sir.`;
+          events.push(line);
+          spokenLine = spokenLine ?? `New user joined, Sir — ${newStats.totalUsers} total now.`;
+        }
+        if (newStats.totalWaitlist > prev.totalWaitlist) {
+          const who = latestWaitlist[0]?.email ? ` (${latestWaitlist[0].email})` : "";
+          const line = `New waitlist signup${who} — ${newStats.totalWaitlist} total, hate level ${newStats.avgHateLevel}.`;
+          events.push(line);
+          spokenLine = spokenLine ?? `New waitlist signup — ${newStats.totalWaitlist} total, hate level ${newStats.avgHateLevel}, Sir.`;
+        }
+        if (newStats.invoicesTotal > prev.invoicesTotal) {
+          const line = `New invoice — ${newStats.invoicesTotal} total now.`;
+          events.push(line);
+          spokenLine = spokenLine ?? line;
+        }
+
+        if (events.length > 0) {
+          for (const line of events) pushToast(`LIVE: ${line}`);
+          pulseVitalsNow();
+          pulseOrbNow();
+          // Never interrupt an active mic/thinking/speaking moment with an unsolicited announcement.
+          if (spokenLine && visualStateRef.current === "idle") {
+            speak(spokenLine);
+          }
+        }
+      }
+
+      prevStatsRef.current = newStats;
+      hasLoadedOnceRef.current = true;
+      setStats(newStats);
       setBirDeadlines(data.birDeadlines ?? []);
       setElevenLabsConfigured(Boolean(data.elevenLabsConfigured));
+      setLastSyncedAt(Date.now());
     } catch {
       // Vitals panel just stays on its last known values — not worth surfacing an error banner for a background refresh.
+    } finally {
+      setSyncing(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persona]);
 
   useEffect(() => {
     if (!active) return;
     loadStats();
-    const id = setInterval(loadStats, 30_000);
+    const id = setInterval(loadStats, POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [active, loadStats]);
 
@@ -249,9 +360,13 @@ export function JarvisHUD({ active }: { active: boolean }) {
       ctx.fillRect(0, 0, size, size);
 
       // Arc-reactor core: pulsates faster while speaking, slower while idle.
+      // A brief extra boost (liveBoost) rides on top when new real data just
+      // arrived from the live-sync poll — decays back to 1 over ~1s.
       const pulsePeriod = state === "speaking" ? 30 : 120;
       const pulse = 0.5 + 0.5 * Math.sin((t / pulsePeriod) * Math.PI * 2);
-      const coreRadius = (30 + pulse * 30) * sizeMul; // 30 -> 60px
+      const msUntilPulseEnds = orbPulseUntilRef.current - Date.now();
+      const liveBoost = msUntilPulseEnds > 0 ? 1 + 0.5 * (msUntilPulseEnds / ORB_PULSE_DURATION_MS) : 1;
+      const coreRadius = (30 + pulse * 30) * sizeMul * liveBoost; // 30 -> 60px, briefly brighter on live updates
       const coreGradient = ctx.createRadialGradient(center, center, 0, center, center, coreRadius);
       coreGradient.addColorStop(0, "rgba(255,255,255,0.95)");
       coreGradient.addColorStop(0.4, "rgba(0,212,255,0.7)");
@@ -564,14 +679,16 @@ export function JarvisHUD({ active }: { active: boolean }) {
 
   const vitals = useMemo(() => {
     if (!stats) return null;
-    const totalRevenue = stats.paymongoRevenue + stats.invoicesPaidTotal;
+    // Real MRR (active subscriptions, yearly/12) — not paymongoRevenue,
+    // which is a lifetime payment total and would silently drift from the
+    // true "monthly recurring" figure after the next renewal payment.
     return {
       users: stats.totalUsers,
       waitlist: stats.totalWaitlist,
       hatePct: Math.min(100, Math.round((stats.avgHateLevel / 10) * 100)),
       hateLevel: stats.avgHateLevel,
-      revenue: totalRevenue,
-      revenuePct: Math.min(100, Math.round((totalRevenue / 2000) * 100)), // 2000 is an arbitrary visual ceiling for the bar, not a real target
+      mrr: stats.mrr,
+      mrrPct: Math.min(100, Math.round((stats.mrr / 2000) * 100)), // 2000 is an arbitrary visual ceiling for the bar, not a real target
       invoices: stats.invoicesTotal,
       dtiCount: stats.dtiCount,
       dtiCertified: Boolean(stats.axlaDtiName),
@@ -616,15 +733,39 @@ export function JarvisHUD({ active }: { active: boolean }) {
             {shiftLabel}
           </span>
           <p className="text-sm tabular-nums">MANILA {manilaClock} PHT</p>
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#00FF88]">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#00FF88]" />
+            {syncing ? "Syncing..." : `Live Sync · ${secondsAgoLabel(lastSyncedAt)}`}
+          </div>
         </div>
       </div>
 
+      {/* Live-event toasts */}
+      <div className="pointer-events-none fixed right-4 top-4 z-50 flex flex-col gap-2">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className="animate-in fade-in max-w-xs rounded-lg border px-3 py-2 text-xs font-medium text-[#00FF88] shadow-lg"
+            style={{ borderColor: "rgba(0,255,136,0.4)", background: "rgba(10,20,40,0.95)", boxShadow: "0 0 20px rgba(0,255,136,0.25)" }}
+          >
+            {t.message}
+          </div>
+        ))}
+      </div>
+
       {/* Left panel — System Vitals (compact) */}
-      <div className="absolute left-5 top-20 w-56 space-y-2.5 text-[#00D4FF]">
+      <div
+        className="absolute left-5 top-20 w-56 space-y-2.5 rounded-xl p-2 text-[#00D4FF] transition-all duration-500"
+        style={
+          vitalsPulse
+            ? { background: "rgba(0,255,136,0.08)", boxShadow: "0 0 24px rgba(0,255,136,0.35)" }
+            : { background: "transparent", boxShadow: "none" }
+        }
+      >
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">System Vitals</p>
         <VitalRow label="Users" value={vitals ? String(vitals.users) : "—"} />
         <VitalBar label="Waitlist" value={vitals ? `${vitals.waitlist} (${vitals.hateLevel}/10 hate)` : "—"} pct={vitals?.hatePct ?? 0} color="#FF3B5C" />
-        <VitalBar label="Revenue" value={vitals ? `PHP ${vitals.revenue.toLocaleString()} MRR` : "—"} pct={vitals?.revenuePct ?? 0} color={CYAN} />
+        <VitalBar label="Revenue" value={vitals ? `PHP ${vitals.mrr.toLocaleString()} MRR` : "—"} pct={vitals?.mrrPct ?? 0} color={CYAN} />
         <VitalBar label="Invoices" value={vitals ? String(vitals.invoices) : "—"} pct={vitals ? Math.min(100, vitals.invoices * 10) : 0} color={GREEN} />
         <VitalRow
           label="DTI Kits"
@@ -687,7 +828,7 @@ export function JarvisHUD({ active }: { active: boolean }) {
         style={{ borderColor: CYAN, boxShadow: `0 0 20px ${CYAN}44` }}
       >
         <span className="text-[#00D4FF]">
-          AXLA LIVE: {vitals ? `PHP ${vitals.revenue.toLocaleString()} MRR` : "—"} | Users {vitals?.users ?? "—"} | Jarvis ON
+          AXLA LIVE: {vitals ? `PHP ${vitals.mrr.toLocaleString()} MRR` : "—"} | Users {vitals?.users ?? "—"} | Jarvis ON
         </span>
       </div>
 
