@@ -3,10 +3,13 @@ import { CheckCircle2, FileText, Sparkles, Wallet } from "lucide-react";
 /**
  * Hand-built representative mockup of the Axla dashboard — not a real
  * screenshot (none exists to embed), styled to read as a genuine product
- * preview: a filing list, a GCash upload success state, and a TaxLaya AI
- * chat exchange, layered into a floating "glass" card like Linear's hero.
+ * preview: a filing list, a GCash upload success state, and (optionally) a
+ * TaxLaya AI chat exchange, layered into a floating "glass" card like
+ * Linear's hero. `showChat` defaults to true so the landing-page Hero's
+ * existing `<DashboardMockup />` call is unaffected; /login passes
+ * `showChat={false}` since a login screen shouldn't preview chat.
  */
-export function DashboardMockup() {
+export function DashboardMockup({ showChat = true }: { showChat?: boolean }) {
   return (
     <div className="relative w-full max-w-md">
       {/* Back card, peeking out for depth */}
@@ -53,18 +56,20 @@ export function DashboardMockup() {
         </div>
 
         {/* TaxLaya chat preview */}
-        <div className="mt-3 rounded-xl border border-white/5 bg-white/[0.03] p-3">
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-400">
-            <Sparkles className="h-3.5 w-3.5 text-[#00FF88]" />
-            TaxLaya
-          </p>
-          <p className="rounded-lg rounded-tr-sm bg-white/[0.06] px-3 py-2 text-[11px] text-slate-300">
-            Boss ano ilalagay sa Line 12? 😩
-          </p>
-          <p className="mt-2 ml-auto w-fit rounded-lg rounded-tl-sm bg-[#00FF88]/15 px-3 py-2 text-[11px] text-[#00FF88]">
-            Dito mo ilagay ang gross sales mo — kinuha ko na sa GCash history mo 🔥
-          </p>
-        </div>
+        {showChat && (
+          <div className="mt-3 rounded-xl border border-white/5 bg-white/[0.03] p-3">
+            <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-slate-400">
+              <Sparkles className="h-3.5 w-3.5 text-[#00FF88]" />
+              TaxLaya
+            </p>
+            <p className="rounded-lg rounded-tr-sm bg-white/[0.06] px-3 py-2 text-[11px] text-slate-300">
+              Boss ano ilalagay sa Line 12? 😩
+            </p>
+            <p className="mt-2 ml-auto w-fit rounded-lg rounded-tl-sm bg-[#00FF88]/15 px-3 py-2 text-[11px] text-[#00FF88]">
+              Dito mo ilagay ang gross sales mo — kinuha ko na sa GCash history mo 🔥
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
