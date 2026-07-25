@@ -238,7 +238,7 @@ export async function POST(req: Request) {
           const { error: sendError } = await resend.emails.send({
             from: RESEND_FROM_EMAIL,
             to: email,
-            subject: "Welcome to Axla PRO! 🚀 Your PRO plan is now active",
+            subject: "Welcome to Axla PRO! 🚀",
             html: proUpgradeEmailTemplate(profile?.full_name || email.split("@")[0], plan as "pro" | "business", receipt),
           });
           if (sendError) logError("webhooks/paymongo: pro-upgrade email send failed (non-fatal)", sendError);

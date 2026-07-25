@@ -225,7 +225,7 @@ export interface ProUpgradeReceipt {
  * as the official payment confirmation, not just a feature-unlock notice.
  */
 export function proUpgradeEmailTemplate(name: string, plan: "pro" | "business", receipt: ProUpgradeReceipt): string {
-  const greeting = name ? `Hi ${name}, thank you for subscribing to Axla PRO!` : "Thank you for subscribing to Axla PRO!";
+  const greeting = name ? `Hi ${name}, your PRO is active! Thank you for subscribing to Axla PRO!` : "Your PRO is active! Thank you for subscribing to Axla PRO!";
   const planLabel = plan === "business" ? "Business" : "PRO";
   const dateLabel = receipt.date.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
 
