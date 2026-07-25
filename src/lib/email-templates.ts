@@ -212,39 +212,85 @@ export function waitlistWelcomeEmailTemplate(name: string): string {
   return emailShell("You're on the Axla waitlist", body);
 }
 
-/** Sent when a subscription is newly activated (PayMongo webhook) — plan-aware (Pro vs Business get different unlocks listed). */
-export function proUpgradeEmailTemplate(name: string, plan: "pro" | "business"): string {
-  const greeting = name ? `You're PRO now, ${name}! 🚀` : "You're PRO now! 🚀";
+export interface ProUpgradeReceipt {
+  transactionId: string | null;
+  amount: number;
+  date: Date;
+}
+
+/**
+ * Sent when a subscription is newly activated (PayMongo webhook) —
+ * plan-aware (Pro vs Business get different unlocks listed) and includes
+ * a real receipt block (plan/amount/transaction ID/date) so this doubles
+ * as the official payment confirmation, not just a feature-unlock notice.
+ */
+export function proUpgradeEmailTemplate(name: string, plan: "pro" | "business", receipt: ProUpgradeReceipt): string {
+  const greeting = name ? `Hi ${name}, thank you for subscribing to Axla PRO!` : "Thank you for subscribing to Axla PRO!";
   const planLabel = plan === "business" ? "Business" : "PRO";
+  const dateLabel = receipt.date.toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" });
 
   const body = `
-    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">${greeting}</p>
-    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
-      Your Axla ${planLabel} plan is active. Unlimited filings, unlimited GCash uploads,
-      unlimited TaxLaya AI chat, and clean BIR-ready PDFs are unlocked.
-    </p>
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">Payment Confirmed — You're now PRO! 🚀</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">${greeting}</p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:20px; border:1px solid #3A424C; border-radius:12px;">
+      <tr>
+        <td style="padding:16px 18px;">
+          <p style="margin:0 0 10px; font-size:12px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:${MUTED_TEXT};">Receipt</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; font-size:13px; color:${BODY_TEXT};">
+            <tr><td style="padding:3px 0; color:${MUTED_TEXT};">Plan</td><td style="padding:3px 0; text-align:right; font-weight:600; color:#ffffff;">${planLabel}</td></tr>
+            <tr><td style="padding:3px 0; color:${MUTED_TEXT};">Amount</td><td style="padding:3px 0; text-align:right; font-weight:600; color:#ffffff;">₱${receipt.amount.toLocaleString()}</td></tr>
+            <tr><td style="padding:3px 0; color:${MUTED_TEXT};">Transaction ID</td><td style="padding:3px 0; text-align:right; font-weight:600; color:#ffffff;">${receipt.transactionId ?? "N/A"}</td></tr>
+            <tr><td style="padding:3px 0; color:${MUTED_TEXT};">Date</td><td style="padding:3px 0; text-align:right; font-weight:600; color:#ffffff;">${dateLabel}</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:24px;">
       <tr>
         <td style="padding:16px 18px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
-          <p style="margin:0 0 6px; font-size:13px; font-weight:700; color:#ffffff;">Also unlocked: BIR Guard 🛡️ (Beta)</p>
-          <p style="margin:0; font-size:13px; line-height:1.6; color:${BODY_TEXT};">
-            Track open BIR cases and penalties in one place — head to your dashboard to set it up.
+          <p style="margin:0 0 6px; font-size:13px; font-weight:700; color:#ffffff;">What's unlocked</p>
+          <p style="margin:0; font-size:13px; line-height:1.8; color:${BODY_TEXT};">
+            Unlimited filings &amp; GCash uploads<br />
+            Unlimited TaxLaya AI chat<br />
+            Official BIR-ready PDFs + eBIRForms XML/DAT export<br />
+            Priority support<br />
+            BIR Guard 🛡️ (Beta) — case &amp; penalty tracking
           </p>
         </td>
       </tr>
     </table>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;">
       <tr>
         <td style="border-radius:9999px; background-color:${ACCENT};">
           <a href="https://www.axla.space/dashboard" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
-            Open Dashboard →
+            Go to Dashboard →
           </a>
         </td>
       </tr>
     </table>
+
+    <p style="margin:0; font-size:11px; text-align:center; color:${MUTED_TEXT};">This is an official receipt from Axla.space.</p>
   `;
 
   return emailShell(`Your Axla ${planLabel} plan is active`, body);
+}
+
+/** Internal ops notification (not customer-facing) — sent to the admin inbox alongside the customer receipt above, same webhook, separate non-blocking send. */
+export function adminNewProNotificationTemplate(email: string, plan: "pro" | "business", amount: number, transactionId: string | null): string {
+  const planLabel = plan === "business" ? "Business" : "PRO";
+  const body = `
+    <p style="margin:0 0 4px; font-size:18px; color:#ffffff; font-weight:700;">💰 New ${planLabel} purchase</p>
+    <p style="margin:0 0 16px; font-size:14px; line-height:1.6; color:${BODY_TEXT};">
+      <strong style="color:#ffffff;">${email}</strong> just subscribed to Axla ${planLabel} — ₱${amount.toLocaleString()}.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; font-size:13px; color:${BODY_TEXT};">
+      <tr><td style="padding:2px 0; color:${MUTED_TEXT};">Transaction ID</td><td style="padding:2px 0; text-align:right;">${transactionId ?? "N/A"}</td></tr>
+    </table>
+  `;
+  return emailShell(`New ${planLabel} purchase: ${email} — ₱${amount.toLocaleString()}`, body);
 }
 
 /** Sent when a newly-logged BIR Guard case has a penalty or is otherwise flagged — the user added this themselves (manual entry), this just confirms/reminds. */

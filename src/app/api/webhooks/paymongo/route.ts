@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { resend, isResendConfigured, RESEND_FROM_EMAIL } from "@/lib/resend";
-import { proUpgradeEmailTemplate } from "@/lib/email-templates";
+import { proUpgradeEmailTemplate, adminNewProNotificationTemplate } from "@/lib/email-templates";
+import { ADMIN_EMAIL } from "@/lib/admin";
 import { logError } from "@/lib/log-error";
 
 const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET_KEY;
@@ -58,9 +59,16 @@ interface ExtractedPayment {
  * `payment.paid` events put the payment directly at event.data.attributes.data.
  * `link.payment.paid` events put the LINK there instead, with the actual paid
  * payment nested one level deeper at attributes.payments[0].data — including
- * billing/source, which don't exist on the link's own attributes. Checking
- * both shapes (nested first, falling back to top-level) means this doesn't
- * silently misparse regardless of which event type triggered it.
+ * billing/source, which don't exist on the link's own attributes.
+ * `checkout_session.payment.paid` puts the Checkout Session resource there,
+ * which carries its own top-level `billing.email` (set at session-creation
+ * time in src/lib/payments.ts) and `line_items[].amount` even before the
+ * nested `payments[]` array is populated — both checked as fallbacks so a
+ * timing edge case where the nested payment isn't embedded yet still
+ * resolves email/amount correctly instead of silently degrading to
+ * "no email" / "amount 0". Checking every shape (nested first, falling back
+ * to top-level, falling back to metadata) means this doesn't silently
+ * misparse regardless of which event type triggered it.
  */
 function extractPaymentDetails(resource: Record<string, unknown> | undefined): ExtractedPayment {
   const resourceAttrs = (resource?.attributes as Record<string, unknown>) ?? {};
@@ -69,16 +77,27 @@ function extractPaymentDetails(resource: Record<string, unknown> | undefined): E
   const nestedAttrs = nestedPayment?.attributes ?? {};
 
   const billing = (nestedAttrs.billing ?? resourceAttrs.billing) as Record<string, unknown> | undefined;
+  const metadata = (nestedAttrs.metadata ?? resourceAttrs.metadata) as Record<string, unknown> | undefined;
   const email =
     (billing?.email as string | undefined) ||
+    (resourceAttrs.email as string | undefined) ||
+    (metadata?.email as string | undefined) ||
     (resourceAttrs.remarks as string | undefined) ||
     (nestedAttrs.remarks as string | undefined);
 
   const source = (nestedAttrs.source ?? resourceAttrs.source) as Record<string, unknown> | undefined;
 
+  // Checkout Sessions have no top-level `amount` — only `line_items[].amount`
+  // (summed, in case of multiple line items) — checked after the nested
+  // payment's amount but before falling back to a bare `resourceAttrs.amount`
+  // (which Links/Payments do carry directly).
+  const lineItems = resourceAttrs.line_items as Array<{ amount?: number }> | undefined;
+  const lineItemsTotal = Array.isArray(lineItems) ? lineItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0) : 0;
+  const amountCentavos = Number(nestedAttrs.amount) || Number(resourceAttrs.amount) || lineItemsTotal || 0;
+
   return {
     paymentId: (nestedPayment?.id as string | undefined) ?? (resource?.id as string | undefined) ?? null,
-    amountCentavos: Number(nestedAttrs.amount ?? resourceAttrs.amount) || 0,
+    amountCentavos,
     email,
     method: deriveMethod(source?.type),
     status: nestedAttrs.status ?? resourceAttrs.status,
@@ -167,9 +186,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ received: true, stored: false });
   }
 
+  // Normalized once, used everywhere below — usage.ts's getActivePaidPlan()
+  // (the single source of truth every paywall/upgrade-check in the app
+  // reads) always queries subscriptions by lowercased email, so storing
+  // anything but lowercase here would silently strand a real paid
+  // subscription that never matches on lookup.
+  const email = details.email.trim().toLowerCase();
+
   try {
     const { error: insertError } = await supabaseAdmin.from("payments").insert({
-      email: details.email,
+      email,
       amount,
       currency: "PHP",
       status: isPaid ? "paid" : "failed",
@@ -187,7 +213,7 @@ export async function POST(req: Request) {
 
       const { error: subError } = await supabaseAdmin.from("subscriptions").upsert(
         {
-          email: details.email,
+          email,
           plan,
           status: "active",
           amount,
@@ -199,25 +225,39 @@ export async function POST(req: Request) {
         { onConflict: "email" },
       );
       if (subError) logError("webhooks/paymongo: subscriptions upsert failed", subError);
+      else console.log(`webhooks/paymongo: subscriptions upserted — email=${email} plan=${plan} amount=${amount}`);
 
-      // Best-effort — a failed send here should never affect the actual
-      // subscription activation above, which has already happened.
+      // Both sends below are best-effort — a failed send should never
+      // affect the actual subscription activation above, which has
+      // already happened, and one send failing shouldn't block the other.
       if (isResendConfigured) {
+        const receipt = { transactionId: details.paymentId, amount, date: now };
+
         try {
-          const { data: profile } = await supabaseAdmin
-            .from("profiles")
-            .select("full_name")
-            .eq("email", details.email)
-            .maybeSingle();
+          const { data: profile } = await supabaseAdmin.from("profiles").select("full_name").eq("email", email).maybeSingle();
           const { error: sendError } = await resend.emails.send({
             from: RESEND_FROM_EMAIL,
-            to: details.email,
-            subject: `Your Axla ${plan === "business" ? "Business" : "PRO"} plan is active 🚀`,
-            html: proUpgradeEmailTemplate(profile?.full_name || details.email.split("@")[0], plan as "pro" | "business"),
+            to: email,
+            subject: "Welcome to Axla PRO! 🚀 Your PRO plan is now active",
+            html: proUpgradeEmailTemplate(profile?.full_name || email.split("@")[0], plan as "pro" | "business", receipt),
           });
           if (sendError) logError("webhooks/paymongo: pro-upgrade email send failed (non-fatal)", sendError);
+          else console.log(`webhooks/paymongo: pro-upgrade receipt email sent to ${email}`);
         } catch (err) {
           logError("webhooks/paymongo: pro-upgrade email send threw (non-fatal)", err);
+        }
+
+        try {
+          const { error: adminSendError } = await resend.emails.send({
+            from: RESEND_FROM_EMAIL,
+            to: ADMIN_EMAIL,
+            subject: `New ${plan === "business" ? "Business" : "PRO"} purchase: ${email} — ₱${amount.toLocaleString()}`,
+            html: adminNewProNotificationTemplate(email, plan as "pro" | "business", amount, details.paymentId),
+          });
+          if (adminSendError) logError("webhooks/paymongo: admin notification email send failed (non-fatal)", adminSendError);
+          else console.log(`webhooks/paymongo: admin notification email sent for ${email}`);
+        } catch (err) {
+          logError("webhooks/paymongo: admin notification email send threw (non-fatal)", err);
         }
       }
     }
