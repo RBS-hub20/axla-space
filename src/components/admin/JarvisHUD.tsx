@@ -11,7 +11,7 @@ const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], weight: ["400", "500"
 type Persona = "jarvis" | "friday";
 type VisualState = "idle" | "listening" | "thinking" | "speaking";
 
-const JARVIS_VOICE_ID = "pFZP5JQG7iQjIQuC4Bku"; // "Adam" / Jarvis Male
+const JARVIS_VOICE_ID = "IRHApOXLvnW57QJPQH2P"; // "Adam - Deep Jarvis" / default male voice (server keeps the old ID accepted as a fallback)
 const FRIDAY_VOICE_ID = "c6SfcYrb2t09NHXiT80T"; // "Eva" / FRIDAY Female
 const PERSONA_STORAGE_KEY = "axla-admin-jarvis-persona"; // shared with JarvisBar so both stay in sync
 
@@ -514,7 +514,7 @@ export function JarvisHUD({ active }: { active: boolean }) {
         setElevenLabsConfigured(Boolean(data.elevenLabsConfigured));
         speak(data.voiceAnswer);
       } catch {
-        setError("Network error — try again, Boss.");
+        setError("Network error — try again, Sir.");
       } finally {
         setThinking(false);
       }
@@ -530,7 +530,7 @@ export function JarvisHUD({ active }: { active: boolean }) {
   function handleMicClick() {
     const SpeechRecognitionCtor = getSpeechRecognition();
     if (!SpeechRecognitionCtor) {
-      setError("Voice input not supported in this browser, Boss — try Chrome.");
+      setError("Voice input not supported in this browser, Sir — try Chrome.");
       setTimeout(() => setError(null), 3000);
       return;
     }
@@ -687,7 +687,7 @@ export function JarvisHUD({ active }: { active: boolean }) {
         style={{ borderColor: CYAN, boxShadow: `0 0 20px ${CYAN}44` }}
       >
         <span className="text-[#00D4FF]">
-          AXLA LIVE: {vitals ? `PHP ${vitals.revenue.toLocaleString()} MRR` : "—"} | Users {vitals?.users ?? "—"} | Boss Mode ON
+          AXLA LIVE: {vitals ? `PHP ${vitals.revenue.toLocaleString()} MRR` : "—"} | Users {vitals?.users ?? "—"} | Jarvis ON
         </span>
       </div>
 
@@ -701,7 +701,7 @@ export function JarvisHUD({ active }: { active: boolean }) {
           }`}
         >
           <Mic className="h-3.5 w-3.5" />
-          {listening ? "Listening, Boss..." : "Ask Jarvis, Boss"}
+          {listening ? "Listening, Sir..." : "Ask Jarvis, Sir"}
         </button>
         {error && <p className="max-w-xs text-center text-[10px] text-red-300">{error}</p>}
       </div>

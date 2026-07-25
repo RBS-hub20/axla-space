@@ -26,15 +26,18 @@ interface JarvisStats {
   axlaDtiName: string | null;
 }
 
+// Each egg contributes at most one "Sir" — some contribute none — so
+// appending one to a response that already used "Sir" once never exceeds
+// the 2-per-response ceiling.
 const JARVIS_EASTER_EGGS = [
-  "As you wish, Boss.",
-  "I've taken the liberty of checking, Boss.",
-  "Systems at 100 percent, Boss. Unlike your sleep schedule, Boss — just kidding.",
-  "At your service, Boss.",
-  "Anything else, Boss?",
+  "As you wish, Sir.",
+  "I've taken the liberty of checking.",
+  "Systems at 100 percent. Unlike your sleep schedule — just kidding.",
+  "At your service.",
+  "Anything else, Sir?",
 ];
 
-const FRIDAY_EASTER_EGGS = ["Got it, Boss!", "On it, Boss!", "You got it, Boss!"];
+const FRIDAY_EASTER_EGGS = ["Got it, Sir!", "On it!", "You got it!"];
 
 function maybeEasterEgg(persona: Persona): string {
   // 10% chance, real Math.random() — this runs in a normal Next.js API
@@ -52,20 +55,20 @@ function formatDeadlineDate(iso: string): string {
   return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-/** Spoken summary of the most urgent deadlines — never invents a number, just describes real computed daysLeft/status. */
+/** Spoken summary of the most urgent deadlines — never invents a number, just describes real computed daysLeft/status. Exactly one "Sir", at the end. */
 function buildBirVoiceSummary(deadlines: BirDeadline[]): string {
   const overdue = deadlines.filter((d) => d.status === "OVERDUE");
   const urgent = deadlines.filter((d) => d.status === "WARNING");
 
   if (overdue.length > 0) {
     const names = overdue.map((d) => `${d.name.split(" ")[0]} (${Math.abs(d.daysLeft)} days overdue)`).join(", ");
-    return `Boss, you have ${overdue.length} overdue filing${overdue.length === 1 ? "" : "s"}: ${names}. Let's get on that.`;
+    return `You have ${overdue.length} overdue filing${overdue.length === 1 ? "" : "s"}: ${names}. Let's get on that, Sir.`;
   }
   if (urgent.length === 0) {
-    return "No overdue or urgent BIR deadlines this week, Boss. All good.";
+    return "No overdue or urgent BIR deadlines this week. All good, Sir.";
   }
   const parts = urgent.map((d) => `${d.name.split(" ")[0]} on ${formatDeadlineDate(d.date)}, ${d.daysLeft} day${d.daysLeft === 1 ? "" : "s"} left`);
-  return `Quick BIR check, Boss — you have ${urgent.length} deadline${urgent.length === 1 ? "" : "s"} this week: ${parts.join(", and ")}. No overdue, Boss. All good.`;
+  return `Quick BIR check — you have ${urgent.length} deadline${urgent.length === 1 ? "" : "s"} this week: ${parts.join(", and ")}. No overdue. All good, Sir.`;
 }
 
 type Intent = "wake-up" | "greeting" | "intro" | "managed" | null;
@@ -97,56 +100,54 @@ function greetingWordMatches(greeting: string, said: "morning" | "afternoon" | "
  * AXLA-named registration is actually on file, and deliberately lists
  * 2551Q (percentage tax), not 2550Q (VAT) — this app's actual users are
  * 8%/3% percentage-tax freelancers, not VAT-registered businesses.
+ * Deliberately Sir-free — the wrapping answer places "Sir" exactly once,
+ * these bullets are just the factual clauses around it.
  */
 function managedSystemsBullets(stats: JarvisStats, deadlines: BirDeadline[]): string[] {
   const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
   const dtiBullet = stats.axlaDtiName
-    ? `${stats.dtiCount} DTI kit${stats.dtiCount === 1 ? "" : "s"} certified — ${stats.axlaDtiName}, passed, Boss`
+    ? `${stats.dtiCount} DTI kit${stats.dtiCount === 1 ? "" : "s"} certified — ${stats.axlaDtiName}, passed`
     : stats.dtiCount > 0
       ? `${stats.dtiCount} DTI kit${stats.dtiCount === 1 ? "" : "s"} on file`
       : "No DTI kits registered yet";
 
   return [
-    `${stats.totalUsers} active users and ${stats.totalWaitlist} waitlisted — average frustration ${stats.avgHateLevel} out of 10, Boss`,
+    `${stats.totalUsers} active users and ${stats.totalWaitlist} waitlisted — average frustration ${stats.avgHateLevel} out of 10`,
     `PHP ${stats.paymongoRevenue.toLocaleString()} MRR — revenue tracking`,
     `${stats.invoicesTotal} invoice${stats.invoicesTotal === 1 ? "" : "s"} — toolkit monitoring`,
     dtiBullet,
-    `BIR deadlines — 2551Q, 1701Q, 1601C, Annual ITR — I track the countdown so you never get penalized, Boss${urgentCount > 0 ? ` (${urgentCount} need${urgentCount === 1 ? "s" : ""} attention this week)` : ""}`,
+    `BIR deadlines — 2551Q, 1701Q, 1601C, Annual ITR — I track the countdown so you never get penalized${urgentCount > 0 ? ` (${urgentCount} need${urgentCount === 1 ? "s" : ""} attention this week)` : ""}`,
     "DTI/SEC/Mayor's compliance — certifications and renewals",
     "System health — 100% operational",
   ];
 }
 
+/** Full identity + managed-systems list. Exactly one "Sir", right after the greeting. */
 function buildIntroAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona, forVoice: boolean): string {
   const bullets = managedSystemsBullets(stats, deadlines);
+  const bulletText = forVoice ? bullets.join("; ") : bullets.map((b) => `• ${b}`).join("\n");
+
   if (persona === "friday") {
-    if (forVoice) {
-      return (
-        `${greeting}, Boss! I am FRIDAY — Female Replacement Intelligent Digital Assistant Youth. After Jarvis, Tony upgraded to me, Boss — so you got the upgrade too! ` +
-        `I am running your Axla business, Boss. Specifically: ${bullets.join("; ")}. I am your Friday, Boss — always on, always watching. What do you need, Boss?`
-      );
-    }
-    return (
-      `${greeting}, Boss! I am FRIDAY — Female Replacement Intelligent Digital Assistant Youth. After Jarvis, Tony upgraded to me, Boss — so you got the upgrade too!\n\n` +
-      `I am running your Axla business, Boss:\n${bullets.map((b) => `• ${b}`).join("\n")}\n\n` +
-      `I am your Friday, Boss. Always on, always watching. What do you need, Boss?`
-    );
+    const body = forVoice
+      ? `I am FRIDAY — Female Replacement Intelligent Digital Assistant Youth. After Jarvis, Tony upgraded to me — so you got the upgrade too! ` +
+        `I am running your Axla business. Specifically: ${bulletText}. I am your Friday — always on, always watching. What do you need?`
+      : `I am FRIDAY — Female Replacement Intelligent Digital Assistant Youth. After Jarvis, Tony upgraded to me — so you got the upgrade too!\n\n` +
+        `I am running your Axla business:\n${bulletText}\n\n` +
+        `I am your Friday. Always on, always watching. What do you need?`;
+    return `${greeting}, Sir! ${body}`;
   }
 
-  if (forVoice) {
-    return (
-      `${greeting}, Boss. I am Jarvis — Just A Rather Very Intelligent System. Originally Mr. Stark's A I, now yours, Boss. ` +
-      `I manage your entire Axla operations, Boss: ${bullets.join("; ")}. ` +
-      `Think of me as your business co-pilot, Boss. I run the numbers, watch the deadlines, and keep Axla sharp while you build. At your service, Boss. Anything else, Boss?`
-    );
-  }
-  return (
-    `${greeting}, Boss. I am Jarvis — Just A Rather Very Intelligent System. Originally Mr. Stark's AI, now yours, Boss.\n\n` +
-    `I manage your entire Axla operations, Boss:\n${bullets.map((b) => `• ${b}`).join("\n")}\n\n` +
-    `Think of me as your business co-pilot, Boss. I run the numbers, watch the deadlines, and keep Axla sharp while you build. At your service, Boss. Anything else, Boss?`
-  );
+  const body = forVoice
+    ? `I am Jarvis — Just A Rather Very Intelligent System. Originally Mr. Stark's A I, now yours. ` +
+      `I manage your entire Axla operations: ${bulletText}. ` +
+      `Think of me as your business co-pilot. I run the numbers, watch the deadlines, and keep Axla sharp while you build. At your service.`
+    : `I am Jarvis — Just A Rather Very Intelligent System. Originally Mr. Stark's AI, now yours.\n\n` +
+      `I manage your entire Axla operations:\n${bulletText}\n\n` +
+      `Think of me as your business co-pilot. I run the numbers, watch the deadlines, and keep Axla sharp while you build. At your service.`;
+  return `${greeting}, Sir. ${body}`;
 }
 
+/** Condensed "what do you manage" answer. Exactly one "Sir", right after the greeting. */
 function buildManagedAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
   const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
   const summary =
@@ -154,19 +155,22 @@ function buildManagedAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeti
     `Invoices ${stats.invoicesTotal}, DTI ${stats.dtiCount}${stats.axlaDtiName ? " passed" : ""}, ` +
     `BIR deadlines with countdown${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, system health 100%`;
   return persona === "friday"
-    ? `${greeting}, Boss! I manage your entire Axla operations, Boss — ${summary}. Basically, I run Axla while you build, Boss!`
-    : `${greeting}, Boss. I manage your entire Axla operations — ${summary}. Basically, I run Axla while you build, Boss.`;
+    ? `${greeting}, Sir! I manage your entire Axla operations — ${summary}. Basically, I run Axla while you build!`
+    : `${greeting}, Sir. I manage your entire Axla operations — ${summary}. Basically, I run Axla while you build.`;
 }
 
+/** Short online-check response. Exactly one "Sir", right after the greeting. */
 function buildWakeUpAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
   const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
   const managing =
-    `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, BIR deadlines${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, DTI kits`;
+    `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+    `BIR deadlines${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, DTI kits`;
   return persona === "friday"
-    ? `${greeting}, Boss! FRIDAY online. Systems at 100%, Boss. I am managing your ${managing} — all operational, Boss. What do you need, Boss?`
-    : `${greeting}, Boss! Jarvis online. Systems at 100%, Boss. I am managing your ${managing} — all operational, Boss. What do you need, Boss?`;
+    ? `${greeting}, Sir! FRIDAY online. Managing ${managing} — all operational.`
+    : `${greeting}, Sir. Jarvis online. Managing ${managing} — all operational.`;
 }
 
+/** "Good morning/afternoon/evening Jarvis" response. Exactly one "Sir", right after the greeting; mismatch note (if any) stays Sir-free. */
 function buildGreetingAnswer(
   stats: JarvisStats,
   deadlines: BirDeadline[],
@@ -175,14 +179,14 @@ function buildGreetingAnswer(
   persona: Persona,
 ): string {
   const mismatch = !greetingWordMatches(manila.greeting, saidWord)
-    ? ` You said good ${saidWord}, Boss, but it's actually ${manila.greeting.toLowerCase().replace("good ", "")} here in Manila — no worries, I've got you.`
+    ? ` You said good ${saidWord}, but it's actually ${manila.greeting.toLowerCase().replace("good ", "")} here in Manila — no worries, I've got you.`
     : "";
   const dtiBit = stats.axlaDtiName ? `1 DTI passed` : `${stats.dtiCount} DTI on file`;
   const summary = `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist at ${stats.avgHateLevel} hate, ${stats.paymongoRevenue.toLocaleString()} MRR, ${dtiBit}, BIR deadlines tracked`;
 
   return persona === "friday"
-    ? `${manila.greeting}, Boss! ${manila.vibe} FRIDAY here, online and managing your Axla empire — ${summary}.${mismatch} All green, Boss!`
-    : `${manila.greeting}, Boss! ${manila.vibe} Jarvis here, online and managing your Axla empire — ${summary}.${mismatch} All green, Boss!`;
+    ? `${manila.greeting}, Sir! ${manila.vibe} FRIDAY here, online and managing your Axla empire — ${summary}.${mismatch} All green!`
+    : `${manila.greeting}, Sir! ${manila.vibe} Jarvis here, online and managing your Axla empire — ${summary}.${mismatch} All green!`;
 }
 
 /**
@@ -257,7 +261,7 @@ async function gatherStats(): Promise<JarvisStats> {
   };
 }
 
-/** Text-display answer (with emojis) — always addresses the admin as "Boss" too, just tersely. */
+/** Text-display answer (with emojis) — addresses the admin as "Sir" once per branch, never repeated. */
 function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[], manila: ManilaGreeting, persona: Persona): string {
   const query = q.toLowerCase();
   const intent = detectIntent(query);
@@ -271,55 +275,56 @@ function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[], ma
     const lines = deadlines
       .map((d) => `${d.status === "OVERDUE" ? "🔴" : d.status === "WARNING" ? "⚠️" : "🟢"} ${d.name}: ${formatDeadlineDate(d.date)} (${d.daysLeft}d)`)
       .join(" | ");
-    return `📅 Boss, BIR deadlines: ${lines}`;
+    return `📅 BIR deadlines, Sir: ${lines}`;
   }
 
   if (query.includes("invoice")) {
     return (
-      `📄 Boss, invoices: ${stats.invoicesTotal} total (${stats.invoicesToday} today). ` +
+      `📄 Invoices, Sir: ${stats.invoicesTotal} total (${stats.invoicesToday} today). ` +
       `Paid: PHP ${stats.invoicesPaidTotal.toLocaleString()}. Outstanding: PHP ${stats.invoicesOutstanding.toLocaleString()}.`
     );
   }
 
   if (query.includes("dti") || query.includes("sec") || query.includes("mayor")) {
-    return `🏢 Boss, Business Toolkit registrations: DTI ${stats.dtiCount}, SEC ${stats.secCount}, Mayor's Permit ${stats.mayorsCount}.`;
+    return `🏢 Business Toolkit registrations, Sir: DTI ${stats.dtiCount}, SEC ${stats.secCount}, Mayor's Permit ${stats.mayorsCount}.`;
   }
 
   if (query.includes("hate")) {
-    return `🔥 Boss, average BIR hate level: ${stats.avgHateLevel}/10 across ${stats.totalWaitlist} signups.`;
+    return `🔥 Average BIR hate level: ${stats.avgHateLevel}/10 across ${stats.totalWaitlist} signups, Sir.`;
   }
 
   if (query.includes("revenue") || query.includes("mrr") || query.includes("paymongo")) {
     return (
-      `💰 Boss, PayMongo revenue: PHP ${stats.paymongoRevenue.toLocaleString()}. Invoices paid: PHP ${stats.invoicesPaidTotal.toLocaleString()}. ` +
+      `💰 PayMongo revenue, Sir: PHP ${stats.paymongoRevenue.toLocaleString()}. Invoices paid: PHP ${stats.invoicesPaidTotal.toLocaleString()}. ` +
       `Combined: PHP ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()}.`
     );
   }
 
   if (query.includes("today") || query.includes("report")) {
     return (
-      `📊 Boss, today's report — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}. ` +
+      `📊 Today's report, Sir — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}. ` +
       `Totals — Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, ` +
       `Invoices: ${stats.invoicesTotal} (PHP ${stats.invoicesPaidTotal.toLocaleString()} paid), DTI kits: ${stats.dtiCount}.`
     );
   }
 
   return (
-    `👋 Boss, Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist} (avg hate ${stats.avgHateLevel}/10), ` +
-    `Invoices: ${stats.invoicesTotal}, DTI/SEC/Mayor's kits: ${stats.dtiCount + stats.secCount + stats.mayorsCount}. ` +
+    `👋 Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist} (avg hate ${stats.avgHateLevel}/10), ` +
+    `Invoices: ${stats.invoicesTotal}, DTI/SEC/Mayor's kits: ${stats.dtiCount + stats.secCount + stats.mayorsCount}, Sir. ` +
     `Try "report today", "invoice report", or "how many DTI?"`
   );
 }
 
 /**
  * Same numbers as buildAnswer(), reworded for speech, split by persona:
- * Jarvis (formal butler) vs FRIDAY (upbeat, casual) — both always call the
- * admin "Boss", never "sir". No emojis (TTS engines mangle them), full
- * words instead of symbols ("pesos" not "PHP", "out of 10" not "/10"). The
- * AXLA DTI line only appears if a real DTI kit with "AXLA" in the business
- * name is actually on file (axlaDtiName) — never asserted when there
- * isn't one, and always says whatever name is really stored rather than a
- * hardcoded string.
+ * Jarvis (formal butler) vs FRIDAY (upbeat, casual) — both call the admin
+ * "Sir" at most once (twice for the longer report, plus a possible
+ * easter-egg addition), never once per sentence. No emojis (TTS engines
+ * mangle them), full words instead of symbols ("pesos" not "PHP", "out of
+ * 10" not "/10"). The AXLA DTI line only appears if a real DTI kit with
+ * "AXLA" in the business name is actually on file (axlaDtiName) — never
+ * asserted when there isn't one, and always says whatever name is really
+ * stored rather than a hardcoded string.
  */
 function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadlines: BirDeadline[], manila: ManilaGreeting): string {
   const query = q.toLowerCase();
@@ -339,25 +344,25 @@ function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadl
 
   if (query.includes("invoice")) {
     return isFriday
-      ? `Boss! You've got ${stats.invoicesTotal} invoices total, ${stats.invoicesToday} today. Paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. Outstanding: ${stats.invoicesOutstanding.toLocaleString()} pesos.${egg}`
-      : `Boss, you have ${stats.invoicesTotal} invoices total, ${stats.invoicesToday} today. Paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. Outstanding: ${stats.invoicesOutstanding.toLocaleString()} pesos.${egg}`;
+      ? `You've got ${stats.invoicesTotal} invoices total, ${stats.invoicesToday} today, Sir. Paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. Outstanding: ${stats.invoicesOutstanding.toLocaleString()} pesos.${egg}`
+      : `You have ${stats.invoicesTotal} invoices total, ${stats.invoicesToday} today, Sir. Paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. Outstanding: ${stats.invoicesOutstanding.toLocaleString()} pesos.${egg}`;
   }
 
   if (query.includes("dti") || query.includes("sec") || query.includes("mayor")) {
     const axlaLine = stats.axlaDtiName ? ` ${stats.axlaDtiName}, certified.` : "";
     return isFriday
-      ? `Business Toolkit check, Boss: ${stats.dtiCount} D T I, ${stats.secCount} SEC, ${stats.mayorsCount} Mayor's Permit.${axlaLine}${egg}`
-      : `Business Toolkit registrations, Boss: ${stats.dtiCount} D T I, ${stats.secCount} SEC, ${stats.mayorsCount} Mayor's Permit.${axlaLine}${egg}`;
+      ? `Business Toolkit check: ${stats.dtiCount} D T I, ${stats.secCount} SEC, ${stats.mayorsCount} Mayor's Permit, Sir.${axlaLine}${egg}`
+      : `Business Toolkit registrations: ${stats.dtiCount} D T I, ${stats.secCount} SEC, ${stats.mayorsCount} Mayor's Permit, Sir.${axlaLine}${egg}`;
   }
 
   if (query.includes("hate")) {
-    return `The average frustration level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups, Boss.${egg}`;
+    return `The average frustration level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups, Sir.${egg}`;
   }
 
   if (query.includes("revenue") || query.includes("mrr") || query.includes("paymongo")) {
     return (
-      `PayMongo revenue stands at ${stats.paymongoRevenue.toLocaleString()} pesos, Boss. Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. ` +
-      `Combined total: ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()} pesos.${egg}`
+      `PayMongo revenue stands at ${stats.paymongoRevenue.toLocaleString()} pesos. Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. ` +
+      `Combined total: ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()} pesos, Sir.${egg}`
     );
   }
 
@@ -367,31 +372,40 @@ function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadl
       ? `${stats.dtiCount} D T I kit${stats.dtiCount === 1 ? "" : "s"} on file. `
       : "";
 
-  const urgentDeadlines = deadlines.filter((d) => d.status !== "OK");
-  const deadlineMention =
-    urgentDeadlines.length > 0
-      ? ` Heads up, Boss: ${urgentDeadlines.length} BIR deadline${urgentDeadlines.length === 1 ? "" : "s"} need${urgentDeadlines.length === 1 ? "s" : ""} attention this week.`
+  if (query.includes("today") || query.includes("report")) {
+    // Matches the requested example closely: greeting alone (no "Sir"),
+    // one "Sir" placed mid-list, the single soonest urgent deadline named
+    // (not just a count), ending plain.
+    const dtiPassedBit = stats.axlaDtiName ? "1 DTI passed" : stats.dtiCount > 0 ? `${stats.dtiCount} DTI on file` : "no DTI kits yet";
+    const urgent = deadlines.filter((d) => d.status !== "OK").sort((a, b) => a.daysLeft - b.daysLeft);
+    const next = urgent[0];
+    const deadlineMention = next
+      ? next.status === "OVERDUE"
+        ? ` ${next.name.split(" ")[0]} is ${Math.abs(next.daysLeft)} days overdue.`
+        : ` BIR next deadline in ${next.daysLeft} day${next.daysLeft === 1 ? "" : "s"}.`
       : "";
 
-  if (query.includes("today") || query.includes("report")) {
     return isFriday
-      ? `${greeting}, Boss! FRIDAY here. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}. ` +
-          `${dtiLine}${stats.invoicesTotal === 0 ? "No invoices yet." : `${stats.invoicesTotal} invoices on file.`} ` +
-          `Today: ${stats.signupsToday} signups, ${stats.messagesToday} messages.${deadlineMention} All good, Boss!${egg}`
-      : `${greeting}, Boss. We currently have ${stats.totalUsers} users, ${stats.totalWaitlist} on the waitlist with an average ` +
-          `frustration level of ${stats.avgHateLevel} out of 10. ${dtiLine}` +
-          `${stats.invoicesTotal === 0 ? "No invoices yet." : `${stats.invoicesTotal} invoices on file.`} ` +
-          `Today's signups: ${stats.signupsToday}, messages: ${stats.messagesToday}.${deadlineMention} All systems operational, Boss.${egg}`;
+      ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention} All systems operational!${egg}`
+      : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention} All systems operational.${egg}`;
   }
 
   const kitTotal = stats.dtiCount + stats.secCount + stats.mayorsCount;
+  const urgentDeadlines = deadlines.filter((d) => d.status !== "OK");
+  const deadlineMention =
+    urgentDeadlines.length > 0
+      ? ` Heads up: ${urgentDeadlines.length} BIR deadline${urgentDeadlines.length === 1 ? "" : "s"} need${urgentDeadlines.length === 1 ? "s" : ""} attention this week.`
+      : "";
+
   return isFriday
-    ? `${greeting}, Boss! FRIDAY here. We have ${stats.totalUsers} users and ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}. ` +
+    ? `${greeting}! We have ${stats.totalUsers} users and ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}, Sir. ` +
         `${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} toolkit kit${kitTotal === 1 ? "" : "s"} total.${deadlineMention} ` +
-        `Ask me for a report today, an invoice report, or how many D T I, Boss!${egg}`
-    : `${greeting}, Boss. We currently have ${stats.totalUsers} users and ${stats.totalWaitlist} on the waitlist, average frustration ` +
-        `level ${stats.avgHateLevel} out of 10. ${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"} in total.${deadlineMention} ` +
-        `You may ask for a report today, an invoice report, or how many D T I, Boss.${egg}`;
+        `Ask me for a report today, an invoice report, or how many D T I.${egg}`
+    : `${greeting}. We currently have ${stats.totalUsers} users and ${stats.totalWaitlist} on the waitlist, average frustration ` +
+        `level ${stats.avgHateLevel} out of 10, Sir. ${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"} in total.${deadlineMention} ` +
+        `You may ask for a report today, an invoice report, or how many D T I.${egg}`;
 }
 
 export async function GET(req: Request) {

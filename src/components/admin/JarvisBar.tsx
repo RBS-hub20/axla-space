@@ -11,7 +11,7 @@ type Persona = "jarvis" | "friday";
 // voice ID is just a public catalog reference, unlike the API key itself,
 // which never leaves the server). Kept in sync manually since this is a
 // 2-voice feature, not worth a shared-constants module yet.
-const JARVIS_VOICE_ID = "pFZP5JQG7iQjIQuC4Bku"; // "Adam" / Jarvis Male
+const JARVIS_VOICE_ID = "IRHApOXLvnW57QJPQH2P"; // "Adam - Deep Jarvis" / default male voice (server keeps the old ID accepted as a fallback)
 const FRIDAY_VOICE_ID = "c6SfcYrb2t09NHXiT80T"; // "Eva" / FRIDAY Female
 const PERSONA_STORAGE_KEY = "axla-admin-jarvis-persona";
 
@@ -341,7 +341,7 @@ export function JarvisBar() {
         </form>
 
         <p className="text-xs text-gray-600">
-          Tip: Click the mic and say &ldquo;Jarvis, report today, Boss&rdquo; — wait, he&apos;ll call YOU Boss!
+          Tip: Click the mic and say &ldquo;Jarvis, report today, Sir&rdquo; — wait, he&apos;ll call YOU Sir!
           {elevenLabsConfigured ? " ElevenLabs voice active." : ""}
         </p>
 

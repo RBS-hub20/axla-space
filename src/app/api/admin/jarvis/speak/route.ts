@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdminRequestAuthorized } from "@/lib/admin";
-import { synthesizeSpeech, isElevenLabsConfigured, JARVIS_VOICE_ID, FRIDAY_VOICE_ID } from "@/lib/voice/elevenlabs";
+import { synthesizeSpeech, isElevenLabsConfigured, JARVIS_VOICE_ID, JARVIS_VOICE_ID_LEGACY, FRIDAY_VOICE_ID } from "@/lib/voice/elevenlabs";
 import { logError } from "@/lib/log-error";
 
 interface SpeakBody {
@@ -28,11 +28,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Text is required." }, { status: 400 });
   }
 
-  // Only the two known-good IDs are accepted here, never an arbitrary
+  // Only known-good IDs are accepted here, never an arbitrary
   // client-supplied string passed straight to ElevenLabs — synthesizeSpeech
   // validates shape too, but pinning to an allowlist here is simpler to
-  // reason about for a 2-voice feature.
-  const voiceId = body.voiceId === FRIDAY_VOICE_ID ? FRIDAY_VOICE_ID : JARVIS_VOICE_ID;
+  // reason about. The legacy Adam ID is still accepted (kept as a fallback,
+  // per the request) even though the client no longer defaults to sending it.
+  const ALLOWED_VOICE_IDS = new Set([JARVIS_VOICE_ID, JARVIS_VOICE_ID_LEGACY, FRIDAY_VOICE_ID]);
+  const voiceId = typeof body.voiceId === "string" && ALLOWED_VOICE_IDS.has(body.voiceId) ? body.voiceId : JARVIS_VOICE_ID;
 
   const result = await synthesizeSpeech(body.text.slice(0, 2000), voiceId);
   if (!result.audio) {

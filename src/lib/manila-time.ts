@@ -38,13 +38,16 @@ export interface ManilaGreeting {
 
 /**
  * Good morning (5-11), Good afternoon (12-17), Good evening (18-23),
- * Working late (0-4) — the last one because "Good evening, Boss" at 2am
+ * Working late (0-4) — the last one because "Good evening, Sir" at 2am
  * reads wrong; a Tony-Stark-Jarvis would clock the late hour instead.
+ * `vibe` deliberately stays address-term-free — it's appended alongside a
+ * greeting that already says "Sir" once, and the 1-2-per-response cap
+ * applies across the whole message, not per clause.
  */
 export function getManilaGreeting(date: Date = new Date()): ManilaGreeting {
   const hour = manilaHour(date);
-  if (hour < 5) return { greeting: "Working late", shiftLabel: "🌙 LATE NIGHT SHIFT", vibe: "Working late, Boss? Graveyard shift — I like it." };
-  if (hour < 12) return { greeting: "Good morning", shiftLabel: "🌅 MORNING SHIFT", vibe: "Early grind, Boss? Love the hustle." };
-  if (hour < 18) return { greeting: "Good afternoon", shiftLabel: "☀️ DAY SHIFT", vibe: "Afternoon check-in, Boss." };
-  return { greeting: "Good evening", shiftLabel: "🌆 EVENING SHIFT", vibe: "Evening operations, Boss." };
+  if (hour < 5) return { greeting: "Working late", shiftLabel: "🌙 LATE NIGHT SHIFT", vibe: "Graveyard shift — I like it." };
+  if (hour < 12) return { greeting: "Good morning", shiftLabel: "🌅 MORNING SHIFT", vibe: "Early grind? Love the hustle." };
+  if (hour < 18) return { greeting: "Good afternoon", shiftLabel: "☀️ DAY SHIFT", vibe: "Afternoon check-in." };
+  return { greeting: "Good evening", shiftLabel: "🌆 EVENING SHIFT", vibe: "Evening operations." };
 }
