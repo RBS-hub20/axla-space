@@ -59,8 +59,10 @@ export interface RawSubscriptionRow {
   plan: string;
   status: string;
   amount: number;
+  provider: string | null;
   billing_cycle: string | null;
   current_period_end: string | null;
+  created_at: string;
 }
 
 
@@ -68,8 +70,47 @@ function dayLabel(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+/**
+ * Reconciles the two tables against each other: `payments` is the
+ * append-only ledger (one row per transaction — renewals add new rows),
+ * `subscriptions` is current-state-only (upserted per email, so it never
+ * shows more than the latest payment). Normally every real payment lands
+ * in both via the same webhook call, but they can drift — e.g. a manually
+ * inserted subscriptions row that never went through the payments insert.
+ * Rather than trusting `payments` blindly (and silently under-counting
+ * revenue whenever that happens), any active subscription with no matching
+ * "paid" payment row for its email gets a synthesized ledger entry so
+ * Total Revenue / Recent Payments / the revenue chart self-heal instead of
+ * requiring a manual data patch each time this drifts.
+ */
+export function reconcilePayments(payments: RawPaymentRow[], subscriptions: RawSubscriptionRow[]): RawPaymentRow[] {
+  const paidEmails = new Set(payments.filter((p) => p.status === "paid").map((p) => p.email.toLowerCase()));
+
+  const synthesized: RawPaymentRow[] = subscriptions
+    .filter((s) => s.status === "active" && !paidEmails.has(s.email.toLowerCase()))
+    .map((s) => ({
+      id: `sub-${s.email.toLowerCase()}`,
+      email: s.email,
+      amount: s.amount,
+      currency: "PHP",
+      status: "paid",
+      provider: s.provider ?? "paymongo",
+      payment_method: null,
+      plan: s.plan,
+      created_at: s.created_at,
+    }));
+
+  return [...payments, ...synthesized];
+}
+
 /** Aggregates real payments/subscriptions rows into the shape the admin dashboard renders. */
-export function aggregatePayments(payments: RawPaymentRow[], subscriptions: RawSubscriptionRow[]): PaymentsPayload {
+export function aggregatePayments(rawPayments: RawPaymentRow[], subscriptions: RawSubscriptionRow[]): PaymentsPayload {
+  // Re-sorted after merging — synthesized rows are appended in subscriptions
+  // order, not chronological order, and recentPayments below assumes the
+  // array is already sorted newest-first.
+  const payments = reconcilePayments(rawPayments, subscriptions).sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
   const totalRevenue = payments.filter((p) => p.status === "paid").reduce((sum, p) => sum + p.amount, 0);
 
   const activeSubs = subscriptions.filter((s) => s.status === "active");

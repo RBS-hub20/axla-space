@@ -23,7 +23,7 @@ export async function GET() {
       .limit(500),
     supabaseAdmin
       .from("subscriptions")
-      .select("email, plan, status, amount, billing_cycle, current_period_end"),
+      .select("email, plan, status, amount, provider, billing_cycle, current_period_end, created_at"),
   ]);
 
   // Falls back to mock data on a query error too (not just "no rows yet") —

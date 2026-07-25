@@ -4,6 +4,7 @@ import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { isElevenLabsConfigured, JARVIS_VOICE_ID, FRIDAY_VOICE_ID } from "@/lib/voice/elevenlabs";
 import { getManilaGreeting, formatManilaTime, formatManilaDate, type ManilaGreeting } from "@/lib/manila-time";
 import { getBirDeadlines, type BirDeadline } from "@/lib/bir-deadlines";
+import { reconcilePayments } from "@/lib/payments-stats";
 import { logError } from "@/lib/log-error";
 
 type Persona = "jarvis" | "friday";
@@ -39,6 +40,12 @@ interface RecentSignup {
   createdAt: string;
 }
 
+interface PaidSubscriber {
+  email: string;
+  amount: number;
+  createdAt: string;
+}
+
 // Each egg contributes at most one "Sir" — some contribute none — so
 // appending one to a response that already used "Sir" once never exceeds
 // the 2-per-response ceiling.
@@ -66,6 +73,22 @@ function isSameDay(a: Date, b: Date) {
 
 function formatDeadlineDate(iso: string): string {
   return new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** "Jul 26" in Asia/Manila local time — subscriptions.created_at is stored UTC, and a plain toLocaleDateString would use the server's own timezone instead. */
+function formatManilaShortDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", month: "short", day: "numeric" }).format(new Date(iso));
+}
+
+/** "renzsom2022@gmail.com P499, freedomhunter2025@gmail.com P249" — real per-customer breakdown, never fabricated. */
+function buildSubscriberBreakdown(subs: PaidSubscriber[]): string {
+  return subs.map((s) => `${s.email} P${s.amount.toLocaleString()}`).join(", ");
+}
+
+function buildLatestSubscriberLine(subs: PaidSubscriber[]): string {
+  const latest = subs[0];
+  if (!latest) return "";
+  return `Latest: ${latest.email} ${formatManilaShortDate(latest.createdAt)} PRO active`;
 }
 
 /** Spoken summary of the most urgent deadlines — never invents a number, just describes real computed daysLeft/status. Exactly one "Sir", at the end. */
@@ -210,7 +233,12 @@ function buildGreetingAnswer(
  * for an LLM call fed the same `stats` object, without touching the
  * data-gathering half.
  */
-async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentSignup[]; latestWaitlist: RecentSignup[] }> {
+async function gatherStats(): Promise<{
+  stats: JarvisStats;
+  latestUsers: RecentSignup[];
+  latestWaitlist: RecentSignup[];
+  recentSubscribers: PaidSubscriber[];
+}> {
   const now = new Date();
 
   const [
@@ -230,8 +258,8 @@ async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentS
     supabaseAdmin.from("chat_messages").select("created_at, message"),
     supabaseAdmin.from("invoices").select("total, status, created_at"),
     supabaseAdmin.from("business_registrations").select("type, data"),
-    supabaseAdmin.from("payments").select("amount, status"),
-    supabaseAdmin.from("subscriptions").select("amount, status, billing_cycle"),
+    supabaseAdmin.from("payments").select("id, email, amount, currency, status, provider, payment_method, plan, created_at"),
+    supabaseAdmin.from("subscriptions").select("email, plan, status, amount, provider, billing_cycle, current_period_end, created_at"),
     supabaseAdmin.from("profiles").select("email, created_at").order("created_at", { ascending: false }).limit(3),
     supabaseAdmin.from("waitlist").select("email, created_at").order("created_at", { ascending: false }).limit(3),
     supabaseAdmin.from("transactions").select("id", { count: "exact", head: true }),
@@ -263,7 +291,13 @@ async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentS
   const axlaDtiRow = regRows.find((r) => r.type === "DTI" && dtiBusinessName(r).toUpperCase().includes("AXLA"));
   const axlaDtiName = axlaDtiRow ? dtiBusinessName(axlaDtiRow) : null;
 
-  const paymongoRevenue = (payments ?? []).filter((p) => p.status === "paid").reduce((sum, p) => sum + Number(p.amount), 0);
+  // Reconciled against subscriptions the same way src/lib/payments-stats.ts's
+  // admin Revenue section is — a subscription with no matching "paid"
+  // payment row (e.g. one inserted directly rather than via the webhook)
+  // still counts, so this never silently under-reports versus what's
+  // already shown on screen elsewhere in the dashboard.
+  const reconciledPayments = reconcilePayments(payments ?? [], subscriptions ?? []);
+  const paymongoRevenue = reconciledPayments.filter((p) => p.status === "paid").reduce((sum, p) => sum + Number(p.amount), 0);
 
   // Same formula as src/lib/payments-stats.ts's own MRR figure (active
   // subscriptions, yearly plans divided by 12) — kept identical on purpose
@@ -274,6 +308,12 @@ async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentS
       .filter((s) => s.status === "active")
       .reduce((sum, s) => sum + (s.billing_cycle === "yearly" ? Number(s.amount) / 12 : Number(s.amount)), 0),
   );
+
+  const recentSubscribers: PaidSubscriber[] = (subscriptions ?? [])
+    .filter((s) => s.status === "active")
+    .map((s) => ({ email: s.email, amount: Number(s.amount), createdAt: s.created_at }))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, 5);
 
   return {
     stats: {
@@ -298,11 +338,19 @@ async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentS
     },
     latestUsers: (recentProfiles ?? []).map((p) => ({ email: p.email, createdAt: p.created_at })),
     latestWaitlist: (recentWaitlist ?? []).map((w) => ({ email: w.email, createdAt: w.created_at })),
+    recentSubscribers,
   };
 }
 
 /** Text-display answer (with emojis) — addresses the admin as "Sir" once per branch, never repeated. */
-function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[], manila: ManilaGreeting, persona: Persona): string {
+function buildAnswer(
+  q: string,
+  stats: JarvisStats,
+  deadlines: BirDeadline[],
+  manila: ManilaGreeting,
+  persona: Persona,
+  recentSubscribers: PaidSubscriber[],
+): string {
   const query = q.toLowerCase();
   const intent = detectIntent(query);
 
@@ -337,18 +385,31 @@ function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[], ma
     return `🔥 Average BIR hate level: ${stats.avgHateLevel}/10 across ${stats.totalWaitlist} signups, Sir.`;
   }
 
-  if (query.includes("revenue") || query.includes("mrr") || query.includes("paymongo")) {
+  if (
+    query.includes("revenue") ||
+    query.includes("mrr") ||
+    query.includes("paymongo") ||
+    query.includes("subscription") ||
+    query.includes("recent payment") ||
+    query.includes("how many paid")
+  ) {
+    const breakdown = buildSubscriberBreakdown(recentSubscribers);
+    const latestLine = buildLatestSubscriberLine(recentSubscribers);
     return (
-      `💰 PayMongo revenue, Sir: PHP ${stats.paymongoRevenue.toLocaleString()}. Invoices paid: PHP ${stats.invoicesPaidTotal.toLocaleString()}. ` +
-      `Combined: PHP ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()}.`
+      `💰 Sir, we have ${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, ` +
+      `Total Revenue PHP ${stats.paymongoRevenue.toLocaleString()}${breakdown ? ` (${breakdown})` : ""}. ` +
+      `Invoices paid: PHP ${stats.invoicesPaidTotal.toLocaleString()}.${latestLine ? ` ${latestLine}.` : ""}`
     );
   }
 
   if (query.includes("today") || query.includes("report")) {
+    const breakdown = buildSubscriberBreakdown(recentSubscribers);
+    const latestLine = buildLatestSubscriberLine(recentSubscribers);
     return (
-      `📊 Today's report, Sir — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}. ` +
-      `Totals — Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, ` +
-      `Invoices: ${stats.invoicesTotal} (PHP ${stats.invoicesPaidTotal.toLocaleString()} paid), DTI kits: ${stats.dtiCount}.`
+      `📊 Sir, we have ${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, ` +
+      `Total Revenue PHP ${stats.paymongoRevenue.toLocaleString()}${breakdown ? ` (${breakdown})` : ""}.${latestLine ? ` ${latestLine}.` : ""} ` +
+      `Today — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}. ` +
+      `Totals — Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, DTI kits: ${stats.dtiCount}.`
     );
   }
 
@@ -370,7 +431,14 @@ function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[], ma
  * asserted when there isn't one, and always says whatever name is really
  * stored rather than a hardcoded string.
  */
-function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadlines: BirDeadline[], manila: ManilaGreeting): string {
+function buildVoiceAnswer(
+  q: string,
+  stats: JarvisStats,
+  persona: Persona,
+  deadlines: BirDeadline[],
+  manila: ManilaGreeting,
+  recentSubscribers: PaidSubscriber[],
+): string {
   const query = q.toLowerCase();
   const egg = maybeEasterEgg(persona);
   const isFriday = persona === "friday";
@@ -403,10 +471,19 @@ function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadl
     return `The average frustration level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups, Sir.${egg}`;
   }
 
-  if (query.includes("revenue") || query.includes("mrr") || query.includes("paymongo")) {
+  if (
+    query.includes("revenue") ||
+    query.includes("mrr") ||
+    query.includes("paymongo") ||
+    query.includes("subscription") ||
+    query.includes("recent payment") ||
+    query.includes("how many paid")
+  ) {
+    const breakdown = buildSubscriberBreakdown(recentSubscribers);
     return (
-      `PayMongo revenue stands at ${stats.paymongoRevenue.toLocaleString()} pesos. Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos. ` +
-      `Combined total: ${(stats.paymongoRevenue + stats.invoicesPaidTotal).toLocaleString()} pesos, Sir.${egg}`
+      `Sir, we have ${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, ` +
+      `Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos${breakdown ? ` — ${breakdown}` : ""}. ` +
+      `Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos.${egg}`
     );
   }
 
@@ -428,12 +505,16 @@ function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadl
         ? ` ${next.name.split(" ")[0]} is ${Math.abs(next.daysLeft)} days overdue.`
         : ` BIR next deadline in ${next.daysLeft} day${next.daysLeft === 1 ? "" : "s"}.`
       : "";
+    const latestLine = buildLatestSubscriberLine(recentSubscribers);
+    const latestMention = latestLine ? ` ${latestLine}.` : "";
 
     return isFriday
-      ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.mrr.toLocaleString()} MRR, ` +
-          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention} All systems operational!${egg}`
-      : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, PHP ${stats.mrr.toLocaleString()} MRR, ` +
-          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention} All systems operational.${egg}`;
+      ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
+          `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention} All systems operational!${egg}`
+      : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
+          `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention} All systems operational.${egg}`;
   }
 
   const kitTotal = stats.dtiCount + stats.secCount + stats.mayorsCount;
@@ -466,17 +547,18 @@ export async function GET(req: Request) {
 
   try {
     const now = new Date();
-    const { stats, latestUsers, latestWaitlist } = await gatherStats();
+    const { stats, latestUsers, latestWaitlist, recentSubscribers } = await gatherStats();
     const deadlines = getBirDeadlines(now);
     const manila = getManilaGreeting(now);
-    const answer = buildAnswer(q, stats, deadlines, manila, persona);
-    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, manila);
+    const answer = buildAnswer(q, stats, deadlines, manila, persona, recentSubscribers);
+    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, manila, recentSubscribers);
     return NextResponse.json({
       answer,
       voiceAnswer,
       stats,
       latestUsers,
       latestWaitlist,
+      recentSubscribers,
       birDeadlines: deadlines,
       greeting: manila.greeting,
       manilaTime: formatManilaTime(now),

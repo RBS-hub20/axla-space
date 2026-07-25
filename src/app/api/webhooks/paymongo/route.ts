@@ -225,7 +225,14 @@ export async function POST(req: Request) {
         { onConflict: "email" },
       );
       if (subError) logError("webhooks/paymongo: subscriptions upsert failed", subError);
-      else console.log(`webhooks/paymongo: subscriptions upserted — email=${email} plan=${plan} amount=${amount}`);
+      else {
+        console.log(`webhooks/paymongo: subscriptions upserted — email=${email} plan=${plan} amount=${amount}`);
+        // Jarvis has no cache/memory to refresh — gatherStats() in
+        // src/app/api/admin/jarvis/route.ts queries subscriptions/payments
+        // live on every request, so this log is purely for visibility into
+        // when a new PRO subscription landed, not a trigger Jarvis depends on.
+        console.log(`New PRO: ${email}`);
+      }
 
       // Both sends below are best-effort — a failed send should never
       // affect the actual subscription activation above, which has
