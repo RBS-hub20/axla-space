@@ -26,6 +26,12 @@ interface JarvisStats {
   mrr: number;
   /** Real business name of Axla's own DTI registration, if one is on file — never fabricated. */
   axlaDtiName: string | null;
+  /** Real count from the transactions table (GCash + Maya + bank uploads combined). */
+  totalTransactions: number;
+  /** Count of genuinely wired-up upload parsers: GCash, Maya, generic bank (CSV+XLSX) — a fixed capability count, not a query. */
+  parsersActive: number;
+  /** Count of genuinely wired-up export formats: QuickBooks, Xero, Sheets CSV — a fixed capability count, not a query. */
+  exportsAvailable: number;
 }
 
 interface RecentSignup {
@@ -122,6 +128,7 @@ function managedSystemsBullets(stats: JarvisStats, deadlines: BirDeadline[]): st
     `${stats.totalUsers} active users and ${stats.totalWaitlist} waitlisted — average frustration ${stats.avgHateLevel} out of 10`,
     `PHP ${stats.mrr.toLocaleString()} MRR — revenue tracking`,
     `${stats.invoicesTotal} invoice${stats.invoicesTotal === 1 ? "" : "s"} — toolkit monitoring`,
+    `${stats.totalTransactions} transaction${stats.totalTransactions === 1 ? "" : "s"} synced across ${stats.parsersActive} parsers (GCash, Maya, bank) — ${stats.exportsAvailable} export formats ready (QuickBooks, Xero, Sheets)`,
     dtiBullet,
     `BIR deadlines — 2551Q, 1701Q, 1601C, Annual ITR — I track the countdown so you never get penalized${urgentCount > 0 ? ` (${urgentCount} need${urgentCount === 1 ? "s" : ""} attention this week)` : ""}`,
     "DTI/SEC/Mayor's compliance — certifications and renewals",
@@ -216,6 +223,7 @@ async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentS
     { data: subscriptions },
     { data: recentProfiles },
     { data: recentWaitlist },
+    { count: totalTransactions },
   ] = await Promise.all([
     supabaseAdmin.from("profiles").select("id", { count: "exact", head: true }),
     supabaseAdmin.from("waitlist").select("bir_hate_level, created_at"),
@@ -226,6 +234,7 @@ async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentS
     supabaseAdmin.from("subscriptions").select("amount, status, billing_cycle"),
     supabaseAdmin.from("profiles").select("email, created_at").order("created_at", { ascending: false }).limit(3),
     supabaseAdmin.from("waitlist").select("email, created_at").order("created_at", { ascending: false }).limit(3),
+    supabaseAdmin.from("transactions").select("id", { count: "exact", head: true }),
   ]);
 
   const waitlistRows = waitlist ?? [];
@@ -283,6 +292,9 @@ async function gatherStats(): Promise<{ stats: JarvisStats; latestUsers: RecentS
       paymongoRevenue,
       mrr,
       axlaDtiName,
+      totalTransactions: totalTransactions ?? 0,
+      parsersActive: 3,
+      exportsAvailable: 3,
     },
     latestUsers: (recentProfiles ?? []).map((p) => ({ email: p.email, createdAt: p.created_at })),
     latestWaitlist: (recentWaitlist ?? []).map((w) => ({ email: w.email, createdAt: w.created_at })),
@@ -315,6 +327,10 @@ function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[], ma
 
   if (query.includes("dti") || query.includes("sec") || query.includes("mayor")) {
     return `🏢 Business Toolkit registrations, Sir: DTI ${stats.dtiCount}, SEC ${stats.secCount}, Mayor's Permit ${stats.mayorsCount}.`;
+  }
+
+  if (query.includes("transaction") || query.includes("parser") || query.includes("export")) {
+    return `🔄 ${stats.totalTransactions} transactions synced across ${stats.parsersActive} live parsers (GCash, Maya, bank), Sir. ${stats.exportsAvailable} export formats ready — QuickBooks, Xero, Sheets.`;
   }
 
   if (query.includes("hate")) {

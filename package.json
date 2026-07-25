@@ -40,6 +40,7 @@
     "resend": "^6.17.2",
     "server-only": "^0.0.1",
     "tailwind-merge": "^2.5.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.4.3"
   },
   "devDependencies": {

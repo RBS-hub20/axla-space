@@ -2,11 +2,42 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { parseGcashCsv, parseGcashPdfLines, type ParseResult } from "@/lib/dashboard/gcash-parser";
+import { parseMayaCsv } from "@/lib/parsers/maya";
+import { parseBankCsv, parseBankXlsx } from "@/lib/parsers/bank";
 import { tryUnlockGCash, GCashPasswordRequiredError, GCashPasswordIncorrectError } from "@/lib/gcash/unlock";
 import { getUserPlan, PLAN_LIMITS } from "@/lib/usage";
 import { getCurrentQuarter } from "@/lib/dashboard/quarter";
 import { logActivity } from "@/lib/dashboard/activity";
 import { logError } from "@/lib/log-error";
+
+type UploadSource = "gcash_upload" | "maya_upload" | "bank_upload";
+
+const BANK_NAME_PATTERN = /\b(bpi|bdo|unionbank|union[\s_-]?bank|metrobank|landbank|rcbc|security[\s_-]?bank|chinabank|pnb|eastwest)\b/i;
+const MAYA_NAME_PATTERN = /\b(maya|paymaya)\b/i;
+const GCASH_NAME_PATTERN = /\bgcash\b/i;
+
+/**
+ * Detects which parser a multipart-uploaded transaction file should go
+ * through. Filename hints (bank/wallet names users naturally keep in their
+ * exported file names) are checked first since they're the most reliable
+ * signal; header sniffing is the fallback for renamed files. GCash remains
+ * the default when nothing else matches, preserving this endpoint's
+ * original behavior for existing callers/files that predate multi-source
+ * support.
+ */
+function detectCsvSource(filename: string, headerLine: string): UploadSource {
+  if (MAYA_NAME_PATTERN.test(filename)) return "maya_upload";
+  if (BANK_NAME_PATTERN.test(filename)) return "bank_upload";
+  if (GCASH_NAME_PATTERN.test(filename)) return "gcash_upload";
+
+  const header = headerLine.toLowerCase();
+  const hasBankHeaderHint = /particular|value date|posting date|running balance/.test(header);
+  const hasMayaHeaderHint = /transaction id/.test(header);
+  if (hasBankHeaderHint) return "bank_upload";
+  if (hasMayaHeaderHint) return "maya_upload";
+
+  return "gcash_upload";
+}
 
 export async function GET(req: Request) {
   const user = await getCurrentUser();
@@ -101,6 +132,7 @@ export async function POST(req: Request) {
 
   let parsed: ParseResult;
   let businessId: string | null = null;
+  let uploadSource: UploadSource = "gcash_upload";
   const contentType = req.headers.get("content-type") || "";
 
   if (contentType.includes("multipart/form-data")) {
@@ -115,9 +147,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No file provided." }, { status: 400 });
     }
 
-    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const lowerName = file.name.toLowerCase();
+    const isPdf = file.type === "application/pdf" || lowerName.endsWith(".pdf");
+    const isXlsx =
+      lowerName.endsWith(".xlsx") ||
+      lowerName.endsWith(".xls") ||
+      file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      file.type === "application/vnd.ms-excel";
 
     if (isPdf) {
+      // PDF statements are only supported for GCash today (its "Statement of
+      // Account" export is often password-protected; see src/lib/gcash/unlock.ts).
       const bytes = new Uint8Array(await file.arrayBuffer());
       let lines: string[];
       try {
@@ -139,9 +179,20 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Couldn't read this PDF. Try the CSV export instead." }, { status: 400 });
       }
       parsed = await parseGcashPdfLines(lines);
+      uploadSource = "gcash_upload";
+    } else if (isXlsx) {
+      // XLSX is only wired up for the generic bank parser today — GCash and
+      // Maya both export CSV, not spreadsheet files.
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      parsed = await parseBankXlsx(bytes);
+      uploadSource = "bank_upload";
     } else {
       const csvText = await file.text();
-      parsed = await parseGcashCsv(csvText);
+      const firstLine = csvText.split(/\r?\n/, 1)[0] ?? "";
+      uploadSource = detectCsvSource(file.name, firstLine);
+      if (uploadSource === "maya_upload") parsed = await parseMayaCsv(csvText);
+      else if (uploadSource === "bank_upload") parsed = await parseBankCsv(csvText);
+      else parsed = await parseGcashCsv(csvText);
     }
   } else {
     let body: UploadBody;
@@ -179,7 +230,7 @@ export async function POST(req: Request) {
         {
           code: "LIMIT_REACHED",
           type: "transactions",
-          message: `Free plan stores up to ${cap} GCash transactions total (you have ${existingCount}, this file adds ${parsed.transactions.length}). Sa Pro, UNLIMITED!`,
+          message: `Free plan stores up to ${cap} transactions total (you have ${existingCount}, this file adds ${parsed.transactions.length}). Sa Pro, UNLIMITED!`,
           upgrade_url: "/dashboard/settings",
         },
         { status: 403 },
@@ -201,7 +252,7 @@ export async function POST(req: Request) {
       description: t.description,
       amount: t.amount,
       type: t.type,
-      source: "gcash_upload",
+      source: uploadSource,
       quarter,
       year,
     };
@@ -213,7 +264,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Failed to save transactions." }, { status: 500 });
   }
 
-  await logActivity(user.id, "gcash_uploaded", `Uploaded ${rows.length} GCash transactions`);
+  const sourceLabel = uploadSource === "maya_upload" ? "Maya" : uploadSource === "bank_upload" ? "bank" : "GCash";
+  await logActivity(user.id, "gcash_uploaded", `Uploaded ${rows.length} ${sourceLabel} transactions`);
 
   return NextResponse.json({
     success: true,

@@ -125,9 +125,10 @@ export default function UploadPage() {
     <div className="-mx-4 -my-6 min-h-[calc(100vh-4rem)] bg-[#080F14] px-4 py-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">GCash Upload</h1>
+          <h1 className="text-2xl font-bold text-white">Transaction Upload</h1>
           <p className="text-sm text-slate-400">
-            Upload your GCash transaction history (CSV or PDF statement) — Axla auto-categorizes income vs expenses.
+            Upload GCash (CSV or PDF), Maya (CSV), or a bank statement (BPI/BDO/UnionBank — CSV or XLSX) — Axla
+            auto-detects the source and categorizes income vs expenses.
           </p>
         </div>
 
@@ -142,7 +143,7 @@ export default function UploadPage() {
         >
           <CardContent className="flex flex-col items-center justify-center gap-3 py-10 text-center">
             <Upload className="h-8 w-8 text-slate-500" />
-            <p className="text-sm text-slate-300">Drag & drop your GCash CSV or PDF statement here, or</p>
+            <p className="text-sm text-slate-300">Drag & drop your GCash, Maya, or bank statement here, or</p>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -155,7 +156,7 @@ export default function UploadPage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,text/csv,.pdf,application/pdf"
+              accept=".csv,text/csv,.pdf,application/pdf,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -164,7 +165,8 @@ export default function UploadPage() {
               }}
             />
             <p className="text-xs text-slate-500">
-              Password-protected GCash statement PDFs are supported — we&apos;ll ask for the password if needed.
+              GCash (CSV/PDF), Maya (CSV), BPI/BDO/UnionBank (CSV/XLSX) supported — auto-detected by file name and
+              headers. Password-protected GCash statement PDFs are supported too.
             </p>
           </CardContent>
         </Card>

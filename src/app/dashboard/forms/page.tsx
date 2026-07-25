@@ -78,6 +78,15 @@ const FORM_TYPES = [
   { value: "0619E", label: "0619E — Withholding Tax (Expanded)" },
 ];
 
+type EbirFormType = "2551Q" | "1701Q" | "1701" | "0619E" | "2307";
+const EBIR_FORM_TYPES: { value: EbirFormType; label: string }[] = [
+  { value: "2551Q", label: "2551Q" },
+  { value: "1701Q", label: "1701Q" },
+  { value: "1701", label: "1701 (Annual)" },
+  { value: "0619E", label: "0619E" },
+  { value: "2307", label: "2307" },
+];
+
 const PREMIUM_CARD = "rounded-2xl border-[#1E293B] bg-[#121A22] shadow-sm transition hover:border-[#22c55e]/30 hover:shadow-lg hover:shadow-green-500/10";
 const CURRENT_QUARTER = (Math.floor(new Date().getMonth() / 3) + 1) as 1 | 2 | 3 | 4;
 const CURRENT_YEAR = new Date().getFullYear();
@@ -135,10 +144,16 @@ export default function BirFormsPage() {
 
   // eBIRForms-style XML/DAT export — see src/lib/bir/ebirforms-2551q.ts for
   // exactly what this is and isn't (a structured reference export, not a
-  // verified eBIRForms import).
+  // verified eBIRForms import). 1701Q/1701/0619E/2307 share the same
+  // caveat — see their own ebirforms-*.ts files.
   const [exportLoading, setExportLoading] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportSuccess, setExportSuccess] = useState<"xml" | "dat" | "both" | null>(null);
+  const [exportFormType, setExportFormType] = useState<EbirFormType>("2551Q");
+  const [payorName, setPayorName] = useState("");
+  const [payorTin, setPayorTin] = useState("");
+  const [rdoPacketLoading, setRdoPacketLoading] = useState(false);
+  const [rdoPacketError, setRdoPacketError] = useState<string | null>(null);
 
   // PRO paywall for this Export card — reads the SAME plan every usage limit
   // elsewhere in the app already checks (src/lib/usage.ts), via
@@ -507,19 +522,51 @@ export default function BirFormsPage() {
     setExportError(null);
     setExportLoading(true);
     try {
-      const res = await fetch("/api/bir/2551q/export", {
+      const endpoint = exportFormType === "2551Q" ? "/api/bir/2551q/export" : "/api/bir/export";
+      const body =
+        exportFormType === "2551Q"
+          ? {
+              tin: previewTin,
+              rdoCode: previewRdoCode,
+              name: previewName,
+              address: previewAddress,
+              gross: grossIncomeNum,
+              quarter: previewQuarter,
+              year: CURRENT_YEAR,
+              format,
+            }
+          : exportFormType === "2307"
+            ? {
+                formType: "2307",
+                payorTin,
+                payorName,
+                payeeTin: previewTin,
+                payeeName: previewName,
+                rdoCode: previewRdoCode,
+                quarter: previewQuarter,
+                year: CURRENT_YEAR,
+                gross: grossIncomeNum,
+                taxDue: liveTaxDue,
+                format,
+              }
+            : {
+                formType: exportFormType,
+                tin: previewTin,
+                rdoCode: previewRdoCode,
+                name: previewName,
+                address: previewAddress,
+                gross: grossIncomeNum,
+                taxDue: liveTaxDue,
+                quarter: previewQuarter,
+                month: new Date().getMonth() + 1,
+                year: CURRENT_YEAR,
+                format,
+              };
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tin: previewTin,
-          rdoCode: previewRdoCode,
-          name: previewName,
-          address: previewAddress,
-          gross: grossIncomeNum,
-          quarter: previewQuarter,
-          year: CURRENT_YEAR,
-          format,
-        }),
+        body: JSON.stringify(body),
       });
       const data: ExportResult & { error?: string } = await res.json();
       if (!res.ok) {
@@ -534,6 +581,50 @@ export default function BirFormsPage() {
     } finally {
       setExportLoading(false);
     }
+  }
+
+  async function handleRdoPacket() {
+    setRdoPacketError(null);
+    setRdoPacketLoading(true);
+    try {
+      const res = await fetch(`/api/dashboard/rdo-packet?quarter=${previewQuarter}&year=${CURRENT_YEAR}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setRdoPacketError(data.error || "Couldn't build the RDO packet.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `axla-rdo-packet-Q${previewQuarter}-${CURRENT_YEAR}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      setRdoPacketError("Network error. Please try again.");
+    } finally {
+      setRdoPacketLoading(false);
+    }
+  }
+
+  async function handleAccountingExport(type: "quickbooks" | "xero" | "sheets") {
+    const res = await fetch(`/api/dashboard/export?type=${type}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setExportError(data.error || "Export failed.");
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `axla-${type}-export.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   async function createForm(formType: string) {
@@ -955,7 +1046,7 @@ export default function BirFormsPage() {
               <CardHeader>
                 <div className="flex flex-wrap items-center gap-2">
                   <FileCode2 className="h-4 w-4 text-[#22c55e]" />
-                  <CardTitle className="text-sm font-semibold text-white">Export 2551Q Data</CardTitle>
+                  <CardTitle className="text-sm font-semibold text-white">Export BIR Forms</CardTitle>
                   <span className="rounded-full bg-[#22c55e]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#22c55e]">
                     New
                   </span>
@@ -972,6 +1063,49 @@ export default function BirFormsPage() {
                   re-typing into the real eBIRForms app. BIR&apos;s eBIRForms desktop app doesn&apos;t publicly document a
                   generic file-import feature, so always re-verify these numbers there before submitting.
                 </p>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {EBIR_FORM_TYPES.map((ft) => (
+                    <button
+                      key={ft.value}
+                      type="button"
+                      onClick={() => setExportFormType(ft.value)}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                        exportFormType === ft.value
+                          ? "border-[#22c55e] bg-[#22c55e]/10 text-[#22c55e]"
+                          : "border-[#1E293B] text-slate-300 hover:bg-white/5"
+                      }`}
+                    >
+                      {ft.label}
+                    </button>
+                  ))}
+                </div>
+
+                {exportFormType === "2307" && (
+                  <div className="grid gap-3 rounded-xl border border-[#1E293B] bg-white/[0.02] p-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-300">Payor (client) Name</label>
+                      <Input
+                        value={payorName}
+                        onChange={(e) => setPayorName(e.target.value)}
+                        placeholder="Client / company name"
+                        className="border-[#1E293B] bg-[#0B121A]"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-300">Payor (client) TIN</label>
+                      <Input
+                        value={payorTin}
+                        onChange={(e) => setPayorTin(e.target.value)}
+                        placeholder="000-000-000-000"
+                        className="border-[#1E293B] bg-[#0B121A]"
+                      />
+                    </div>
+                    <p className="text-[11px] text-gray-500 sm:col-span-2">
+                      2307 is issued BY the payor TO you (the payee) — your name/TIN above are used as the payee.
+                    </p>
+                  </div>
+                )}
 
                 {exportError && (
                   <div className="rounded-xl border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">
@@ -1002,7 +1136,7 @@ export default function BirFormsPage() {
                       className="w-full bg-[#22c55e] text-[#001A29] shadow-lg shadow-green-500/20 hover:bg-[#1fb854] hover:shadow-green-500/40"
                     >
                       <FileCode2 className="h-3.5 w-3.5" />
-                      {exportLoading ? "Exporting..." : "eBIRForms Reference (.xml)"}
+                      {exportLoading ? "Exporting..." : `${exportFormType} Reference (.xml)`}
                     </Button>
                   </div>
 
@@ -1022,10 +1156,49 @@ export default function BirFormsPage() {
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">How to use it</p>
                   <ol className="space-y-1.5 text-xs text-gray-400">
                     <li>1. Download the XML (or DAT) file above.</li>
-                    <li>2. Open the real BIR eBIRForms app and pull up Form 2551Q for this quarter.</li>
+                    <li>2. Open the real BIR eBIRForms app and pull up Form {exportFormType} for this quarter.</li>
                     <li>3. Use the file as a reference to fill in — or double-check — each field quickly.</li>
                     <li>4. Let eBIRForms validate the numbers, then submit and pay via your usual channel.</li>
                   </ol>
+                </div>
+
+                <div className="border-t border-[#1E293B] pt-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    RDO Packet &amp; Accounting Export
+                  </p>
+                  {rdoPacketError && (
+                    <div className="mb-2 rounded-xl border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">
+                      {rdoPacketError}
+                    </div>
+                  )}
+                  <div className="grid gap-2 sm:grid-cols-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={rdoPacketLoading}
+                      onClick={handleRdoPacket}
+                      className="border-[#1E293B]"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      {rdoPacketLoading ? "Building..." : "RDO Packet (.zip)"}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => handleAccountingExport("quickbooks")} className="border-[#1E293B]">
+                      <Download className="h-3.5 w-3.5" />
+                      QuickBooks CSV
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => handleAccountingExport("xero")} className="border-[#1E293B]">
+                      <Download className="h-3.5 w-3.5" />
+                      Xero CSV
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => handleAccountingExport("sheets")} className="border-[#1E293B]">
+                      <Download className="h-3.5 w-3.5" />
+                      Sheets CSV
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-[11px] text-gray-500">
+                    RDO Packet bundles the BIR Form Preview PDF, {exportFormType} XML/DAT, any receipts on file for
+                    Q{previewQuarter} {CURRENT_YEAR}, and a transmittal cover letter into one ZIP.
+                  </p>
                 </div>
               </CardContent>
             </Card>
