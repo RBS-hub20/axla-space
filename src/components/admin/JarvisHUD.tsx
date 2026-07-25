@@ -17,6 +17,8 @@ const PERSONA_STORAGE_KEY = "axla-admin-jarvis-persona"; // shared with JarvisBa
 const CYAN = "#00D4FF";
 const GREEN = "#00FF88";
 
+const QUICK_SUGGESTIONS = ["Wake up Jarvis", "Good morning Jarvis", "Introduce yourself", "What do you manage?", "BIR deadlines", "Report today Boss"];
+
 interface JarvisStats {
   totalUsers: number;
   totalWaitlist: number;
@@ -534,16 +536,30 @@ export function JarvisHUD({ active }: { active: boolean }) {
 
       {/* Subtitle */}
       {showSubtitle && (
-        <div className="pointer-events-none absolute bottom-28 left-1/2 w-full max-w-2xl -translate-x-1/2 px-6 text-center">
+        <div className="pointer-events-none absolute bottom-40 left-1/2 w-full max-w-2xl -translate-x-1/2 px-6 text-center">
           <p className="text-lg font-medium text-white drop-shadow-[0_0_8px_rgba(0,212,255,0.6)]">{subtitle}</p>
         </div>
       )}
 
       {/* Bottom data card */}
-      <div className="absolute bottom-16 left-1/2 -translate-x-1/2 rounded-xl border px-5 py-2.5 text-xs" style={{ borderColor: CYAN, boxShadow: `0 0 20px ${CYAN}44` }}>
+      <div className="absolute bottom-28 left-1/2 -translate-x-1/2 rounded-xl border px-5 py-2.5 text-xs" style={{ borderColor: CYAN, boxShadow: `0 0 20px ${CYAN}44` }}>
         <span className="text-[#00D4FF]">
           AXLA LIVE: {vitals ? `PHP ${vitals.revenue.toLocaleString()} MRR` : "—"} | Users {vitals?.users ?? "—"} | Boss Mode ON
         </span>
+      </div>
+
+      {/* Quick suggestion chips */}
+      <div className="absolute bottom-16 left-1/2 flex w-full max-w-xl -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 px-4">
+        {QUICK_SUGGESTIONS.map((chip) => (
+          <button
+            key={chip}
+            type="button"
+            onClick={() => ask(chip)}
+            className="rounded-full border border-[#00D4FF]/30 bg-[#00D4FF]/5 px-2.5 py-1 text-[10px] text-[#00D4FF] transition hover:border-[#00D4FF]/60 hover:bg-[#00D4FF]/15"
+          >
+            {chip}
+          </button>
+        ))}
       </div>
 
       {/* Mic control */}

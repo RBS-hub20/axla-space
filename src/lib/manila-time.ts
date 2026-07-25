@@ -32,6 +32,8 @@ export type ShiftLabel = "🌅 MORNING SHIFT" | "☀️ DAY SHIFT" | "🌆 EVENI
 export interface ManilaGreeting {
   greeting: string; // "Good morning" / "Good afternoon" / "Good evening" / "Working late"
   shiftLabel: ShiftLabel;
+  /** A short personality aside for the given hour — used sparingly (wake-up/greeting intents), not glued onto every response. */
+  vibe: string;
 }
 
 /**
@@ -41,8 +43,8 @@ export interface ManilaGreeting {
  */
 export function getManilaGreeting(date: Date = new Date()): ManilaGreeting {
   const hour = manilaHour(date);
-  if (hour < 5) return { greeting: "Working late", shiftLabel: "🌙 LATE NIGHT SHIFT" };
-  if (hour < 12) return { greeting: "Good morning", shiftLabel: "🌅 MORNING SHIFT" };
-  if (hour < 18) return { greeting: "Good afternoon", shiftLabel: "☀️ DAY SHIFT" };
-  return { greeting: "Good evening", shiftLabel: "🌆 EVENING SHIFT" };
+  if (hour < 5) return { greeting: "Working late", shiftLabel: "🌙 LATE NIGHT SHIFT", vibe: "Working late, Boss? Graveyard shift — I like it." };
+  if (hour < 12) return { greeting: "Good morning", shiftLabel: "🌅 MORNING SHIFT", vibe: "Early grind, Boss? Love the hustle." };
+  if (hour < 18) return { greeting: "Good afternoon", shiftLabel: "☀️ DAY SHIFT", vibe: "Afternoon check-in, Boss." };
+  return { greeting: "Good evening", shiftLabel: "🌆 EVENING SHIFT", vibe: "Evening operations, Boss." };
 }

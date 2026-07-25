@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isAdminRequestAuthorized } from "@/lib/admin";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { isElevenLabsConfigured, JARVIS_VOICE_ID, FRIDAY_VOICE_ID } from "@/lib/voice/elevenlabs";
-import { getManilaGreeting, formatManilaTime, formatManilaDate } from "@/lib/manila-time";
+import { getManilaGreeting, formatManilaTime, formatManilaDate, type ManilaGreeting } from "@/lib/manila-time";
 import { getBirDeadlines, type BirDeadline } from "@/lib/bir-deadlines";
 import { logError } from "@/lib/log-error";
 
@@ -66,6 +66,123 @@ function buildBirVoiceSummary(deadlines: BirDeadline[]): string {
   }
   const parts = urgent.map((d) => `${d.name.split(" ")[0]} on ${formatDeadlineDate(d.date)}, ${d.daysLeft} day${d.daysLeft === 1 ? "" : "s"} left`);
   return `Quick BIR check, Boss — you have ${urgent.length} deadline${urgent.length === 1 ? "" : "s"} this week: ${parts.join(", and ")}. No overdue, Boss. All good.`;
+}
+
+type Intent = "wake-up" | "greeting" | "intro" | "managed" | null;
+
+/** Which of these fixed phrasings the query matches, checked before the generic data-lookup keywords (bir/invoice/dti/hate/revenue/etc). */
+function detectIntent(query: string): Intent {
+  if (/wake\s*up|hey jarvis|yo jarvis|are you there/.test(query)) return "wake-up";
+  if (/good\s*(morning|afternoon|evening)/.test(query)) return "greeting";
+  if (/introduce yourself|who are you|what are you\b|sino ka|ano ka|what do you do/.test(query)) return "intro";
+  if (/what do you manage|what are you managing|anong hawak mo/.test(query)) return "managed";
+  return null;
+}
+
+/** Which time-of-day word the admin actually said, if any — used to decide whether to gently correct a mismatched "good morning" said at night in Manila. */
+function detectSaidGreetingWord(query: string): "morning" | "afternoon" | "evening" | null {
+  const match = query.match(/good\s*(morning|afternoon|evening)/);
+  return (match?.[1] as "morning" | "afternoon" | "evening" | undefined) ?? null;
+}
+
+function greetingWordMatches(greeting: string, said: "morning" | "afternoon" | "evening" | null): boolean {
+  if (!said) return true;
+  return greeting.toLowerCase().includes(said);
+}
+
+/**
+ * The same set of managed-systems facts, phrased as short clauses reused
+ * by both the full introduction and the shorter "what do you manage"
+ * answer. Real stats/deadlines only — DTI callout only fires when a real
+ * AXLA-named registration is actually on file, and deliberately lists
+ * 2551Q (percentage tax), not 2550Q (VAT) — this app's actual users are
+ * 8%/3% percentage-tax freelancers, not VAT-registered businesses.
+ */
+function managedSystemsBullets(stats: JarvisStats, deadlines: BirDeadline[]): string[] {
+  const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
+  const dtiBullet = stats.axlaDtiName
+    ? `${stats.dtiCount} DTI kit${stats.dtiCount === 1 ? "" : "s"} certified — ${stats.axlaDtiName}, passed, Boss`
+    : stats.dtiCount > 0
+      ? `${stats.dtiCount} DTI kit${stats.dtiCount === 1 ? "" : "s"} on file`
+      : "No DTI kits registered yet";
+
+  return [
+    `${stats.totalUsers} active users and ${stats.totalWaitlist} waitlisted — average frustration ${stats.avgHateLevel} out of 10, Boss`,
+    `PHP ${stats.paymongoRevenue.toLocaleString()} MRR — revenue tracking`,
+    `${stats.invoicesTotal} invoice${stats.invoicesTotal === 1 ? "" : "s"} — toolkit monitoring`,
+    dtiBullet,
+    `BIR deadlines — 2551Q, 1701Q, 1601C, Annual ITR — I track the countdown so you never get penalized, Boss${urgentCount > 0 ? ` (${urgentCount} need${urgentCount === 1 ? "s" : ""} attention this week)` : ""}`,
+    "DTI/SEC/Mayor's compliance — certifications and renewals",
+    "System health — 100% operational",
+  ];
+}
+
+function buildIntroAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona, forVoice: boolean): string {
+  const bullets = managedSystemsBullets(stats, deadlines);
+  if (persona === "friday") {
+    if (forVoice) {
+      return (
+        `${greeting}, Boss! I am FRIDAY — Female Replacement Intelligent Digital Assistant Youth. After Jarvis, Tony upgraded to me, Boss — so you got the upgrade too! ` +
+        `I am running your Axla business, Boss. Specifically: ${bullets.join("; ")}. I am your Friday, Boss — always on, always watching. What do you need, Boss?`
+      );
+    }
+    return (
+      `${greeting}, Boss! I am FRIDAY — Female Replacement Intelligent Digital Assistant Youth. After Jarvis, Tony upgraded to me, Boss — so you got the upgrade too!\n\n` +
+      `I am running your Axla business, Boss:\n${bullets.map((b) => `• ${b}`).join("\n")}\n\n` +
+      `I am your Friday, Boss. Always on, always watching. What do you need, Boss?`
+    );
+  }
+
+  if (forVoice) {
+    return (
+      `${greeting}, Boss. I am Jarvis — Just A Rather Very Intelligent System. Originally Mr. Stark's A I, now yours, Boss. ` +
+      `I manage your entire Axla operations, Boss: ${bullets.join("; ")}. ` +
+      `Think of me as your business co-pilot, Boss. I run the numbers, watch the deadlines, and keep Axla sharp while you build. At your service, Boss. Anything else, Boss?`
+    );
+  }
+  return (
+    `${greeting}, Boss. I am Jarvis — Just A Rather Very Intelligent System. Originally Mr. Stark's AI, now yours, Boss.\n\n` +
+    `I manage your entire Axla operations, Boss:\n${bullets.map((b) => `• ${b}`).join("\n")}\n\n` +
+    `Think of me as your business co-pilot, Boss. I run the numbers, watch the deadlines, and keep Axla sharp while you build. At your service, Boss. Anything else, Boss?`
+  );
+}
+
+function buildManagedAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
+  const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
+  const summary =
+    `Users ${stats.totalUsers}, Waitlist ${stats.totalWaitlist}, Revenue PHP ${stats.paymongoRevenue.toLocaleString()} MRR, ` +
+    `Invoices ${stats.invoicesTotal}, DTI ${stats.dtiCount}${stats.axlaDtiName ? " passed" : ""}, ` +
+    `BIR deadlines with countdown${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, system health 100%`;
+  return persona === "friday"
+    ? `${greeting}, Boss! I manage your entire Axla operations, Boss — ${summary}. Basically, I run Axla while you build, Boss!`
+    : `${greeting}, Boss. I manage your entire Axla operations — ${summary}. Basically, I run Axla while you build, Boss.`;
+}
+
+function buildWakeUpAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
+  const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
+  const managing =
+    `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, PHP ${stats.paymongoRevenue.toLocaleString()} MRR, BIR deadlines${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, DTI kits`;
+  return persona === "friday"
+    ? `${greeting}, Boss! FRIDAY online. Systems at 100%, Boss. I am managing your ${managing} — all operational, Boss. What do you need, Boss?`
+    : `${greeting}, Boss! Jarvis online. Systems at 100%, Boss. I am managing your ${managing} — all operational, Boss. What do you need, Boss?`;
+}
+
+function buildGreetingAnswer(
+  stats: JarvisStats,
+  deadlines: BirDeadline[],
+  manila: ManilaGreeting,
+  saidWord: "morning" | "afternoon" | "evening" | null,
+  persona: Persona,
+): string {
+  const mismatch = !greetingWordMatches(manila.greeting, saidWord)
+    ? ` You said good ${saidWord}, Boss, but it's actually ${manila.greeting.toLowerCase().replace("good ", "")} here in Manila — no worries, I've got you.`
+    : "";
+  const dtiBit = stats.axlaDtiName ? `1 DTI passed` : `${stats.dtiCount} DTI on file`;
+  const summary = `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist at ${stats.avgHateLevel} hate, ${stats.paymongoRevenue.toLocaleString()} MRR, ${dtiBit}, BIR deadlines tracked`;
+
+  return persona === "friday"
+    ? `${manila.greeting}, Boss! ${manila.vibe} FRIDAY here, online and managing your Axla empire — ${summary}.${mismatch} All green, Boss!`
+    : `${manila.greeting}, Boss! ${manila.vibe} Jarvis here, online and managing your Axla empire — ${summary}.${mismatch} All green, Boss!`;
 }
 
 /**
@@ -141,8 +258,14 @@ async function gatherStats(): Promise<JarvisStats> {
 }
 
 /** Text-display answer (with emojis) — always addresses the admin as "Boss" too, just tersely. */
-function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[]): string {
+function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[], manila: ManilaGreeting, persona: Persona): string {
   const query = q.toLowerCase();
+  const intent = detectIntent(query);
+
+  if (intent === "wake-up") return buildWakeUpAnswer(stats, deadlines, manila.greeting, persona);
+  if (intent === "greeting") return buildGreetingAnswer(stats, deadlines, manila, detectSaidGreetingWord(query), persona);
+  if (intent === "intro") return buildIntroAnswer(stats, deadlines, manila.greeting, persona, false);
+  if (intent === "managed") return buildManagedAnswer(stats, deadlines, manila.greeting, persona);
 
   if (query.includes("bir") || query.includes("deadline")) {
     const lines = deadlines
@@ -198,10 +321,17 @@ function buildAnswer(q: string, stats: JarvisStats, deadlines: BirDeadline[]): s
  * isn't one, and always says whatever name is really stored rather than a
  * hardcoded string.
  */
-function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadlines: BirDeadline[], greeting: string): string {
+function buildVoiceAnswer(q: string, stats: JarvisStats, persona: Persona, deadlines: BirDeadline[], manila: ManilaGreeting): string {
   const query = q.toLowerCase();
   const egg = maybeEasterEgg(persona);
   const isFriday = persona === "friday";
+  const greeting = manila.greeting;
+  const intent = detectIntent(query);
+
+  if (intent === "wake-up") return buildWakeUpAnswer(stats, deadlines, greeting, persona);
+  if (intent === "greeting") return buildGreetingAnswer(stats, deadlines, manila, detectSaidGreetingWord(query), persona);
+  if (intent === "intro") return buildIntroAnswer(stats, deadlines, greeting, persona, true);
+  if (intent === "managed") return buildManagedAnswer(stats, deadlines, greeting, persona);
 
   if (query.includes("bir") || query.includes("deadline")) {
     return `${buildBirVoiceSummary(deadlines)}${egg}`;
@@ -280,15 +410,15 @@ export async function GET(req: Request) {
     const now = new Date();
     const stats = await gatherStats();
     const deadlines = getBirDeadlines(now);
-    const { greeting } = getManilaGreeting(now);
-    const answer = buildAnswer(q, stats, deadlines);
-    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, greeting);
+    const manila = getManilaGreeting(now);
+    const answer = buildAnswer(q, stats, deadlines, manila, persona);
+    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, manila);
     return NextResponse.json({
       answer,
       voiceAnswer,
       stats,
       birDeadlines: deadlines,
-      greeting,
+      greeting: manila.greeting,
       manilaTime: formatManilaTime(now),
       manilaDate: formatManilaDate(now),
       elevenLabsConfigured: isElevenLabsConfigured,
