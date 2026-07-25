@@ -3,6 +3,7 @@ import { Navbar } from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { SocialProof } from "@/components/SocialProof";
 import { HowItWorks } from "@/components/HowItWorks";
+import { IntegrationsGrid } from "@/components/IntegrationsGrid";
 import { WhyAxla } from "@/components/WhyAxla";
 import { PricingTeaser } from "@/components/PricingTeaser";
 import { WaitlistSection } from "@/components/WaitlistSection";
@@ -25,6 +26,7 @@ export default function Home() {
       <Hero />
       <SocialProof />
       <HowItWorks />
+      <IntegrationsGrid />
       <WhyAxla />
       <PricingTeaser />
       <WaitlistSection />
