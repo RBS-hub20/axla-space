@@ -42,6 +42,8 @@ interface JarvisStats {
   /** paidLast30Days / visitorsLast30Days * 100, rounded to 1 decimal — 0 when there's no visitor data yet, never divide-by-zero. */
   conversionRatePct: number;
   paidLast30Days: number;
+  /** True only when the page_views query failed with Postgres 42P01 (undefined_table) — lets Jarvis say the table isn't set up yet instead of silently reporting 0 visitors. */
+  pageViewsTableMissing: boolean;
 }
 
 interface SourceBreakdown {
@@ -280,7 +282,7 @@ async function gatherStats(): Promise<{
     { data: recentProfiles },
     { data: recentWaitlist },
     { count: totalTransactions },
-    { data: pageViewsLast30Days },
+    { data: pageViewsLast30Days, error: pageViewsError },
   ] = await Promise.all([
     supabaseAdmin.from("profiles").select("id", { count: "exact", head: true }),
     supabaseAdmin.from("waitlist").select("bir_hate_level, created_at"),
@@ -352,6 +354,10 @@ async function gatherStats(): Promise<{
   // Visitor stats — page_views only ever holds public landing-page rows
   // (src/app/api/analytics/track/route.ts excludes /admin, /dashboard,
   // /api at the write path itself), so no further filtering needed here.
+  // 42P01 = Postgres "undefined_table" — surfaced distinctly so Jarvis can
+  // say the table hasn't been created yet instead of silently reporting 0
+  // visitors forever, which would look like a real (but wrong) answer.
+  const pageViewsTableMissing = pageViewsError?.code === "42P01";
   const viewRows = pageViewsLast30Days ?? [];
   const visitorsToday = viewRows.filter((v) => new Date(v.created_at) >= todayStart).length;
   const visitorsYesterday = viewRows.filter((v) => {
@@ -405,6 +411,7 @@ async function gatherStats(): Promise<{
       topUtmSource,
       conversionRatePct,
       paidLast30Days,
+      pageViewsTableMissing,
     },
     latestUsers: (recentProfiles ?? []).map((p) => ({ email: p.email, createdAt: p.created_at })),
     latestWaitlist: (recentWaitlist ?? []).map((w) => ({ email: w.email, createdAt: w.created_at })),
@@ -479,6 +486,9 @@ function buildAnswer(
   }
 
   if (query.includes("visitor") || query.includes("traffic") || query.includes("ilan visitors")) {
+    if (stats.pageViewsTableMissing) {
+      return "⚠️ Sir, page_views table not yet created - run SQL in Supabase.";
+    }
     return (
       `📈 Sir, we have ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now, ` +
       `top source ${stats.topUtmSource ?? "n/a"}, conversion ${stats.conversionRatePct}% — ${stats.paidLast30Days} paid in last 30d.`
@@ -593,6 +603,9 @@ function buildVoiceAnswer(
   }
 
   if (query.includes("visitor") || query.includes("traffic") || query.includes("ilan visitors")) {
+    if (stats.pageViewsTableMissing) {
+      return `Sir, the page views table isn't set up yet — please run the SQL in Supabase.${egg}`;
+    }
     return (
       `Sir, we have ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now, ` +
       `top source ${stats.topUtmSource ?? "not available"}, conversion ${stats.conversionRatePct} percent — ` +
