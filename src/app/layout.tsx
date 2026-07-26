@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Inter } from "next/font/google";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { PostHogProvider } from "@/components/PostHogProvider";
+import { PageViewTracker } from "@/components/analytics/PageViewTracker";
 import "./globals.css";
 
 const inter = Inter({
@@ -51,6 +53,9 @@ export default function RootLayout({
     <html lang="en" className={inter.variable}>
       <body className="font-sans antialiased">
         <PostHogProvider />
+        <Suspense fallback={null}>
+          <PageViewTracker />
+        </Suspense>
         {children}
         <ChatWidget />
       </body>

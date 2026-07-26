@@ -33,6 +33,20 @@ interface JarvisStats {
   parsersActive: number;
   /** Count of genuinely wired-up export formats: QuickBooks, Xero, Sheets CSV — a fixed capability count, not a query. */
   exportsAvailable: number;
+  /** Real counts from page_views (public landing page only — /admin, /dashboard, /api are never tracked). */
+  visitorsToday: number;
+  visitorsYesterday: number;
+  liveVisitorsNow: number;
+  /** Real top UTM source by page-view count in the last 30 days, or null if none tracked (never fabricated). */
+  topUtmSource: string | null;
+  /** paidLast30Days / visitorsLast30Days * 100, rounded to 1 decimal — 0 when there's no visitor data yet, never divide-by-zero. */
+  conversionRatePct: number;
+  paidLast30Days: number;
+}
+
+interface SourceBreakdown {
+  value: string;
+  count: number;
 }
 
 interface RecentSignup {
@@ -246,8 +260,14 @@ async function gatherStats(): Promise<{
   latestWaitlist: RecentSignup[];
   recentSubscribers: PaidSubscriber[];
   expiringSoon: ExpiringSubscriber[];
+  topReferrers: SourceBreakdown[];
+  topUtmSources: SourceBreakdown[];
 }> {
   const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterdayStart = new Date(todayStart.getTime() - 86_400_000);
+  const thirtyDaysAgo = new Date(todayStart.getTime() - 30 * 86_400_000);
+  const liveThreshold = new Date(now.getTime() - 5 * 60 * 1000);
 
   const [
     { count: totalUsers },
@@ -260,6 +280,7 @@ async function gatherStats(): Promise<{
     { data: recentProfiles },
     { data: recentWaitlist },
     { count: totalTransactions },
+    { data: pageViewsLast30Days },
   ] = await Promise.all([
     supabaseAdmin.from("profiles").select("id", { count: "exact", head: true }),
     supabaseAdmin.from("waitlist").select("bir_hate_level, created_at"),
@@ -273,6 +294,7 @@ async function gatherStats(): Promise<{
     supabaseAdmin.from("profiles").select("email, created_at").order("created_at", { ascending: false }).limit(3),
     supabaseAdmin.from("waitlist").select("email, created_at").order("created_at", { ascending: false }).limit(3),
     supabaseAdmin.from("transactions").select("id", { count: "exact", head: true }),
+    supabaseAdmin.from("page_views").select("referrer, utm_source, created_at").gte("created_at", thirtyDaysAgo.toISOString()),
   ]);
 
   const waitlistRows = waitlist ?? [];
@@ -327,6 +349,36 @@ async function gatherStats(): Promise<{
 
   const expiringSoon = findExpiringSoon(subscriptions ?? []);
 
+  // Visitor stats — page_views only ever holds public landing-page rows
+  // (src/app/api/analytics/track/route.ts excludes /admin, /dashboard,
+  // /api at the write path itself), so no further filtering needed here.
+  const viewRows = pageViewsLast30Days ?? [];
+  const visitorsToday = viewRows.filter((v) => new Date(v.created_at) >= todayStart).length;
+  const visitorsYesterday = viewRows.filter((v) => {
+    const t = new Date(v.created_at);
+    return t >= yesterdayStart && t < todayStart;
+  }).length;
+  const liveVisitorsNow = viewRows.filter((v) => new Date(v.created_at) >= liveThreshold).length;
+
+  function topCounts(values: (string | null)[], limit: number): SourceBreakdown[] {
+    const counts = new Map<string, number>();
+    for (const v of values) {
+      if (!v) continue;
+      counts.set(v, (counts.get(v) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+  }
+
+  const topReferrers = topCounts(viewRows.map((v) => v.referrer), 5);
+  const topUtmSources = topCounts(viewRows.map((v) => v.utm_source), 5);
+  const topUtmSource = topUtmSources[0]?.value ?? null;
+
+  const paidLast30Days = (subscriptions ?? []).filter((s) => new Date(s.created_at) >= thirtyDaysAgo).length;
+  const conversionRatePct = viewRows.length > 0 ? Math.round((paidLast30Days / viewRows.length) * 1000) / 10 : 0;
+
   return {
     stats: {
       totalUsers: totalUsers ?? 0,
@@ -347,11 +399,19 @@ async function gatherStats(): Promise<{
       totalTransactions: totalTransactions ?? 0,
       parsersActive: 3,
       exportsAvailable: 3,
+      visitorsToday,
+      visitorsYesterday,
+      liveVisitorsNow,
+      topUtmSource,
+      conversionRatePct,
+      paidLast30Days,
     },
     latestUsers: (recentProfiles ?? []).map((p) => ({ email: p.email, createdAt: p.created_at })),
     latestWaitlist: (recentWaitlist ?? []).map((w) => ({ email: w.email, createdAt: w.created_at })),
     recentSubscribers,
     expiringSoon,
+    topReferrers,
+    topUtmSources,
   };
 }
 
@@ -364,6 +424,8 @@ function buildAnswer(
   persona: Persona,
   recentSubscribers: PaidSubscriber[],
   expiringSoon: ExpiringSubscriber[],
+  topReferrers: SourceBreakdown[],
+  topUtmSources: SourceBreakdown[],
 ): string {
   const query = q.toLowerCase();
   const intent = detectIntent(query);
@@ -406,6 +468,23 @@ function buildAnswer(
       : `✅ No subscriptions expiring within 7 days, Sir.`;
   }
 
+  if (query.includes("where from") || query.includes("saan galing")) {
+    const referrersLine = topReferrers.length
+      ? topReferrers.map((r) => `${r.value} (${r.count})`).join(", ")
+      : "no referrer data yet";
+    const sourcesLine = topUtmSources.length
+      ? topUtmSources.map((s) => `${s.value} (${s.count})`).join(", ")
+      : "no UTM source data yet";
+    return `🌐 Sir, top referrers (last 30d): ${referrersLine}. Top UTM sources: ${sourcesLine}.`;
+  }
+
+  if (query.includes("visitor") || query.includes("traffic") || query.includes("ilan visitors")) {
+    return (
+      `📈 Sir, we have ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now, ` +
+      `top source ${stats.topUtmSource ?? "n/a"}, conversion ${stats.conversionRatePct}% — ${stats.paidLast30Days} paid in last 30d.`
+    );
+  }
+
   if (
     query.includes("revenue") ||
     query.includes("mrr") ||
@@ -431,7 +510,8 @@ function buildAnswer(
     return (
       `📊 Sir, we have ${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, ` +
       `Total Revenue PHP ${stats.paymongoRevenue.toLocaleString()}${breakdown ? ` (${breakdown})` : ""}.${latestLine ? ` ${latestLine}.` : ""} ` +
-      `Today — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}. ` +
+      `Today — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}, ` +
+      `Visitors: ${stats.visitorsToday} (${stats.liveVisitorsNow} live). ` +
       `Totals — Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, DTI kits: ${stats.dtiCount}.${expiringLine ? ` ${expiringLine}.` : ""}`
     );
   }
@@ -462,6 +542,8 @@ function buildVoiceAnswer(
   manila: ManilaGreeting,
   recentSubscribers: PaidSubscriber[],
   expiringSoon: ExpiringSubscriber[],
+  topReferrers: SourceBreakdown[],
+  topUtmSources: SourceBreakdown[],
 ): string {
   const query = q.toLowerCase();
   const egg = maybeEasterEgg(persona);
@@ -498,6 +580,24 @@ function buildVoiceAnswer(
   if (query.includes("churn") || query.includes("expiring")) {
     const expiringLine = buildExpiringSoonLine(expiringSoon);
     return expiringLine ? `Sir, ${expiringLine}.${egg}` : `No subscriptions expiring within 7 days, Sir.${egg}`;
+  }
+
+  if (query.includes("where from") || query.includes("saan galing")) {
+    const referrersLine = topReferrers.length
+      ? topReferrers.map((r) => `${r.value}, ${r.count}`).join("; ")
+      : "no referrer data yet";
+    const sourcesLine = topUtmSources.length
+      ? topUtmSources.map((s) => `${s.value}, ${s.count}`).join("; ")
+      : "no UTM source data yet";
+    return `Sir, top referrers in the last 30 days: ${referrersLine}. Top UTM sources: ${sourcesLine}.${egg}`;
+  }
+
+  if (query.includes("visitor") || query.includes("traffic") || query.includes("ilan visitors")) {
+    return (
+      `Sir, we have ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now, ` +
+      `top source ${stats.topUtmSource ?? "not available"}, conversion ${stats.conversionRatePct} percent — ` +
+      `${stats.paidLast30Days} paid in the last 30 days.${egg}`
+    );
   }
 
   if (
@@ -539,14 +639,15 @@ function buildVoiceAnswer(
     const latestMention = latestLine ? ` ${latestLine}.` : "";
     const expiringLine = buildExpiringSoonLine(expiringSoon);
     const expiringMention = expiringLine ? ` ${expiringLine}.` : "";
+    const visitorsMention = ` ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now.`;
 
     return isFriday
       ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
           `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
-          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention} All systems operational!${egg}`
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention}${visitorsMention} All systems operational!${egg}`
       : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
           `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
-          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention} All systems operational.${egg}`;
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention}${visitorsMention} All systems operational.${egg}`;
   }
 
   const kitTotal = stats.dtiCount + stats.secCount + stats.mayorsCount;
@@ -579,11 +680,11 @@ export async function GET(req: Request) {
 
   try {
     const now = new Date();
-    const { stats, latestUsers, latestWaitlist, recentSubscribers, expiringSoon } = await gatherStats();
+    const { stats, latestUsers, latestWaitlist, recentSubscribers, expiringSoon, topReferrers, topUtmSources } = await gatherStats();
     const deadlines = getBirDeadlines(now);
     const manila = getManilaGreeting(now);
-    const answer = buildAnswer(q, stats, deadlines, manila, persona, recentSubscribers, expiringSoon);
-    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, manila, recentSubscribers, expiringSoon);
+    const answer = buildAnswer(q, stats, deadlines, manila, persona, recentSubscribers, expiringSoon, topReferrers, topUtmSources);
+    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, manila, recentSubscribers, expiringSoon, topReferrers, topUtmSources);
     return NextResponse.json({
       answer,
       voiceAnswer,
@@ -592,6 +693,8 @@ export async function GET(req: Request) {
       latestWaitlist,
       recentSubscribers,
       expiringSoon,
+      topReferrers,
+      topUtmSources,
       birDeadlines: deadlines,
       greeting: manila.greeting,
       manilaTime: formatManilaTime(now),

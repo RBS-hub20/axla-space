@@ -4,3 +4,4 @@ node_modules
 .env.local
 waitlist-fix
 .DS_Store
+.next-stale-*
