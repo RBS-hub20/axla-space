@@ -1,9 +1,10 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { Inter } from "next/font/google";
 import { ChatWidget } from "@/components/chat/ChatWidget";
 import { PostHogProvider } from "@/components/PostHogProvider";
 import { PageViewTracker } from "@/components/analytics/PageViewTracker";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import "./globals.css";
 
 const inter = Inter({
@@ -16,10 +17,20 @@ const siteUrl = "https://axla.space";
 
 const metaDescription = "Ask TaxLaya about 2551Q, 1701Q, BIR deadlines. Free 24/7.";
 
+export const viewport: Viewport = {
+  themeColor: "#00FF88",
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: "Axla — Your AI agent for adulting",
   description: metaDescription,
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    title: "Axla",
+    statusBarStyle: "default",
+  },
   icons: {
     icon: [
       { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
@@ -58,6 +69,7 @@ export default function RootLayout({
         </Suspense>
         {children}
         <ChatWidget />
+        <InstallPrompt />
       </body>
     </html>
   );

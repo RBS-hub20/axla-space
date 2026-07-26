@@ -7,6 +7,13 @@
 # Next.js build output
 /.next
 /out
+.next-stale-*
+
+# @ducanh2912/next-pwa generated service worker (regenerated on every build)
+/public/sw.js
+/public/sw.js.map
+/public/workbox-*.js
+/public/fallback-*.js
 
 # env files — never commit secrets. Broad `.env*` catches accidental
 # duplicate/backup copies too (e.g. ".env 2", ".env 2.local" — a macOS

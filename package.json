@@ -10,11 +10,16 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "cap:android": "npx cap add android && npx cap sync android && npx cap open android"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.15",
     "@ai-sdk/react": "^4.0.32",
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/cli": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
+    "@ducanh2912/next-pwa": "^10.2.9",
     "@prisma/client": "^6.19.3",
     "@radix-ui/react-dialog": "^1.1.4",
     "@radix-ui/react-scroll-area": "^1.2.14",
