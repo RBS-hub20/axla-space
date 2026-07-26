@@ -4,7 +4,7 @@ import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { isElevenLabsConfigured, JARVIS_VOICE_ID, FRIDAY_VOICE_ID } from "@/lib/voice/elevenlabs";
 import { getManilaGreeting, formatManilaTime, formatManilaDate, type ManilaGreeting } from "@/lib/manila-time";
 import { getBirDeadlines, type BirDeadline } from "@/lib/bir-deadlines";
-import { reconcilePayments } from "@/lib/payments-stats";
+import { reconcilePayments, findExpiringSoon, type ExpiringSubscriber } from "@/lib/payments-stats";
 import { logError } from "@/lib/log-error";
 
 type Persona = "jarvis" | "friday";
@@ -89,6 +89,13 @@ function buildLatestSubscriberLine(subs: PaidSubscriber[]): string {
   const latest = subs[0];
   if (!latest) return "";
   return `Latest: ${latest.email} ${formatManilaShortDate(latest.createdAt)} PRO active`;
+}
+
+/** "Expiring soon: renzsom2022@gmail.com in 5 days" — real churn-risk signal, never fabricated; empty when nothing's within the window. */
+function buildExpiringSoonLine(expiringSoon: ExpiringSubscriber[]): string {
+  if (expiringSoon.length === 0) return "";
+  const parts = expiringSoon.map((s) => `${s.email} in ${s.daysLeft <= 0 ? "0" : s.daysLeft} day${s.daysLeft === 1 ? "" : "s"}`);
+  return `Expiring soon: ${parts.join(", ")}`;
 }
 
 /** Spoken summary of the most urgent deadlines — never invents a number, just describes real computed daysLeft/status. Exactly one "Sir", at the end. */
@@ -238,6 +245,7 @@ async function gatherStats(): Promise<{
   latestUsers: RecentSignup[];
   latestWaitlist: RecentSignup[];
   recentSubscribers: PaidSubscriber[];
+  expiringSoon: ExpiringSubscriber[];
 }> {
   const now = new Date();
 
@@ -259,7 +267,9 @@ async function gatherStats(): Promise<{
     supabaseAdmin.from("invoices").select("total, status, created_at"),
     supabaseAdmin.from("business_registrations").select("type, data"),
     supabaseAdmin.from("payments").select("id, email, amount, currency, status, provider, payment_method, plan, created_at"),
-    supabaseAdmin.from("subscriptions").select("email, plan, status, amount, provider, billing_cycle, current_period_end, created_at"),
+    supabaseAdmin
+      .from("subscriptions")
+      .select("email, plan, status, amount, provider, billing_cycle, current_period_start, current_period_end, created_at"),
     supabaseAdmin.from("profiles").select("email, created_at").order("created_at", { ascending: false }).limit(3),
     supabaseAdmin.from("waitlist").select("email, created_at").order("created_at", { ascending: false }).limit(3),
     supabaseAdmin.from("transactions").select("id", { count: "exact", head: true }),
@@ -315,6 +325,8 @@ async function gatherStats(): Promise<{
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
 
+  const expiringSoon = findExpiringSoon(subscriptions ?? []);
+
   return {
     stats: {
       totalUsers: totalUsers ?? 0,
@@ -339,6 +351,7 @@ async function gatherStats(): Promise<{
     latestUsers: (recentProfiles ?? []).map((p) => ({ email: p.email, createdAt: p.created_at })),
     latestWaitlist: (recentWaitlist ?? []).map((w) => ({ email: w.email, createdAt: w.created_at })),
     recentSubscribers,
+    expiringSoon,
   };
 }
 
@@ -350,6 +363,7 @@ function buildAnswer(
   manila: ManilaGreeting,
   persona: Persona,
   recentSubscribers: PaidSubscriber[],
+  expiringSoon: ExpiringSubscriber[],
 ): string {
   const query = q.toLowerCase();
   const intent = detectIntent(query);
@@ -385,6 +399,13 @@ function buildAnswer(
     return `🔥 Average BIR hate level: ${stats.avgHateLevel}/10 across ${stats.totalWaitlist} signups, Sir.`;
   }
 
+  if (query.includes("churn") || query.includes("expiring")) {
+    const expiringLine = buildExpiringSoonLine(expiringSoon);
+    return expiringLine
+      ? `⏰ Sir, ${expiringLine}.`
+      : `✅ No subscriptions expiring within 7 days, Sir.`;
+  }
+
   if (
     query.includes("revenue") ||
     query.includes("mrr") ||
@@ -395,21 +416,23 @@ function buildAnswer(
   ) {
     const breakdown = buildSubscriberBreakdown(recentSubscribers);
     const latestLine = buildLatestSubscriberLine(recentSubscribers);
+    const expiringLine = buildExpiringSoonLine(expiringSoon);
     return (
       `💰 Sir, we have ${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, ` +
       `Total Revenue PHP ${stats.paymongoRevenue.toLocaleString()}${breakdown ? ` (${breakdown})` : ""}. ` +
-      `Invoices paid: PHP ${stats.invoicesPaidTotal.toLocaleString()}.${latestLine ? ` ${latestLine}.` : ""}`
+      `Invoices paid: PHP ${stats.invoicesPaidTotal.toLocaleString()}.${latestLine ? ` ${latestLine}.` : ""}${expiringLine ? ` ${expiringLine}.` : ""}`
     );
   }
 
   if (query.includes("today") || query.includes("report")) {
     const breakdown = buildSubscriberBreakdown(recentSubscribers);
     const latestLine = buildLatestSubscriberLine(recentSubscribers);
+    const expiringLine = buildExpiringSoonLine(expiringSoon);
     return (
       `📊 Sir, we have ${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, ` +
       `Total Revenue PHP ${stats.paymongoRevenue.toLocaleString()}${breakdown ? ` (${breakdown})` : ""}.${latestLine ? ` ${latestLine}.` : ""} ` +
       `Today — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}. ` +
-      `Totals — Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, DTI kits: ${stats.dtiCount}.`
+      `Totals — Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, DTI kits: ${stats.dtiCount}.${expiringLine ? ` ${expiringLine}.` : ""}`
     );
   }
 
@@ -438,6 +461,7 @@ function buildVoiceAnswer(
   deadlines: BirDeadline[],
   manila: ManilaGreeting,
   recentSubscribers: PaidSubscriber[],
+  expiringSoon: ExpiringSubscriber[],
 ): string {
   const query = q.toLowerCase();
   const egg = maybeEasterEgg(persona);
@@ -471,6 +495,11 @@ function buildVoiceAnswer(
     return `The average frustration level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups, Sir.${egg}`;
   }
 
+  if (query.includes("churn") || query.includes("expiring")) {
+    const expiringLine = buildExpiringSoonLine(expiringSoon);
+    return expiringLine ? `Sir, ${expiringLine}.${egg}` : `No subscriptions expiring within 7 days, Sir.${egg}`;
+  }
+
   if (
     query.includes("revenue") ||
     query.includes("mrr") ||
@@ -480,10 +509,11 @@ function buildVoiceAnswer(
     query.includes("how many paid")
   ) {
     const breakdown = buildSubscriberBreakdown(recentSubscribers);
+    const expiringLine = buildExpiringSoonLine(expiringSoon);
     return (
       `Sir, we have ${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, ` +
       `Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos${breakdown ? ` — ${breakdown}` : ""}. ` +
-      `Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos.${egg}`
+      `Invoices paid: ${stats.invoicesPaidTotal.toLocaleString()} pesos.${expiringLine ? ` ${expiringLine}.` : ""}${egg}`
     );
   }
 
@@ -507,14 +537,16 @@ function buildVoiceAnswer(
       : "";
     const latestLine = buildLatestSubscriberLine(recentSubscribers);
     const latestMention = latestLine ? ` ${latestLine}.` : "";
+    const expiringLine = buildExpiringSoonLine(expiringSoon);
+    const expiringMention = expiringLine ? ` ${expiringLine}.` : "";
 
     return isFriday
       ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
           `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
-          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention} All systems operational!${egg}`
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention} All systems operational!${egg}`
       : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
           `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
-          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention} All systems operational.${egg}`;
+          `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention} All systems operational.${egg}`;
   }
 
   const kitTotal = stats.dtiCount + stats.secCount + stats.mayorsCount;
@@ -547,11 +579,11 @@ export async function GET(req: Request) {
 
   try {
     const now = new Date();
-    const { stats, latestUsers, latestWaitlist, recentSubscribers } = await gatherStats();
+    const { stats, latestUsers, latestWaitlist, recentSubscribers, expiringSoon } = await gatherStats();
     const deadlines = getBirDeadlines(now);
     const manila = getManilaGreeting(now);
-    const answer = buildAnswer(q, stats, deadlines, manila, persona, recentSubscribers);
-    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, manila, recentSubscribers);
+    const answer = buildAnswer(q, stats, deadlines, manila, persona, recentSubscribers, expiringSoon);
+    const voiceAnswer = buildVoiceAnswer(q, stats, persona, deadlines, manila, recentSubscribers, expiringSoon);
     return NextResponse.json({
       answer,
       voiceAnswer,
@@ -559,6 +591,7 @@ export async function GET(req: Request) {
       latestUsers,
       latestWaitlist,
       recentSubscribers,
+      expiringSoon,
       birDeadlines: deadlines,
       greeting: manila.greeting,
       manilaTime: formatManilaTime(now),

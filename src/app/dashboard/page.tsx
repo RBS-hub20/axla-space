@@ -21,8 +21,11 @@ import { getRecentActivities } from "@/lib/dashboard/activity";
 import { getCurrentQuarter } from "@/lib/dashboard/quarter";
 import { getBusinesses } from "@/lib/dashboard/businesses";
 import { getUsageSummary } from "@/lib/usage";
+import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { resolveCurrentPeriodEnd, daysLeftUntil } from "@/lib/payments-stats";
 import { BusinessSwitcher } from "@/components/dashboard/BusinessSwitcher";
 import { TaxHealthGauge } from "@/components/dashboard/TaxHealthGauge";
+import { SubscriptionRing } from "@/components/dashboard/SubscriptionRing";
 import { MiniSparkline } from "@/components/dashboard/MiniSparkline";
 import { RevenueTimelineChart } from "@/components/dashboard/RevenueTimelineChart";
 import { RecentActivityTimeline } from "@/components/dashboard/RecentActivityTimeline";
@@ -96,6 +99,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
   ]);
   const { quarter, year } = getCurrentQuarter();
 
+  // Subscription countdown ring — only queried for paid users (free-plan
+  // has no subscriptions row to read a period from, so the ring shows its
+  // own labeled sample state instead). currentPeriodEnd falls back to
+  // period-start + 30 days when null (see resolveCurrentPeriodEnd) rather
+  // than requiring every row to have one.
+  let subscriptionDaysLeft: number | undefined;
+  let subscriptionExpiry: string | undefined;
+  if (usage.isUnlimited && isSupabaseAdminConfigured) {
+    const { data: subRow } = await supabaseAdmin
+      .from("subscriptions")
+      .select("current_period_start, current_period_end, created_at")
+      .eq("email", user.email.toLowerCase())
+      .maybeSingle();
+    if (subRow) {
+      subscriptionExpiry = resolveCurrentPeriodEnd(subRow);
+      subscriptionDaysLeft = daysLeftUntil(subscriptionExpiry);
+    }
+  }
+
   const incomeSpark = timeline.months.map((m) => ({ value: m.income }));
   const expenseSpark = timeline.months.map((m) => ({ value: m.expenses }));
 
@@ -148,7 +170,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
                 />
               )}
             </div>
-            <TaxHealthGauge score={stats.taxHealthScore} />
+            <div className="grid grid-cols-2 gap-4 sm:flex sm:gap-6">
+              <TaxHealthGauge score={stats.taxHealthScore} />
+              <SubscriptionRing
+                daysLeft={subscriptionDaysLeft}
+                expiryDate={subscriptionExpiry}
+                plan={usage.plan === "business" ? "business" : "pro"}
+              />
+            </div>
           </div>
         </div>
 

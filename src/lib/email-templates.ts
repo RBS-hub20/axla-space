@@ -293,6 +293,66 @@ export function adminNewProNotificationTemplate(email: string, plan: "pro" | "bu
   return emailShell(`New ${planLabel} purchase: ${email} — ₱${amount.toLocaleString()}`, body);
 }
 
+export type ExpiryReminderTier = "3-day" | "1-day" | "expired";
+
+const EXPIRY_TIER_COPY: Record<ExpiryReminderTier, { subject: string; heading: string; urgency: string }> = {
+  "3-day": {
+    subject: "⏰ Your Axla PRO expires in 3 days — Renew now",
+    heading: "expires in 3 days",
+    urgency: "before {expiry} to keep unlimited filings, GCash uploads, and TaxLaya chat without interruption.",
+  },
+  "1-day": {
+    subject: "Last day! PRO expires tomorrow",
+    heading: "expires tomorrow",
+    urgency: "now — this is your last day of uninterrupted access before it expires on {expiry}.",
+  },
+  expired: {
+    subject: "Your PRO expired - Renew to keep BIR files",
+    heading: "has expired",
+    urgency: "now to restore unlimited filings, GCash uploads, and your BIR-ready reference files. Your account is back on the Free plan.",
+  },
+};
+
+/** The real Resend "subject" line for a given tier — kept separate from the HTML body/preheader, matching every other template in this file (the caller sets `subject` explicitly on the send() call). */
+export function subscriptionExpirySubject(tier: ExpiryReminderTier): string {
+  return EXPIRY_TIER_COPY[tier].subject;
+}
+
+/** Sent by the daily src/app/api/cron/check-expiry job — one of three tiers depending on how close (or past) the subscription's current_period_end is. */
+export function subscriptionExpiryEmailTemplate(name: string, tier: ExpiryReminderTier, expiryDateLabel: string, plan: "pro" | "business"): string {
+  const planLabel = plan === "business" ? "Business" : "PRO";
+  const greetingName = name ? `, ${name}` : "";
+  const { heading, urgency } = EXPIRY_TIER_COPY[tier];
+  const renewCopy = `Renew ${urgency.replace("{expiry}", expiryDateLabel)}`;
+
+  const body = `
+    <p style="margin:0 0 4px; font-size:20px; color:#ffffff; font-weight:700;">Your ${planLabel} plan ${heading}${greetingName}</p>
+    <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">${renewCopy}</p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:24px;">
+      <tr>
+        <td style="padding:16px 18px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${tier === "expired" ? "#ef4444" : ACCENT};">
+          <p style="margin:0; font-size:13px; color:${MUTED_TEXT};">
+            ${tier === "expired" ? "Expired" : "Expires"}: <strong style="color:#ffffff;">${expiryDateLabel}</strong>
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+      <tr>
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="https://www.axla.space/dashboard/settings" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
+            Renew Now →
+          </a>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return emailShell(EXPIRY_TIER_COPY[tier].subject, body);
+}
+
 /** Sent when a newly-logged BIR Guard case has a penalty or is otherwise flagged — the user added this themselves (manual entry), this just confirms/reminds. */
 export function birGuardAlertEmailTemplate(name: string, openCaseCount: number, totalPenalty: number): string {
   const greeting = name ? `Heads up, ${name}` : "Heads up";

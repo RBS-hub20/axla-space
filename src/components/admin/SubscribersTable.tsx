@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { PaymentsStats, RecentPayment } from "@/lib/payments-stats";
+import type { PaymentsStats, RecentPayment, SubscriptionSummary } from "@/lib/payments-stats";
 
 type Filter = "all" | "pro" | "business" | "failed";
 
@@ -50,6 +50,38 @@ function StatTile({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Small progress ring + badge — same day-based color tiers as the dashboard's SubscriptionRing and header badge, so "expires in" never disagrees across surfaces. */
+function ExpiresInBadge({ daysLeft }: { daysLeft: number }) {
+  const expired = daysLeft <= 0;
+  const color = expired ? "#EF4444" : daysLeft <= 7 ? "#FACC15" : "#00FF88";
+  const radius = 8;
+  const circumference = 2 * Math.PI * radius;
+  const progress = expired ? 0 : Math.max(0, Math.min(30, daysLeft)) / 30;
+  const offset = circumference - progress * circumference;
+
+  return (
+    <div className="flex items-center gap-2">
+      <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 -rotate-90">
+        <circle cx="10" cy="10" r={radius} fill="none" stroke="#1E293B" strokeWidth="2.5" />
+        <circle
+          cx="10"
+          cy="10"
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+        />
+      </svg>
+      <span className="rounded-full px-2 py-0.5 text-xs font-bold" style={{ backgroundColor: `${color}33`, color }}>
+        {expired ? "Expired" : `${daysLeft}d`}
+      </span>
+    </div>
+  );
+}
+
 interface ManageState {
   email: string;
   plan: "pro" | "business";
@@ -59,10 +91,12 @@ interface ManageState {
 export function SubscribersTable({
   payments,
   stats,
+  subscriptionsByEmail,
   onRefresh,
 }: {
   payments: RecentPayment[];
   stats: PaymentsStats;
+  subscriptionsByEmail?: Record<string, SubscriptionSummary>;
   onRefresh: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
@@ -166,13 +200,14 @@ export function SubscribersTable({
                 <TableHead>Provider</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Date</TableHead>
+                <TableHead>Expires In</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-8 text-center text-gray-500">
+                  <TableCell colSpan={8} className="py-8 text-center text-gray-500">
                     No subscribers found.
                   </TableCell>
                 </TableRow>
@@ -180,6 +215,7 @@ export function SubscribersTable({
                 filtered.map((p) => {
                   const method = methodInfo(p.paymentMethod);
                   const Icon = method.icon;
+                  const subscription = subscriptionsByEmail?.[p.email.toLowerCase()];
                   return (
                     <TableRow key={p.id}>
                       <TableCell className="font-medium text-gray-100">{p.email}</TableCell>
@@ -200,6 +236,13 @@ export function SubscribersTable({
                       </TableCell>
                       <TableCell className="text-gray-400">
                         {new Date(p.createdAt).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}
+                      </TableCell>
+                      <TableCell>
+                        {subscription && subscription.status === "active" ? (
+                          <ExpiresInBadge daysLeft={subscription.daysLeft} />
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-2">

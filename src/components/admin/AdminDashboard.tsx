@@ -277,7 +277,14 @@ export function AdminDashboard() {
         {loading ? (
           <p className="text-gray-500">Loading dashboard...</p>
         ) : tab === "subscribers" ? (
-          payments && <SubscribersTable payments={payments.payments} stats={payments.stats} onRefresh={fetchData} />
+          payments && (
+            <SubscribersTable
+              payments={payments.payments}
+              stats={payments.stats}
+              subscriptionsByEmail={payments.subscriptionsByEmail}
+              onRefresh={fetchData}
+            />
+          )
         ) : tab === "compliance" ? (
           <ComplianceTable />
         ) : tab === "jarvis-hud" ? (

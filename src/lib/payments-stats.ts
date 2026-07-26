@@ -6,6 +6,9 @@ export interface SubscriptionSummary {
   status: string;
   lastPayment: string | null;
   nextBilling: string | null;
+  /** Real current_period_end when set, else a computed fallback (period start + 30 days) — never null, so every caller can render a countdown without its own null-handling. */
+  currentPeriodEnd: string;
+  daysLeft: number;
 }
 
 export interface PaymentsStats {
@@ -61,8 +64,48 @@ export interface RawSubscriptionRow {
   amount: number;
   provider: string | null;
   billing_cycle: string | null;
+  current_period_start: string | null;
   current_period_end: string | null;
   created_at: string;
+}
+
+/**
+ * Real current_period_end when the row has one; otherwise a computed
+ * fallback of (current_period_start ?? created_at) + 30 days. Some real
+ * rows predate the webhook always setting these fields (e.g. one created
+ * via a direct upsert rather than the normal checkout flow) — rather than
+ * requiring a data migration for every such gap, every caller that needs a
+ * countdown goes through this so it self-heals the same way
+ * reconcilePayments() does for the payments-ledger gap.
+ */
+export function resolveCurrentPeriodEnd(sub: Pick<RawSubscriptionRow, "current_period_end" | "current_period_start" | "created_at">): string {
+  if (sub.current_period_end) return sub.current_period_end;
+  const start = new Date(sub.current_period_start ?? sub.created_at);
+  return new Date(start.getTime() + 30 * 86_400_000).toISOString();
+}
+
+/** Whole days remaining until periodEnd, rounded up — 0 or negative means expired today or earlier. */
+export function daysLeftUntil(periodEndIso: string): number {
+  return Math.ceil((new Date(periodEndIso).getTime() - Date.now()) / 86_400_000);
+}
+
+export interface ExpiringSubscriber {
+  email: string;
+  plan: string;
+  currentPeriodEnd: string;
+  daysLeft: number;
+}
+
+/** Active subscriptions expiring within `withinDays` (default 7), soonest first — used by both the admin dashboard and Jarvis so "expiring soon" never disagrees between the two. */
+export function findExpiringSoon(subscriptions: RawSubscriptionRow[], withinDays = 7): ExpiringSubscriber[] {
+  return subscriptions
+    .filter((s) => s.status === "active")
+    .map((s) => {
+      const currentPeriodEnd = resolveCurrentPeriodEnd(s);
+      return { email: s.email, plan: s.plan, currentPeriodEnd, daysLeft: daysLeftUntil(currentPeriodEnd) };
+    })
+    .filter((s) => s.daysLeft <= withinDays)
+    .sort((a, b) => a.daysLeft - b.daysLeft);
 }
 
 
@@ -157,11 +200,14 @@ export function aggregatePayments(rawPayments: RawPaymentRow[], subscriptions: R
   const subscriptionsByEmail: Record<string, SubscriptionSummary> = {};
   for (const s of subscriptions) {
     const key = s.email.toLowerCase();
+    const currentPeriodEnd = resolveCurrentPeriodEnd(s);
     subscriptionsByEmail[key] = {
       plan: s.plan,
       status: s.status,
       lastPayment: lastPaymentByEmail.get(key) ?? null,
       nextBilling: s.current_period_end,
+      currentPeriodEnd,
+      daysLeft: daysLeftUntil(currentPeriodEnd),
     };
   }
 
@@ -224,11 +270,14 @@ export function buildMockPaymentsPayload(): PaymentsPayload {
   const subscriptionsByEmail: Record<string, SubscriptionSummary> = {};
   for (const p of mockPayments) {
     if (p.status !== "paid") continue;
+    const nextBilling = new Date(today.getTime() + (30 - p.daysAgo) * 86_400_000).toISOString();
     subscriptionsByEmail[p.email.toLowerCase()] = {
       plan: p.plan,
       status: "active",
       lastPayment: new Date(today.getTime() - p.daysAgo * 86_400_000).toISOString(),
-      nextBilling: new Date(today.getTime() + (30 - p.daysAgo) * 86_400_000).toISOString(),
+      nextBilling,
+      currentPeriodEnd: nextBilling,
+      daysLeft: 30 - p.daysAgo,
     };
   }
 
