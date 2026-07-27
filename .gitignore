@@ -31,6 +31,9 @@
 *.pem
 npm-debug.log*
 
+# Reference/design files supplied for reverse-engineering — not part of the app.
+/attachments
+
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts

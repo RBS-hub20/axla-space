@@ -1,17 +1,13 @@
 import { NextResponse } from "next/server";
 import { getPayMongoCheckoutSessionStatus, isPayMongoConfigured } from "@/lib/payments";
 import { generateNegosyoExcel, type NegosyoTrackerData } from "@/lib/excel/negosyo-generator";
+import { CATEGORY_KEYS } from "@/lib/excel/category-config";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logError } from "@/lib/log-error";
-
-const MAX_LOGO_BASE64_CHARS = 3_000_000; // ~2.2MB decoded — generous for a small logo, small enough to stay well under platform request-body limits.
 
 interface DownloadBody {
   checkoutSessionId?: unknown;
   businessName?: unknown;
-  logoBase64?: unknown;
-  color1?: unknown;
-  color2?: unknown;
   category?: unknown;
   products?: unknown;
   mayUtang?: unknown;
@@ -80,19 +76,9 @@ export async function POST(req: Request) {
   }
 
   const businessName = typeof body.businessName === "string" && body.businessName.trim() ? body.businessName.trim().slice(0, 80) : "Aking Negosyo";
-  const category = typeof body.category === "string" ? body.category.slice(0, 40) : "Other";
-  const color1 = typeof body.color1 === "string" ? body.color1 : "#00FF88";
-  const color2 = typeof body.color2 === "string" ? body.color2 : "#0B0F1A";
+  const category = typeof body.category === "string" && (CATEGORY_KEYS as string[]).includes(body.category) ? body.category : "Other";
   const mayUtang = Boolean(body.mayUtang);
   const products = Array.isArray(body.products) ? body.products.filter((p): p is string => typeof p === "string").slice(0, 20) : [];
-
-  let logoBase64: string | null = null;
-  if (typeof body.logoBase64 === "string" && body.logoBase64.length > 0) {
-    if (body.logoBase64.length > MAX_LOGO_BASE64_CHARS) {
-      return NextResponse.json({ error: "Masyadong malaki ang logo. Gumamit ng mas maliit na image." }, { status: 400 });
-    }
-    logoBase64 = body.logoBase64;
-  }
 
   // The only trustworthy source of truth: ask PayMongo directly whether this
   // checkout session was actually paid, rather than trusting anything the
@@ -109,7 +95,7 @@ export async function POST(req: Request) {
 
   await recordSaleOnce(status.paymentId, businessName);
 
-  const data: NegosyoTrackerData = { businessName, logoBase64, color1, color2, category, products, mayUtang };
+  const data: NegosyoTrackerData = { businessName, category, products, mayUtang };
 
   try {
     const buffer = await generateNegosyoExcel(data);

@@ -5,24 +5,22 @@ import { Footer } from "@/components/Footer";
 export const metadata = {
   title: "Negosyo Tracker — Sales, Tubo & Inventory Agent | Axla",
   description:
-    "Hindi mo na kailangan mag type ng formula. May logo mo pa! Auto-compute sales, tubo, at inventory tracker para sa sari-sari store, online seller, at maliliit na negosyo — ₱149 lang.",
+    "Hindi mo na kailangan mag type ng formula. 16 na kategorya, kasama ang Sari-Sari, Airbnb, Barbershop, Car Wash, Pandesal at Rental — auto-compute sales, tubo, at inventory tracker — ₱149 lang.",
 };
 
 const HOW_IT_WORKS = [
-  { step: "1", title: "Fill-up", desc: "2 minutes lang — business name, logo, kulay, at mga paninda mo." },
-  { step: "2", title: "Preview with brand", desc: "Makikita agad ang tracker na may logo at kulay ng negosyo mo." },
+  { step: "1", title: "Fill-up", desc: "2 minutes lang — business name, kategorya, at mga paninda mo." },
+  { step: "2", title: "Preview", desc: "Makikita agad ang buong tracker mo bago magbayad." },
   { step: "3", title: "Bayad ₱149", desc: "QR o checkout — pagkatapos, awtomatikong ma-download." },
 ];
 
 const SHEETS = [
-  { name: "Cover", desc: "Logo mo + paano gamitin — Tagalog na instructions." },
-  { name: "Dashboard", desc: "Benta, Tubo, Gastos, Paubos — Daily/Weekly/Monthly + alerts." },
-  { name: "Price List", desc: "Auto-compute ang tubo at margin — pula kapag lugi." },
-  { name: "Benta Log", desc: "Pumili ng produkto, awtomatikong makukuha ang total." },
-  { name: "Gastos Log", desc: "I-log ang mga gastos — auto total." },
-  { name: "Inventory", desc: "Auto-bawas ang stock, may alerts kapag paubos na." },
-  { name: "Utang List", desc: "Auto mula sa Benta Log kung sino may utang." },
-  { name: "Buwanang Report", desc: "Print-ready summary na may logo mo." },
+  { name: "Dashboard", desc: "Today at a glance + last 7 days — sales, tubo, alerts." },
+  { name: "Inventory", desc: "Auto-compute ang tubo at margin — may restock alerts." },
+  { name: "Daily Sales", desc: "Pumili ng produkto, awtomatikong makukuha ang total." },
+  { name: "Expenses", desc: "I-log ang mga gastos — auto total kada buwan." },
+  { name: "Utang Tracker", desc: "Sino may utang, magkano, bayad na ba." },
+  { name: "Monthly & Yearly Report", desc: "Buwan-buwan at taon-taon na summary." },
 ];
 
 export default function NegosyoTrackerPage() {
@@ -41,7 +39,7 @@ export default function NegosyoTrackerPage() {
             <h1 className="mt-6 text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-5xl">Negosyo Tracker</h1>
             <p className="mt-3 text-xl font-semibold text-[#00FF88] sm:text-2xl">Sales, Tubo &amp; Inventory Agent</p>
             <p className="mx-auto mt-4 max-w-xl text-lg text-slate-400 lg:mx-0">
-              Hindi mo na kailangan mag type ng formula. May logo mo pa!
+              Hindi mo na kailangan mag type ng formula. 16 na kategorya ng negosyo!
             </p>
 
             <div className="mx-auto mt-6 flex max-w-md flex-wrap justify-center gap-4 text-xs font-medium text-slate-300 lg:mx-0 lg:justify-start">
@@ -49,7 +47,7 @@ export default function NegosyoTrackerPage() {
                 <span className="text-[#00FF88]">✓</span> No Formula
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="text-[#00FF88]">✓</span> May Logo Mo
+                <span className="text-[#00FF88]">✓</span> 16 Kategorya
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="text-[#00FF88]">✓</span> Download Agad
@@ -123,7 +121,10 @@ export default function NegosyoTrackerPage() {
       {/* Ano laman */}
       <section className="border-t border-white/10 py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <h2 className="text-center text-sm font-bold uppercase tracking-wide text-slate-500">Ano laman — 8 Sheets</h2>
+          <h2 className="text-center text-sm font-bold uppercase tracking-wide text-slate-500">Ano laman — Depende sa Kategorya</h2>
+          <p className="mx-auto mt-2 max-w-lg text-center text-sm text-slate-400">
+            10 sheets para sa Sari-Sari, Online Seller, at katulad — mas marami pa para sa Airbnb, Barbershop, Car Wash, Pandesal at Rental.
+          </p>
           <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {SHEETS.map((sheet) => (
               <div key={sheet.name} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
@@ -151,7 +152,7 @@ export default function NegosyoTrackerPage() {
             <ul className="mt-6 space-y-2.5 text-left text-sm text-slate-300">
               {[
                 "One-time payment — hindi paulit-ulit",
-                "May logo at kulay ng negosyo mo",
+                "16 na kategorya — Sari-Sari hanggang Airbnb",
                 "Naka-lock ang mga formula — hindi masisira",
                 "Tagalog — madaling gamitin",
                 "Lifetime — sayo na ang file",

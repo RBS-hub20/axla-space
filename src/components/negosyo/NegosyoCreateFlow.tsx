@@ -3,80 +3,47 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { CATEGORY_KEYS } from "@/lib/excel/category-config";
 
-const CATEGORIES = [
-  "Sari-Sari Store",
-  "Online Seller",
-  "Food Cart",
-  "Milktea/Coffee",
-  "Ukay/RTW",
-  "Bigas/Egg",
-  "Carinderia",
-  "Bake Shop",
-  "GCash/Loading",
-  "Beauty Services",
-  "Other",
-];
+const SHEET_TABS_BY_TEMPLATE: Record<string, string[]> = {
+  base: ["Dashboard", "Inventory", "Daily Sales", "Daily Summary", "Restock List", "Utang Tracker", "Monthly Report", "Expenses", "Suppliers", "Yearly Summary"],
+  airbnb: ["Dashboard", "Properties", "Reservations", "Calendar", "Guests", "Check-In Out", "Staff", "Cleaning", "Maintenance", "Revenue", "Expenses", "Profit & Loss", "Inventory"],
+  barbershop: ["Dashboard", "Customers", "Services", "Appointments", "Chairs", "Sales", "Payroll", "Attendance", "Product Sales", "Membership", "Expenses", "Inventory", "Profit & Loss"],
+  carwash: ["Dashboard", "Customers", "Services", "Vehicle Tracker", "Sales", "Inventory", "Water Usage", "Employees", "Expenses", "Profit & Loss", "Membership", "Booking"],
+  rental: ["Dashboard", "Units", "Tenants", "Payments", "Invoice", "SOA", "Expenses", "Maintenance", "Profit & Loss", "Contract"],
+  pandesal: ["Dashboard", "Areas", "Production", "Pack Converter", "Seller Allocation", "Accountability", "Route Planner"],
+};
 
-const COLOR_PRESETS = [
-  { name: "Green", hex: "#00FF88" },
-  { name: "Black", hex: "#0B0F1A" },
-  { name: "Pink", hex: "#EC4899" },
-  { name: "Blue", hex: "#3B82F6" },
-  { name: "Yellow", hex: "#EAB308" },
-];
+const TEMPLATE_BY_CATEGORY: Record<string, string> = {
+  Pandesal: "pandesal",
+  Airbnb: "airbnb",
+  "Car Wash": "carwash",
+  Barbershop: "barbershop",
+  Rental: "rental",
+};
 
-const SHEET_TABS = ["Cover", "Dashboard", "Price List", "Benta Log", "Gastos Log", "Inventory", "Utang List", "Buwanang Report"];
+function sheetTabsFor(category: string): string[] {
+  const template = TEMPLATE_BY_CATEGORY[category] ?? "base";
+  return SHEET_TABS_BY_TEMPLATE[template];
+}
 
 const PENDING_KEY = "axla_negosyo_pending";
 const PAID_KEY = "axla_negosyo_paid";
 
 interface FormSnapshot {
   businessName: string;
-  logoBase64: string | null;
-  color1: string;
-  color2: string;
   category: string;
   products: string[];
   mayUtang: boolean;
 }
 
+/** Splits on both newlines and commas — "Coke, Piattos, Yosi" on one line and one-per-line both work. */
 function parseProducts(text: string): string[] {
   return text
-    .split("\n")
+    .split(/[\n,]/)
     .map((line) => line.trim())
     .filter(Boolean)
     .slice(0, 20);
-}
-
-/** Downscales to at most 300x300 before base64-encoding — keeps the payload small for both the request body and the generated file. */
-function readLogoAsResizedBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Couldn't read file."));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error("Couldn't load image."));
-      img.onload = () => {
-        const maxDim = 300;
-        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-        const width = Math.round(img.width * scale);
-        const height = Math.round(img.height * scale);
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Canvas not supported."));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/png"));
-      };
-      img.src = reader.result as string;
-    };
-    reader.readAsDataURL(file);
-  });
 }
 
 function triggerBlobDownload(blob: Blob, filename: string) {
@@ -95,14 +62,10 @@ export function NegosyoCreateFlow() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   const [businessName, setBusinessName] = useState("");
-  const [logoBase64, setLogoBase64] = useState<string | null>(null);
-  const [color1, setColor1] = useState("#00FF88");
-  const [color2, setColor2] = useState("#0B0F1A");
-  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [category, setCategory] = useState(CATEGORY_KEYS[0]);
   const [productsText, setProductsText] = useState("");
   const [mayUtang, setMayUtang] = useState(true);
 
-  const [logoError, setLogoError] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
   const [cancelledNotice, setCancelledNotice] = useState(false);
@@ -112,14 +75,10 @@ export function NegosyoCreateFlow() {
   const [downloadedOk, setDownloadedOk] = useState(false);
   const [pendingCheckoutId, setPendingCheckoutId] = useState<string | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const restoredRef = useRef(false);
 
   const applySnapshot = useCallback((snapshot: FormSnapshot) => {
     setBusinessName(snapshot.businessName);
-    setLogoBase64(snapshot.logoBase64);
-    setColor1(snapshot.color1);
-    setColor2(snapshot.color2);
     setCategory(snapshot.category);
     setProductsText(snapshot.products.join("\n"));
     setMayUtang(snapshot.mayUtang);
@@ -198,42 +157,11 @@ export function NegosyoCreateFlow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setLogoError("Kailangan image file (PNG/JPG).");
-      return;
-    }
-    if (file.size > 8_000_000) {
-      setLogoError("Masyadong malaki ang file (max 8MB).");
-      return;
-    }
-    setLogoError(null);
-    try {
-      const resized = await readLogoAsResizedBase64(file);
-      setLogoBase64(resized);
-    } catch {
-      setLogoError("Hindi ma-process ang image. Try ulit.");
-    }
-  }
-
-  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file && fileInputRef.current) {
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      fileInputRef.current.files = dt.files;
-      handleLogoChange({ target: fileInputRef.current } as React.ChangeEvent<HTMLInputElement>);
-    }
-  }
-
   async function handlePayClick() {
     setPaying(true);
     setPayError(null);
     const products = parseProducts(productsText);
-    const snapshot: FormSnapshot = { businessName: businessName.trim(), logoBase64, color1, color2, category, products, mayUtang };
+    const snapshot: FormSnapshot = { businessName: businessName.trim(), category, products, mayUtang };
 
     try {
       const res = await fetch("/api/paymongo/create-negosyo-checkout", {
@@ -258,12 +186,13 @@ export function NegosyoCreateFlow() {
   const products = parseProducts(productsText);
   const canProceedStep1 = businessName.trim().length > 0;
   const canProceedStep2 = products.length > 0;
+  const sheetTabs = sheetTabsFor(category);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12 sm:px-6">
       {/* Progress bar */}
       <div className="mb-10 flex items-center justify-center gap-3">
-        {(["Branding", "Negosyo", "Preview"] as const).map((label, i) => {
+        {(["Business", "Negosyo", "Preview"] as const).map((label, i) => {
           const idx = (i + 1) as 1 | 2 | 3;
           const active = step === idx;
           const done = step > idx;
@@ -299,87 +228,8 @@ export function NegosyoCreateFlow() {
             />
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-sm font-semibold text-white">Logo (optional)</label>
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] px-4 py-8 text-center transition hover:border-[#00FF88]/50"
-            >
-              {logoBase64 ? (
-                <>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={logoBase64} alt="Logo preview" className="h-20 w-20 rounded-xl object-cover" />
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setLogoBase64(null);
-                    }}
-                    className="text-xs font-medium text-red-400 hover:text-red-300"
-                  >
-                    Alisin
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm text-slate-400">I-drag ang logo dito, o click para mag-browse</p>
-                  <p className="text-xs text-slate-600">PNG/JPG, max 8MB</p>
-                </>
-              )}
-              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
-            </div>
-            {logoError && <p className="mt-1.5 text-xs text-red-400">{logoError}</p>}
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-white">Kulay 1 (Primary)</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={color1}
-                  onChange={(e) => setColor1(e.target.value)}
-                  className="h-10 w-12 cursor-pointer rounded-lg border border-white/15 bg-transparent"
-                />
-                <div className="flex gap-1">
-                  {COLOR_PRESETS.map((p) => (
-                    <button
-                      key={p.hex}
-                      type="button"
-                      onClick={() => setColor1(p.hex)}
-                      title={p.name}
-                      style={{ backgroundColor: p.hex }}
-                      className="h-6 w-6 rounded-full border border-white/20"
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-semibold text-white">Kulay 2 (Secondary)</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="color"
-                  value={color2}
-                  onChange={(e) => setColor2(e.target.value)}
-                  className="h-10 w-12 cursor-pointer rounded-lg border border-white/15 bg-transparent"
-                />
-                <div className="flex gap-1">
-                  {COLOR_PRESETS.map((p) => (
-                    <button
-                      key={p.hex}
-                      type="button"
-                      onClick={() => setColor2(p.hex)}
-                      title={p.name}
-                      style={{ backgroundColor: p.hex }}
-                      className="h-6 w-6 rounded-full border border-white/20"
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-sm text-slate-400">
+            Fixed na ang branding — logo at kulay ng Negosyo Tracker PH mismo ang gagamitin, para consistent at professional-looking lagi ang tracker mo.
           </div>
 
           <button
@@ -401,7 +251,7 @@ export function NegosyoCreateFlow() {
               onChange={(e) => setCategory(e.target.value)}
               className="w-full rounded-xl border border-white/15 bg-[#11172A] px-4 py-3 text-white focus:border-[#00FF88] focus:outline-none"
             >
-              {CATEGORIES.map((c) => (
+              {CATEGORY_KEYS.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -414,11 +264,11 @@ export function NegosyoCreateFlow() {
             <textarea
               value={productsText}
               onChange={(e) => setProductsText(e.target.value)}
-              placeholder={"Hal: Coke, Piattos, Yosi - 1 per line"}
+              placeholder={"Hal: Coke, Piattos, Yosi - 1 per line o comma-separated"}
               rows={6}
               className="w-full rounded-xl border border-white/15 bg-white/[0.03] px-4 py-3 text-white placeholder:text-slate-500 focus:border-[#00FF88] focus:outline-none"
             />
-            <p className="mt-1 text-xs text-slate-500">{products.length} produkto ({productsText.split("\n").filter((l) => l.trim()).length > 20 ? "max 20 lang gagamitin" : "1 per line"})</p>
+            <p className="mt-1 text-xs text-slate-500">{products.length} produkto (1 per line o comma-separated, max 20)</p>
           </div>
 
           <div>
@@ -477,7 +327,7 @@ export function NegosyoCreateFlow() {
               <h2 className="text-xl font-bold text-white">Downloaded! I-download ulit anytime</h2>
               <p className="text-sm text-slate-400">Naka-save na ang tracker mo — click ulit sa button sa ibaba kung kailangan mo ulit i-download.</p>
               <button
-                onClick={() => pendingCheckoutId && verifyAndDownload(pendingCheckoutId, { businessName, logoBase64, color1, color2, category, products, mayUtang })}
+                onClick={() => pendingCheckoutId && verifyAndDownload(pendingCheckoutId, { businessName, category, products, mayUtang })}
                 disabled={verifying}
                 className="w-full rounded-full bg-[#00FF88] px-6 py-3 text-sm font-semibold text-black transition hover:bg-[#22C55E] disabled:opacity-50"
               >
@@ -505,17 +355,8 @@ export function NegosyoCreateFlow() {
                 </div>
 
                 <div className="relative flex items-center gap-3">
-                  {logoBase64 ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={logoBase64} alt="Logo" className="h-12 w-12 rounded-xl object-cover" />
-                  ) : (
-                    <div
-                      className="flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold"
-                      style={{ backgroundColor: color1, color: color2 }}
-                    >
-                      {businessName.slice(0, 1).toUpperCase() || "N"}
-                    </div>
-                  )}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/negosyo-tracker-logo.png" alt="Negosyo Tracker PH" className="h-12 w-12 rounded-xl object-cover" />
                   <div>
                     <h3 className="font-bold text-white">{businessName || "Aking Negosyo"}</h3>
                     <p className="text-xs text-slate-400">{category}</p>
@@ -529,11 +370,10 @@ export function NegosyoCreateFlow() {
                 <p className="relative mt-1 text-sm text-slate-400">Utang tracking: {mayUtang ? "Oo" : "Hindi"}</p>
 
                 <div className="relative mt-4 flex flex-wrap gap-1.5">
-                  {SHEET_TABS.map((tab) => (
+                  {sheetTabs.map((tab) => (
                     <span
                       key={tab}
-                      className="rounded-t-md border border-b-0 border-white/10 px-2.5 py-1 text-[11px] font-medium text-slate-400"
-                      style={{ borderTopColor: color1, borderTopWidth: 2 }}
+                      className="rounded-t-md border border-b-0 border-t-2 border-[#00FF88] border-white/10 px-2.5 py-1 text-[11px] font-medium text-slate-400"
                     >
                       {tab}
                     </span>
@@ -562,7 +402,7 @@ export function NegosyoCreateFlow() {
 
               {pendingCheckoutId && verifyError && (
                 <button
-                  onClick={() => verifyAndDownload(pendingCheckoutId, { businessName, logoBase64, color1, color2, category, products, mayUtang })}
+                  onClick={() => verifyAndDownload(pendingCheckoutId, { businessName, category, products, mayUtang })}
                   disabled={verifying}
                   className="w-full rounded-full border border-[#00FF88]/40 px-6 py-3 text-sm font-semibold text-[#00FF88] transition hover:bg-[#00FF88]/10 disabled:opacity-50"
                 >
