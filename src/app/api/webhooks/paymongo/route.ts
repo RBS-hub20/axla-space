@@ -105,172 +105,191 @@ function extractPaymentDetails(resource: Record<string, unknown> | undefined): E
   };
 }
 
+/**
+ * PayMongo disables a webhook endpoint after enough non-2xx responses — so
+ * this handler ALWAYS returns 200, no matter what happens internally
+ * (bad signature, bad JSON, DB errors, email failures, or anything
+ * unexpected thrown). A non-2xx here doesn't protect anything: the only
+ * consequence is PayMongo retrying, then disabling the endpoint entirely,
+ * which silently breaks every future real payment. Errors are still logged
+ * (via logError, visible in Vercel logs) so problems remain diagnosable —
+ * they just never surface as an HTTP failure status back to PayMongo.
+ */
 export async function POST(req: Request) {
-  const rawBody = await req.text();
-
-  // Not configured — ack without processing so PayMongo never retries forever
-  // against an environment that was never meant to receive its webhooks.
-  if (!PAYMONGO_SECRET_KEY) {
-    console.error("webhooks/paymongo: PAYMONGO_SECRET_KEY not set — ignoring call");
-    return NextResponse.json({ received: true, configured: false });
-  }
-
-  const signatureHeader = req.headers.get("paymongo-signature");
-  const signatureValid = verifyPaymongoSignature(rawBody, signatureHeader);
-  console.log(
-    `webhooks/paymongo: call received — webhookSecretConfigured=${Boolean(PAYMONGO_WEBHOOK_SECRET)} signatureHeaderPresent=${Boolean(signatureHeader)} signatureValid=${signatureValid}`,
-  );
-
-  if (!signatureValid) {
-    logError(
-      "webhooks/paymongo: signature verification failed",
-      new Error(`header=${signatureHeader ?? "(none)"} webhookSecretConfigured=${Boolean(PAYMONGO_WEBHOOK_SECRET)}`),
-    );
-    return NextResponse.json({ error: "Invalid signature." }, { status: 401 });
-  }
-
-  let event: Record<string, unknown>;
   try {
-    event = JSON.parse(rawBody);
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
-  }
+    const rawBody = await req.text();
 
-  // Full payload, always — this is the ground truth for what PayMongo
-  // actually sends (the real shape of link.payment.paid vs payment.paid
-  // differs enough between docs and reality that this is worth keeping
-  // permanently, not just while debugging this incident).
-  console.log("webhooks/paymongo: payload", rawBody);
+    // Not configured — ack without processing so PayMongo never retries forever
+    // against an environment that was never meant to receive its webhooks.
+    if (!PAYMONGO_SECRET_KEY) {
+      console.error("webhooks/paymongo: PAYMONGO_SECRET_KEY not set — ignoring call");
+      return NextResponse.json({ received: true, configured: false });
+    }
 
-  const attributes = (event?.data as Record<string, unknown>)?.attributes as Record<string, unknown> | undefined;
-  const eventType = attributes?.type as string | undefined;
-  const resource = attributes?.data as Record<string, unknown> | undefined;
+    const signatureHeader = req.headers.get("paymongo-signature");
+    const signatureValid = verifyPaymongoSignature(rawBody, signatureHeader);
+    console.log(
+      `webhooks/paymongo: call received — webhookSecretConfigured=${Boolean(PAYMONGO_WEBHOOK_SECRET)} signatureHeaderPresent=${Boolean(signatureHeader)} signatureValid=${signatureValid}`,
+    );
 
-  console.log(`webhooks/paymongo: eventType=${eventType ?? "(none)"}`);
+    if (!signatureValid) {
+      logError(
+        "webhooks/paymongo: signature verification failed",
+        new Error(`header=${signatureHeader ?? "(none)"} webhookSecretConfigured=${Boolean(PAYMONGO_WEBHOOK_SECRET)}`),
+      );
+      return NextResponse.json({ received: true });
+    }
 
-  // checkout_session.payment.paid added alongside payment./link.payment. for
-  // the BIR Forms PRO paywall's Checkout Sessions flow (src/app/api/billing/
-  // checkout) — same envelope shape (data.attributes.type / .data), and the
-  // Checkout Session resource carries the same `payments` array + `billing`
-  // object extractPaymentDetails() below already handles generically. Not
-  // independently confirmed against a real payload yet (PayMongo doesn't
-  // publish the full nested shape) — the raw-payload log two lines down is
-  // there specifically so the first real checkout_session event can be
-  // checked in Vercel logs and this adjusted if the shape differs.
-  if (
-    !eventType ||
-    (!eventType.startsWith("payment.") && !eventType.startsWith("link.payment.") && !eventType.startsWith("checkout_session."))
-  ) {
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(rawBody);
+    } catch (err) {
+      logError("webhooks/paymongo: invalid JSON payload", err);
+      return NextResponse.json({ received: true });
+    }
+
+    // Full payload, always — this is the ground truth for what PayMongo
+    // actually sends (the real shape of link.payment.paid vs payment.paid
+    // differs enough between docs and reality that this is worth keeping
+    // permanently, not just while debugging this incident).
+    console.log("webhooks/paymongo: payload", rawBody);
+
+    const attributes = (event?.data as Record<string, unknown>)?.attributes as Record<string, unknown> | undefined;
+    const eventType = attributes?.type as string | undefined;
+    const resource = attributes?.data as Record<string, unknown> | undefined;
+
+    console.log(`webhooks/paymongo: eventType=${eventType ?? "(none)"}`);
+
+    // checkout_session.payment.paid added alongside payment./link.payment. for
+    // the BIR Forms PRO paywall's Checkout Sessions flow (src/app/api/billing/
+    // checkout) — same envelope shape (data.attributes.type / .data), and the
+    // Checkout Session resource carries the same `payments` array + `billing`
+    // object extractPaymentDetails() below already handles generically. Not
+    // independently confirmed against a real payload yet (PayMongo doesn't
+    // publish the full nested shape) — the raw-payload log two lines down is
+    // there specifically so the first real checkout_session event can be
+    // checked in Vercel logs and this adjusted if the shape differs.
+    if (
+      !eventType ||
+      (!eventType.startsWith("payment.") && !eventType.startsWith("link.payment.") && !eventType.startsWith("checkout_session."))
+    ) {
+      return NextResponse.json({ received: true });
+    }
+
+    const details = extractPaymentDetails(resource);
+    const isPaid =
+      eventType === "payment.paid" ||
+      eventType === "link.payment.paid" ||
+      eventType === "checkout_session.payment.paid" ||
+      details.status === "paid";
+    const amount = Math.round(details.amountCentavos / 100);
+    const plan = derivePlan(details.description);
+
+    console.log(
+      `webhooks/paymongo: parsed paymentId=${details.paymentId ?? "(none)"} email=${details.email ?? "(none)"} amount=${amount} plan=${plan} method=${details.method} isPaid=${isPaid}`,
+    );
+
+    if (!isSupabaseAdminConfigured) {
+      console.error("webhooks/paymongo: Supabase not configured — not stored");
+      return NextResponse.json({ received: true, stored: false });
+    }
+    if (!details.email) {
+      logError("webhooks/paymongo: no email found in payload, cannot record payment", new Error(rawBody));
+      return NextResponse.json({ received: true, stored: false });
+    }
+
+    // Normalized once, used everywhere below — usage.ts's getActivePaidPlan()
+    // (the single source of truth every paywall/upgrade-check in the app
+    // reads) always queries subscriptions by lowercased email, so storing
+    // anything but lowercase here would silently strand a real paid
+    // subscription that never matches on lookup.
+    const email = details.email.trim().toLowerCase();
+
+    try {
+      const { error: insertError } = await supabaseAdmin.from("payments").insert({
+        email,
+        amount,
+        currency: "PHP",
+        status: isPaid ? "paid" : "failed",
+        provider: "paymongo",
+        provider_payment_id: details.paymentId,
+        payment_method: details.method,
+        plan,
+      });
+      if (insertError) logError("webhooks/paymongo: payments insert failed", insertError);
+
+      if (isPaid) {
+        const now = new Date();
+        const periodEnd = new Date(now);
+        periodEnd.setMonth(periodEnd.getMonth() + 1);
+
+        const { error: subError } = await supabaseAdmin.from("subscriptions").upsert(
+          {
+            email,
+            plan,
+            status: "active",
+            amount,
+            provider: "paymongo",
+            billing_cycle: "monthly",
+            current_period_start: now.toISOString(),
+            current_period_end: periodEnd.toISOString(),
+          },
+          { onConflict: "email" },
+        );
+        if (subError) logError("webhooks/paymongo: subscriptions upsert failed", subError);
+        else {
+          console.log(`webhooks/paymongo: subscriptions upserted — email=${email} plan=${plan} amount=${amount}`);
+          // Jarvis has no cache/memory to refresh — gatherStats() in
+          // src/app/api/admin/jarvis/route.ts queries subscriptions/payments
+          // live on every request, so this log is purely for visibility into
+          // when a new PRO subscription landed, not a trigger Jarvis depends on.
+          console.log(`New PRO: ${email}`);
+        }
+
+        // Both sends below are best-effort — a failed send should never
+        // affect the actual subscription activation above, which has
+        // already happened, and one send failing shouldn't block the other.
+        if (isResendConfigured) {
+          const receipt = { transactionId: details.paymentId, amount, date: now };
+
+          try {
+            const { data: profile } = await supabaseAdmin.from("profiles").select("full_name").eq("email", email).maybeSingle();
+            const { error: sendError } = await resend.emails.send({
+              from: RESEND_FROM_EMAIL,
+              to: email,
+              subject: "Welcome to Axla PRO! 🚀",
+              html: proUpgradeEmailTemplate(profile?.full_name || email.split("@")[0], plan as "pro" | "business", receipt),
+            });
+            if (sendError) logError("webhooks/paymongo: pro-upgrade email send failed (non-fatal)", sendError);
+            else console.log(`webhooks/paymongo: pro-upgrade receipt email sent to ${email}`);
+          } catch (err) {
+            logError("webhooks/paymongo: pro-upgrade email send threw (non-fatal)", err);
+          }
+
+          try {
+            const { error: adminSendError } = await resend.emails.send({
+              from: RESEND_FROM_EMAIL,
+              to: ADMIN_EMAIL,
+              subject: `New ${plan === "business" ? "Business" : "PRO"} purchase: ${email} — ₱${amount.toLocaleString()}`,
+              html: adminNewProNotificationTemplate(email, plan as "pro" | "business", amount, details.paymentId),
+            });
+            if (adminSendError) logError("webhooks/paymongo: admin notification email send failed (non-fatal)", adminSendError);
+            else console.log(`webhooks/paymongo: admin notification email sent for ${email}`);
+          } catch (err) {
+            logError("webhooks/paymongo: admin notification email send threw (non-fatal)", err);
+          }
+        }
+      }
+    } catch (err) {
+      logError("webhooks/paymongo: DB write threw", err);
+    }
+
+    return NextResponse.json({ received: true });
+  } catch (err) {
+    // Last-resort catch-all — nothing above should throw uncaught, but if it
+    // ever does, PayMongo still gets a 200 rather than a 500 that could get
+    // this endpoint disabled.
+    logError("webhooks/paymongo: unexpected top-level error", err);
     return NextResponse.json({ received: true });
   }
-
-  const details = extractPaymentDetails(resource);
-  const isPaid =
-    eventType === "payment.paid" ||
-    eventType === "link.payment.paid" ||
-    eventType === "checkout_session.payment.paid" ||
-    details.status === "paid";
-  const amount = Math.round(details.amountCentavos / 100);
-  const plan = derivePlan(details.description);
-
-  console.log(
-    `webhooks/paymongo: parsed paymentId=${details.paymentId ?? "(none)"} email=${details.email ?? "(none)"} amount=${amount} plan=${plan} method=${details.method} isPaid=${isPaid}`,
-  );
-
-  if (!isSupabaseAdminConfigured) {
-    console.error("webhooks/paymongo: Supabase not configured — not stored");
-    return NextResponse.json({ received: true, stored: false });
-  }
-  if (!details.email) {
-    logError("webhooks/paymongo: no email found in payload, cannot record payment", new Error(rawBody));
-    return NextResponse.json({ received: true, stored: false });
-  }
-
-  // Normalized once, used everywhere below — usage.ts's getActivePaidPlan()
-  // (the single source of truth every paywall/upgrade-check in the app
-  // reads) always queries subscriptions by lowercased email, so storing
-  // anything but lowercase here would silently strand a real paid
-  // subscription that never matches on lookup.
-  const email = details.email.trim().toLowerCase();
-
-  try {
-    const { error: insertError } = await supabaseAdmin.from("payments").insert({
-      email,
-      amount,
-      currency: "PHP",
-      status: isPaid ? "paid" : "failed",
-      provider: "paymongo",
-      provider_payment_id: details.paymentId,
-      payment_method: details.method,
-      plan,
-    });
-    if (insertError) logError("webhooks/paymongo: payments insert failed", insertError);
-
-    if (isPaid) {
-      const now = new Date();
-      const periodEnd = new Date(now);
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-
-      const { error: subError } = await supabaseAdmin.from("subscriptions").upsert(
-        {
-          email,
-          plan,
-          status: "active",
-          amount,
-          provider: "paymongo",
-          billing_cycle: "monthly",
-          current_period_start: now.toISOString(),
-          current_period_end: periodEnd.toISOString(),
-        },
-        { onConflict: "email" },
-      );
-      if (subError) logError("webhooks/paymongo: subscriptions upsert failed", subError);
-      else {
-        console.log(`webhooks/paymongo: subscriptions upserted — email=${email} plan=${plan} amount=${amount}`);
-        // Jarvis has no cache/memory to refresh — gatherStats() in
-        // src/app/api/admin/jarvis/route.ts queries subscriptions/payments
-        // live on every request, so this log is purely for visibility into
-        // when a new PRO subscription landed, not a trigger Jarvis depends on.
-        console.log(`New PRO: ${email}`);
-      }
-
-      // Both sends below are best-effort — a failed send should never
-      // affect the actual subscription activation above, which has
-      // already happened, and one send failing shouldn't block the other.
-      if (isResendConfigured) {
-        const receipt = { transactionId: details.paymentId, amount, date: now };
-
-        try {
-          const { data: profile } = await supabaseAdmin.from("profiles").select("full_name").eq("email", email).maybeSingle();
-          const { error: sendError } = await resend.emails.send({
-            from: RESEND_FROM_EMAIL,
-            to: email,
-            subject: "Welcome to Axla PRO! 🚀",
-            html: proUpgradeEmailTemplate(profile?.full_name || email.split("@")[0], plan as "pro" | "business", receipt),
-          });
-          if (sendError) logError("webhooks/paymongo: pro-upgrade email send failed (non-fatal)", sendError);
-          else console.log(`webhooks/paymongo: pro-upgrade receipt email sent to ${email}`);
-        } catch (err) {
-          logError("webhooks/paymongo: pro-upgrade email send threw (non-fatal)", err);
-        }
-
-        try {
-          const { error: adminSendError } = await resend.emails.send({
-            from: RESEND_FROM_EMAIL,
-            to: ADMIN_EMAIL,
-            subject: `New ${plan === "business" ? "Business" : "PRO"} purchase: ${email} — ₱${amount.toLocaleString()}`,
-            html: adminNewProNotificationTemplate(email, plan as "pro" | "business", amount, details.paymentId),
-          });
-          if (adminSendError) logError("webhooks/paymongo: admin notification email send failed (non-fatal)", adminSendError);
-          else console.log(`webhooks/paymongo: admin notification email sent for ${email}`);
-        } catch (err) {
-          logError("webhooks/paymongo: admin notification email send threw (non-fatal)", err);
-        }
-      }
-    }
-  } catch (err) {
-    logError("webhooks/paymongo: DB write threw", err);
-  }
-
-  return NextResponse.json({ received: true });
 }
