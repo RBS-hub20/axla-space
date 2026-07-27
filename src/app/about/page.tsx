@@ -9,12 +9,11 @@ export const metadata = {
 
 const PRODUCTS = [
   { name: "TaxLaya", tagline: "BIR Tax Agent", status: "live" as const },
+  { name: "Negosyo Tracker", tagline: "Sales, Tubo & Inventory Agent", status: "live" as const },
   { name: "Payroll", tagline: "Payroll & compliance agent", status: "soon" as const },
+  { name: "POS", tagline: "Point of sale agent", status: "soon" as const },
   { name: "CRM", tagline: "Customer relationships agent", status: "soon" as const },
   { name: "HR", tagline: "People operations agent", status: "soon" as const },
-  { name: "POS", tagline: "Point of sale agent", status: "soon" as const },
-  { name: "Books", tagline: "Bookkeeping agent", status: "soon" as const },
-  { name: "AI Agents", tagline: "Custom automation", status: "soon" as const },
 ];
 
 export default function AboutPage() {
