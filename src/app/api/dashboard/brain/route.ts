@@ -168,7 +168,7 @@ export async function POST(req: Request) {
   // deterministic report over real rows has nothing for a model to add
   // except a chance of getting a date or number wrong.
   if (isSummaryCommand(message)) {
-    const summaryReply = buildKitSummaryReply(profile?.full_name, allRegistrations, recentFilings, receiptsCount, receiptsTotal);
+    const summaryReply = buildKitSummaryReply(allRegistrations, recentFilings, receiptsCount, receiptsTotal);
 
     const { error: insertError } = await supabaseAdmin.from("taxlaya_chats").insert([
       { user_id: user.id, role: "user", content: message },
