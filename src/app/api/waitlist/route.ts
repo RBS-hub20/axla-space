@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { resend, isResendConfigured, RESEND_FROM_EMAIL } from "@/lib/resend";
 import { waitlistWelcomeEmailTemplate } from "@/lib/email-templates";
 import { logError } from "@/lib/log-error";
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (!isSupabaseConfigured) {
+  if (!isSupabaseAdminConfigured) {
     return NextResponse.json(
       { error: "Waitlist isn't configured yet. Please try again later." },
       { status: 503 },
@@ -38,8 +38,13 @@ export async function POST(request: Request) {
   }
 
   // Upsert on email: re-submitting (e.g. to change your hassle level) updates
-  // the existing row instead of erroring on the unique constraint.
-  const { error } = await supabase
+  // the existing row instead of erroring on the unique constraint. Uses
+  // service_role (this is a server-side route, never called directly from
+  // the browser) rather than the public anon key — the anon key has no
+  // access to this table at all now (see the RLS fix), since ON CONFLICT DO
+  // UPDATE requires an accompanying SELECT policy to detect the conflict,
+  // which would have reopened public read access to the whole table.
+  const { error } = await supabaseAdmin
     .from("waitlist")
     .upsert({ email, bir_hate_level: birHateLevel }, { onConflict: "email" });
 
