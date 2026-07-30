@@ -157,6 +157,24 @@ export function NegosyoCreateFlow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** Escape hatch out of the persisted "already downloaded" state — clears both localStorage keys and resets every field back to a fresh Step 1. */
+  function resetForNewTracker() {
+    localStorage.removeItem(PENDING_KEY);
+    localStorage.removeItem(PAID_KEY);
+    setBusinessName("");
+    setCategory(CATEGORY_KEYS[0]);
+    setProductsText("");
+    setMayUtang(true);
+    setPaying(false);
+    setPayError(null);
+    setCancelledNotice(false);
+    setVerifying(false);
+    setVerifyError(null);
+    setDownloadedOk(false);
+    setPendingCheckoutId(null);
+    setStep(1);
+  }
+
   async function handlePayClick() {
     setPaying(true);
     setPayError(null);
@@ -322,7 +340,16 @@ export function NegosyoCreateFlow() {
           )}
 
           {downloadedOk ? (
-            <div className="space-y-5 rounded-2xl border border-[#00FF88]/30 bg-[#00FF88]/[0.06] p-6 text-center">
+            <div className="relative space-y-5 rounded-2xl border border-[#00FF88]/30 bg-[#00FF88]/[0.06] p-6 text-center">
+              <button
+                type="button"
+                onClick={resetForNewTracker}
+                aria-label="Isara"
+                title="Isara"
+                className="absolute right-4 top-4 flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-white/10 hover:text-white"
+              >
+                ✕
+              </button>
               <p className="text-2xl">✅</p>
               <h2 className="text-xl font-bold text-white">Downloaded! I-download ulit anytime</h2>
               <p className="text-sm text-slate-400">Naka-save na ang tracker mo — click ulit sa button sa ibaba kung kailangan mo ulit i-download.</p>
@@ -332,6 +359,13 @@ export function NegosyoCreateFlow() {
                 className="w-full rounded-full bg-[#00FF88] px-6 py-3 text-sm font-semibold text-black transition hover:bg-[#22C55E] disabled:opacity-50"
               >
                 {verifying ? "Downloading..." : "I-download ulit"}
+              </button>
+              <button
+                type="button"
+                onClick={resetForNewTracker}
+                className="w-full rounded-full border border-white/15 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/5"
+              >
+                Gumawa ng Bagong Tracker →
               </button>
               <div className="border-t border-white/10 pt-4">
                 <p className="text-sm text-slate-400">
