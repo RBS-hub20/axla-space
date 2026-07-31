@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
+import { HowItWorksVideoButton } from "@/components/negosyo/HowItWorksVideoButton";
 
 export const metadata = {
   title: "Negosyo Tracker — Sales, Tubo & Inventory Agent | Axla",
@@ -61,12 +62,7 @@ export default function NegosyoTrackerPage() {
               >
                 Gumawa ng Tracker — Libre mag browse
               </Link>
-              <a
-                href="#paano"
-                className="w-full rounded-full border border-white/15 px-7 py-3.5 text-center text-base font-medium text-white transition hover:bg-white/5 sm:w-auto"
-              >
-                Paano gumagana?
-              </a>
+              <HowItWorksVideoButton />
             </div>
           </div>
 
@@ -97,6 +93,55 @@ export default function NegosyoTrackerPage() {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Video demo */}
+      <section className="border-y border-white/5 bg-[#0a0a0a] py-16">
+        <div className="mx-auto max-w-5xl px-6 text-center">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-green-500/20 bg-green-500/10 px-4 py-1.5">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-green-400" />
+            <span className="text-sm font-medium text-green-400">WATCH 90-SEC DEMO</span>
+          </div>
+          <h2 className="mb-3 text-3xl font-bold text-white md:text-4xl">Mula Business Name Hanggang Tubo - 90 Seconds Lang</h2>
+          <p className="mb-8 text-white/60">Hindi mo na kailangan mag-type ng formula. Panoorin mo.</p>
+
+          <div className="relative overflow-hidden rounded-2xl border border-green-500/20 bg-black shadow-[0_0_50px_rgba(34,197,94,0.15)]">
+            <div className="aspect-video">
+              <iframe
+                src="https://www.youtube.com/embed/V5hq4WBRpto?rel=0&modestbranding=1"
+                className="h-full w-full"
+                title="Negosyo Tracker demo"
+                allow="autoplay; encrypted-media"
+                allowFullScreen
+              />
+            </div>
+          </div>
+
+          <div className="mx-auto mt-8 grid max-w-2xl grid-cols-3 gap-4">
+            <div className="text-center">
+              <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10">1️⃣</div>
+              <p className="text-sm font-medium text-white">Pili Negosyo</p>
+              <p className="text-xs text-white/50">16 categories</p>
+            </div>
+            <div className="text-center">
+              <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10">2️⃣</div>
+              <p className="text-sm font-medium text-white">Lagay Details</p>
+              <p className="text-xs text-white/50">Business name + paninda</p>
+            </div>
+            <div className="text-center">
+              <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10">3️⃣</div>
+              <p className="text-sm font-medium text-white">Download Agad</p>
+              <p className="text-xs text-white/50">Excel + Dashboard</p>
+            </div>
+          </div>
+
+          <Link
+            href="/negosyo-tracker/create"
+            className="mt-8 inline-block rounded-full bg-[#22c55e] px-8 py-4 text-lg font-bold text-black transition hover:bg-[#16a34a]"
+          >
+            Gumawa ng Tracker Ko — Libre mag browse →
+          </Link>
         </div>
       </section>
 
