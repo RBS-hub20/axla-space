@@ -228,6 +228,12 @@ function buildInvoice(workbook: ExcelJS.Workbook, logoImageId: number | null) {
   ws.views = [{ showGridLines: false }];
   ws.columns = [{ width: 3 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }];
   embedLogo(ws, logoImageId);
+  // Same fix as writeHeaderBar() — this sheet builds its own title block
+  // (row 2, not row 1) rather than going through that shared helper, but
+  // the logo is still anchored at row 1/col A, so row 1 needs the same
+  // widened column + taller height or the logo spills into this title.
+  ws.getColumn(1).width = 11;
+  ws.getRow(1).height = 62;
 
   ws.mergeCells("B2:G2");
   const titleCell = ws.getCell("B2");
@@ -287,6 +293,8 @@ function buildSOA(workbook: ExcelJS.Workbook, logoImageId: number | null) {
   ws.views = [{ showGridLines: false }];
   ws.columns = [{ width: 3 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }];
   embedLogo(ws, logoImageId);
+  ws.getColumn(1).width = 11;
+  ws.getRow(1).height = 62;
 
   ws.mergeCells("B2:G2");
   const titleCell = ws.getCell("B2");
@@ -456,6 +464,8 @@ function buildContract(workbook: ExcelJS.Workbook, logoImageId: number | null) {
   ws.views = [{ showGridLines: false }];
   ws.columns = [{ width: 3 }, { width: 30 }, { width: 55 }];
   embedLogo(ws, logoImageId);
+  ws.getColumn(1).width = 11;
+  ws.getRow(1).height = 62;
 
   ws.mergeCells("B2:C2");
   const titleCell = ws.getCell("B2");

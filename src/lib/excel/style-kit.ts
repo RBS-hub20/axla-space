@@ -82,10 +82,24 @@ export function registerLogo(workbook: ExcelJS.Workbook): number | null {
   return workbook.addImage({ base64, extension: "png" });
 }
 
-/** Column A on every sheet is reserved for the logo (real files: width ~20-30, image anchored A1:B5-ish). */
+/** Fixed pixel size for the logo embedded via embedLogo() — writeHeaderBar() sizes column A / row 1 around this exact value, so keep them in sync if this ever changes. */
+export const LOGO_SIZE_PX = 68;
+
+/**
+ * Column A on every sheet is reserved for the logo. Anchored as a fixed
+ * 68x68px floating image at A1 — exceljs's one-cell anchor doesn't resize
+ * with the cell, so the CONTAINER (column A's width, row 1's height) has to
+ * be sized to comfortably fit this exact pixel size or the image spills
+ * over into the title text in column B / the tagline in row 2. That sizing
+ * lives in writeHeaderBar() below, not here, since embedLogo() is always
+ * called before writeHeaderBar() in every sheet-building function — if the
+ * row/column sizing were set here instead, writeHeaderBar()'s own
+ * (previously unconditional) row-1-height write would immediately
+ * overwrite it back down.
+ */
 export function embedLogo(ws: ExcelJS.Worksheet, logoImageId: number | null) {
   if (logoImageId === null) return;
-  ws.addImage(logoImageId, { tl: { col: 0, row: 0 }, ext: { width: 68, height: 68 } });
+  ws.addImage(logoImageId, { tl: { col: 0, row: 0 }, ext: { width: LOGO_SIZE_PX, height: LOGO_SIZE_PX } });
 }
 
 export interface HeaderBarOptions {
@@ -102,13 +116,24 @@ export function writeHeaderBar(opts: HeaderBarOptions) {
   const { ws, lastCol, titleText, taglineText, titleFill = PALETTE.navyDark, titleSize = 18 } = opts;
   const lastColLetter = ws.getColumn(lastCol).letter;
 
+  // Column A width in Excel's character-width units converts to pixels as
+  // roughly (width*7)+5, and row height in points converts to pixels as
+  // roughly height*1.333 — 11 and 62 both land comfortably above
+  // LOGO_SIZE_PX (68px), leaving ~14px of real margin on the right/bottom
+  // of the logo rather than the previous width=4/height=26 (~33x35px),
+  // which was smaller than the logo itself and caused it to spill over the
+  // title text. This must be set here, not in embedLogo(), since embedLogo()
+  // always runs first and this line used to unconditionally reset row 1
+  // back down to 26 afterward regardless of what embedLogo() had done.
+  ws.getColumn(1).width = 11;
+  ws.getRow(1).height = 62;
+
   ws.mergeCells(`B1:${lastColLetter}1`);
   const titleCell = ws.getCell("B1");
   titleCell.value = titleText;
   titleCell.font = { name: FONT_NAME, size: titleSize, bold: true, color: { argb: argb("FFFFFF") } };
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: argb(titleFill) } };
   titleCell.alignment = { vertical: "middle" };
-  ws.getRow(1).height = 26;
 
   ws.mergeCells(`B2:${lastColLetter}2`);
   const taglineCell = ws.getCell("B2");

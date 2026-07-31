@@ -86,11 +86,14 @@ function buildDashboard(workbook: ExcelJS.Workbook, logoImageId: number | null, 
     if (isMoney) valueCell.numFmt = '"₱"#,##0.00';
   };
 
-  const lastSalesRow = 3 + MAX_ROWS * 4;
   kpi(9, "B", "Today's Sales", PALETTE.green, `SUMIFS('6. Sales'!H:H,'6. Sales'!E:E,$F$4)`, true);
   kpi(9, "D", "Monthly Sales", PALETTE.blue, `SUMIFS('6. Sales'!H:H,'6. Sales'!E:E,">="&DATE(YEAR($F$4),MONTH($F$4),1),'6. Sales'!E:E,"<"&EDATE(DATE(YEAR($F$4),MONTH($F$4),1),1))`, true);
   kpi(9, "F", "Customers Today", PALETTE.blueLight, `COUNTIFS('6. Sales'!E:E,$F$4)`);
-  kpi(9, "H", "Active Barbers", PALETTE.teal, `COUNTA('7. Payroll'!B4:B${3 + MAX_ROWS / 6})-COUNTBLANK('7. Payroll'!B4:B${3 + MAX_ROWS / 6})`);
+  // Payroll's data rows run 7..(7 + MAX_ROWS/10 - 1) = 7..26 (header row is
+  // 6) — this used to read a fractional "3 + MAX_ROWS/6" (36.33), which
+  // isn't a valid Excel row reference and would error when the file opens.
+  const payrollLastRow = 6 + MAX_ROWS / 10;
+  kpi(9, "H", "Active Barbers", PALETTE.teal, `COUNTA('7. Payroll'!B7:B${payrollLastRow})-COUNTBLANK('7. Payroll'!B7:B${payrollLastRow})`);
   kpi(10, "B", "Occupied Chairs", PALETTE.gold, `'5. Chairs'!B5`);
   kpi(10, "D", "Available Chairs", PALETTE.greenDark, `'5. Chairs'!B6`);
   kpi(10, "F", "Expenses (Month)", PALETTE.gold, `'11. Expenses'!G4`, true);
