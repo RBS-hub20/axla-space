@@ -181,6 +181,39 @@ export default function NegosyoTrackerPage() {
         </div>
       </section>
 
+      {/* Customization Upsell */}
+      <section className="border-t border-white/10 py-16 sm:py-20">
+        <div className="mx-auto max-w-2xl px-4 text-center sm:px-6">
+          <span className="inline-flex items-center gap-2 rounded-full bg-[#052E1F] px-3 py-1 text-xs font-bold uppercase tracking-wide text-[#00FF88]">
+            For Customization
+          </span>
+          <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-8 shadow-[0_0_60px_rgba(0,255,136,0.12)] backdrop-blur sm:p-10">
+            <h2 className="text-2xl font-extrabold leading-tight text-white sm:text-3xl">
+              Need Something More Advanced? Let&apos;s Customize
+            </h2>
+            <p className="mx-auto mt-4 max-w-xl text-slate-400">
+              Need payroll for staff? Multiple branches? Barcode scanning? Auto BIR computation? We will build the tracker based on your exact business needs.
+            </p>
+
+            <div className="mt-6 flex items-center justify-center gap-2">
+              <span className="text-sm text-slate-400">Starts at</span>
+              <span className="text-3xl font-extrabold text-[#00FF88]">₱1,499</span>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">Negotiable based on requirements</p>
+
+            <a
+              href="https://m.me/RSCryptoFX"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-8 inline-block w-full rounded-full bg-[#00FF88] px-7 py-3.5 text-center text-base font-semibold text-black shadow-lg shadow-[#00FF88]/25 transition hover:bg-[#22C55E] sm:w-auto"
+            >
+              Chat on Messenger
+            </a>
+            <p className="mt-3 text-xs text-slate-500">Reply within 2 hours • Let&apos;s talk</p>
+          </div>
+        </div>
+      </section>
+
       {/* Pricing */}
       <section className="border-t border-white/10 py-16 sm:py-20">
         <div className="mx-auto max-w-md px-4 sm:px-6">
