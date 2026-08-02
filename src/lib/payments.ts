@@ -206,6 +206,10 @@ export interface CheckoutSessionStatus {
   paid: boolean;
   paymentId: string | null;
   paymentMethod: string | null;
+  /** The checkout session's own line_items[0].description, as set at creation time (see createPayMongoOneTimeCheckout) — PayMongo's own server-side record of what was actually sold, not anything the client can influence at confirm time. */
+  description: string | null;
+  /** Line items total, in whole pesos (not centavos). */
+  amountPesos: number;
   error?: string;
 }
 
@@ -221,7 +225,7 @@ export interface CheckoutSessionStatus {
  */
 export async function getPayMongoCheckoutSessionStatus(checkoutSessionId: string): Promise<CheckoutSessionStatus> {
   if (!PAYMONGO_SECRET_KEY) {
-    return { paid: false, paymentId: null, paymentMethod: null, error: "PayMongo is not configured." };
+    return { paid: false, paymentId: null, paymentMethod: null, description: null, amountPesos: 0, error: "PayMongo is not configured." };
   }
 
   try {
@@ -230,7 +234,14 @@ export async function getPayMongoCheckoutSessionStatus(checkoutSessionId: string
     });
     const json = await res.json();
     if (!res.ok) {
-      return { paid: false, paymentId: null, paymentMethod: null, error: json?.errors?.[0]?.detail || "PayMongo request failed." };
+      return {
+        paid: false,
+        paymentId: null,
+        paymentMethod: null,
+        description: null,
+        amountPesos: 0,
+        error: json?.errors?.[0]?.detail || "PayMongo request failed.",
+      };
     }
 
     const attrs = json?.data?.attributes as Record<string, unknown> | undefined;
@@ -249,13 +260,28 @@ export async function getPayMongoCheckoutSessionStatus(checkoutSessionId: string
           ? "card"
           : sourceType || null;
 
+    const lineItems = attrs?.line_items as Array<{ amount?: number; description?: string }> | undefined;
+    const amountPesos = Array.isArray(lineItems)
+      ? Math.round(lineItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0) / 100)
+      : 0;
+    const description = (lineItems?.[0]?.description as string | undefined) ?? null;
+
     return {
       paid: Boolean(paidPayment) || intentSucceeded,
       paymentId: (paidPayment?.id as string | undefined) ?? null,
       paymentMethod,
+      description,
+      amountPesos,
     };
   } catch (err) {
-    return { paid: false, paymentId: null, paymentMethod: null, error: err instanceof Error ? err.message : "Network error." };
+    return {
+      paid: false,
+      paymentId: null,
+      paymentMethod: null,
+      description: null,
+      amountPesos: 0,
+      error: err instanceof Error ? err.message : "Network error.",
+    };
   }
 }
 

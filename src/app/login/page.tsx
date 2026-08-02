@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { Loader2, Mail, Lock, Users, ArrowRight, Wallet, Calculator, FileCheck } from "lucide-react";
 import { DashboardMockup } from "@/components/DashboardMockup";
@@ -38,8 +38,16 @@ function JoinPillAccent() {
   );
 }
 
-export default function LoginPage() {
+/** Only an internal path is ever honored — never an absolute/external URL, which would make this an open redirect. */
+function sanitizeNextPath(value: string | null): string {
+  if (value && value.startsWith("/") && !value.startsWith("//")) return value;
+  return "/dashboard";
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = sanitizeNextPath(searchParams.get("next"));
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -100,7 +108,7 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/dashboard");
+      router.push(next);
       router.refresh();
     } catch {
       setError("Network error. Please check your connection and try again.");
@@ -275,5 +283,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

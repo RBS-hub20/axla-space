@@ -50,6 +50,7 @@ async function recordSaleOnce(paymentId: string | null, businessName: string) {
       provider: "paymongo",
       provider_payment_id: paymentId,
       plan: "negosyo-tracker",
+      product: "negosyo_tracker",
     });
     if (error) logError("negosyo-tracker/download: payments insert failed (non-fatal)", error);
     else console.log(`negosyo-tracker/download: sale recorded — business="${businessName}" paymentId=${paymentId ?? "(none)"}`);

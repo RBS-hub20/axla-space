@@ -261,6 +261,7 @@ create table if not exists public.payments (
   provider_payment_id text,
   payment_method text,
   plan text,
+  product text,
   created_at timestamptz not null default now()
 );
 
@@ -647,4 +648,70 @@ grant select, insert, update, delete on public.invoice_settings to service_role;
 insert into storage.buckets (id, name, public)
 values ('invoice-logos', 'invoice-logos', false)
 on conflict (id) do nothing;
+
+-- Axla Payroll — separate product, separate plan tiers (starter/business/
+-- enterprise), deliberately its own subscriptions table rather than a row
+-- in `subscriptions` (see migration 017 for why).
+create table if not exists public.payroll_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null unique references public.profiles (id) on delete cascade,
+  email text not null,
+  plan text not null check (plan in ('starter', 'business', 'enterprise')),
+  status text not null default 'active' check (status in ('active', 'past_due', 'paused', 'canceled')),
+  price integer not null default 0,
+  product text not null default 'axla_payroll',
+  next_billing timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists payroll_subscriptions_email_idx on public.payroll_subscriptions (email);
+
+alter table public.payroll_subscriptions enable row level security;
+grant select, insert, update, delete on public.payroll_subscriptions to service_role;
+
+create table if not exists public.payroll_staff (
+  id uuid primary key default gen_random_uuid(),
+  owner_id text not null references public.profiles (id) on delete cascade,
+  name text not null,
+  gcash text,
+  daily_rate numeric not null default 479,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists payroll_staff_owner_idx on public.payroll_staff (owner_id, created_at desc);
+
+alter table public.payroll_staff enable row level security;
+grant select, insert, update, delete on public.payroll_staff to service_role;
+
+create table if not exists public.payroll_attendance (
+  id uuid primary key default gen_random_uuid(),
+  staff_id uuid not null references public.payroll_staff (id) on delete cascade,
+  date date not null,
+  time_in timestamptz,
+  time_out timestamptz,
+  selfie_url text,
+  created_at timestamptz not null default now(),
+  unique (staff_id, date)
+);
+
+create index if not exists payroll_attendance_staff_idx on public.payroll_attendance (staff_id, date desc);
+
+alter table public.payroll_attendance enable row level security;
+grant select, insert, update, delete on public.payroll_attendance to service_role;
+
+create table if not exists public.payroll_runs (
+  id uuid primary key default gen_random_uuid(),
+  owner_id text not null references public.profiles (id) on delete cascade,
+  month text not null,
+  total_sahod numeric not null default 0,
+  status text not null default 'draft' check (status in ('draft', 'finalized')),
+  breakdown jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists payroll_runs_owner_idx on public.payroll_runs (owner_id, created_at desc);
+
+alter table public.payroll_runs enable row level security;
+grant select, insert, update, delete on public.payroll_runs to service_role;
 
