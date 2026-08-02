@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, CheckCircle2, Clock, Loader2, MapPin, AlertTriangle, Navigation, RotateCcw } from "lucide-react";
+import { Camera, CheckCircle2, Clock, Loader2, MapPin, AlertTriangle, Navigation, RotateCcw, Wallet } from "lucide-react";
+import { CUTOFF_LABELS, type CutOff } from "@/lib/payroll/sahod";
+import type { PaymentProof } from "@/lib/payroll/payment-proof";
 
 interface EmployeeInfo {
   name: string;
@@ -48,6 +50,166 @@ function formatDuration(sinceIso: string): string {
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
   return h === 0 ? `${m}m` : `${h}h ${m}m`;
+}
+
+function formatManilaDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-PH", { month: "short", day: "numeric", timeZone: MANILA_TIME_ZONE });
+}
+
+function formatManilaDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("en-PH", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: MANILA_TIME_ZONE,
+  });
+}
+
+interface PayrollHistoryEntry {
+  runId: string;
+  month: string;
+  cutOff: CutOff | null;
+  netPay: number;
+  proof: PaymentProof;
+}
+
+type ConfirmStep = "idle" | "selfie" | "submitting" | "done";
+
+/**
+ * Self-contained (own fetch, own tiny state machine) rather than woven
+ * into the Time In/Out step machine above — the two flows don't share any
+ * state and keeping them separate avoids one giant step union covering
+ * two unrelated user journeys.
+ */
+function MyPayrollCard({ token }: { token: string }) {
+  const [history, setHistory] = useState<PayrollHistoryEntry[] | null>(null);
+  const [confirmStep, setConfirmStep] = useState<ConfirmStep>("idle");
+  const [selfieFile, setSelfieFile] = useState<File | null>(null);
+  const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function load() {
+    fetch(`/api/payroll/employee/by-token/${token}/payroll?t=${Date.now()}`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setHistory(data.history))
+      .catch(() => {});
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  if (!history || history.length === 0) return null;
+  const latest = history[0];
+  const { proof } = latest;
+
+  function handleSelfieChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSelfieFile(file);
+    setSelfiePreview(URL.createObjectURL(file));
+    setConfirmStep("selfie");
+  }
+
+  async function handleConfirmReceived() {
+    if (!selfieFile) return;
+    setConfirmStep("submitting");
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("token", token);
+      formData.append("runId", latest.runId);
+      formData.append("selfie", selfieFile);
+      const res = await fetch(`/api/payroll/employee/by-token/${token}/confirm-payment`, { method: "POST", body: formData });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Failed to confirm — try again.");
+        setConfirmStep("selfie");
+        return;
+      }
+      setConfirmStep("done");
+      load();
+    } catch {
+      setError("Network error — try again.");
+      setConfirmStep("selfie");
+    }
+  }
+
+  const periodLabel = latest.cutOff ? `${latest.month} · ${CUTOFF_LABELS[latest.cutOff]}` : latest.month;
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#141414] p-4">
+      <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        <Wallet className="h-3.5 w-3.5" />
+        My Payroll
+      </p>
+      <div className="mt-2 flex items-baseline justify-between gap-2">
+        <p className="text-sm font-semibold text-white">{periodLabel}</p>
+        <p className="text-lg font-bold text-[#00FF88]">₱{latest.netPay.toLocaleString()}</p>
+      </div>
+
+      {proof.status === "unpaid" && <p className="mt-1 text-xs text-gray-500">Not yet paid.</p>}
+
+      {proof.status === "paid" && (
+        <>
+          <p className="mt-1 text-xs text-gray-400">
+            Status: Paid{proof.paidAt ? ` ${formatManilaDate(proof.paidAt)}` : ""}
+            {proof.gcashRef ? ` — Ref ${proof.gcashRef}` : proof.note ? ` — ${proof.note}` : ""}
+          </p>
+          {confirmStep === "idle" && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="user"
+                onChange={handleSelfieChange}
+                onClick={(e) => {
+                  (e.currentTarget as HTMLInputElement).value = "";
+                }}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#00FF88] py-2.5 text-sm font-bold text-black hover:bg-[#22C55E]"
+              >
+                Confirm Received ₱{latest.netPay.toLocaleString()}
+              </button>
+            </>
+          )}
+          {(confirmStep === "selfie" || confirmStep === "submitting") && selfiePreview && (
+            <div className="mt-2 space-y-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={selfiePreview} alt="Confirmation selfie preview" className="mx-auto h-24 w-24 rounded-lg border border-white/10 object-cover" />
+              {error && <p className="text-center text-xs text-red-400">{error}</p>}
+              <button
+                type="button"
+                onClick={handleConfirmReceived}
+                disabled={confirmStep === "submitting"}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#00FF88] py-2.5 text-sm font-bold text-black hover:bg-[#22C55E] disabled:opacity-60"
+              >
+                {confirmStep === "submitting" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {confirmStep === "submitting" ? "Confirming..." : "Confirm Received"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {proof.status === "confirmed" && (
+        <p className="mt-1 text-xs text-[#00FF88]">Confirmed ✅{proof.confirmedAt ? ` ${formatManilaDateTime(proof.confirmedAt)}` : ""}</p>
+      )}
+      {confirmStep === "done" && proof.status !== "confirmed" && <p className="mt-1 text-xs text-[#00FF88]">Confirmed ✅</p>}
+
+      <a href={`/p/${token}/payslip/${latest.runId}`} className="mt-3 block text-center text-xs text-gray-400 underline hover:text-white">
+        View Payslip PDF
+      </a>
+    </div>
+  );
 }
 
 export default function ClockPage({ params }: { params: { token: string } }) {
@@ -348,6 +510,7 @@ export default function ClockPage({ params }: { params: { token: string } }) {
                   Allow Location &amp; Continue
                 </button>
                 <p className="text-center text-xs text-gray-500">We use this once, just to confirm you&apos;re at the shop.</p>
+                <MyPayrollCard token={token} />
               </>
             )}
 

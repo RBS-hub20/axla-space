@@ -54,6 +54,7 @@ import {
   type CutOff,
   type PayrollBreakdownRow,
 } from "@/lib/payroll/sahod";
+import { getPaymentProof, UNPAID_PROOF, type PaymentProof, type PaymentProofStatus } from "@/lib/payroll/payment-proof";
 
 const CLOCK_LINK_ORIGIN = "https://axla.space";
 
@@ -123,6 +124,7 @@ interface PayrollRun {
   total_sahod: number;
   status: "draft" | "finalized";
   breakdown: PayrollBreakdownRow[];
+  payment_proofs?: Record<string, Partial<PaymentProof>> | null;
   created_at: string;
 }
 
@@ -583,14 +585,18 @@ export function PayrollAppDashboard({
         {tab === "payslip" && (
           <PayslipBirTab
             company={company}
+            staff={staff}
             latestRun={latestRun}
             tier={tier}
             isBusinessPlus={isBusinessPlus}
             guide={tabGuide(ownerId).payslip}
             onUpgrade={openCheckout}
+            onChanged={loadData}
           />
         )}
-        {tab === "reports" && <ReportsTab runs={runs} tier={tier} guide={tabGuide(ownerId).reports} onUpgrade={openCheckout} />}
+        {tab === "reports" && (
+          <ReportsTab staff={staff} runs={runs} tier={tier} guide={tabGuide(ownerId).reports} onUpgrade={openCheckout} />
+        )}
         {tab === "settings" && <SettingsTab guide={tabGuide(ownerId).settings} />}
       </div>
 
@@ -1541,23 +1547,51 @@ function PayrollRunTab({
   );
 }
 
+function PaymentStatusBadge({ status }: { status: PaymentProofStatus }) {
+  if (status === "confirmed") return <Badge variant="success">Confirmed</Badge>;
+  if (status === "paid") return <Badge className="bg-blue-500/15 text-blue-400 ring-1 ring-inset ring-blue-500/30">Paid</Badge>;
+  return <Badge>Unpaid</Badge>;
+}
+
 function PayslipBirTab({
   company,
+  staff,
   latestRun,
   tier,
   isBusinessPlus,
   guide,
   onUpgrade,
+  onChanged,
 }: {
   company: Company | null;
+  staff: Staff[];
   latestRun: PayrollRun | undefined;
   tier: PayrollTier;
   isBusinessPlus: boolean;
   guide: string;
   onUpgrade: (plan?: PayrollPlan) => void;
+  onChanged: () => void;
 }) {
   const isFree = tier === "free";
   const totalWithholding = latestRun ? estimateWithholdingTax(latestRun.total_sahod) : 0;
+  const [filter, setFilter] = useState<PaymentProofStatus | "all">("all");
+  const [payModalRow, setPayModalRow] = useState<PayrollBreakdownRow | null>(null);
+  const [cashModalRow, setCashModalRow] = useState<PayrollBreakdownRow | null>(null);
+  const [proofModalRow, setProofModalRow] = useState<PayrollBreakdownRow | null>(null);
+
+  const staffById = useMemo(() => new Map(staff.map((s) => [s.id, s])), [staff]);
+  const rows = latestRun?.breakdown ?? [];
+  const proofByStaff = useMemo(() => {
+    const map = new Map<string, PaymentProof>();
+    for (const row of rows) map.set(row.staffId, getPaymentProof(latestRun?.payment_proofs, row.staffId));
+    return map;
+  }, [rows, latestRun]);
+
+  const totalAll = latestRun?.total_sahod ?? 0;
+  const totalPaid = rows.reduce((sum, r) => (proofByStaff.get(r.staffId)?.status !== "unpaid" ? sum + r.basicPay : sum), 0);
+  const paidCount = rows.filter((r) => proofByStaff.get(r.staffId)?.status !== "unpaid").length;
+  const progressPct = totalAll > 0 ? Math.min(100, Math.round((totalPaid / totalAll) * 100)) : 0;
+  const filteredRows = filter === "all" ? rows : rows.filter((r) => proofByStaff.get(r.staffId)?.status === filter);
 
   async function handleDownload(row: PayrollBreakdownRow) {
     const { generatePayslipPdf } = await import("@/lib/payroll/payslip-pdf");
@@ -1567,7 +1601,7 @@ function PayslipBirTab({
       dailyRate: row.dailyRate,
       daysPresent: row.daysPresent,
       basicPay: row.basicPay,
-      gcash: null,
+      gcash: staffById.get(row.staffId)?.gcash ?? null,
       demo: isFree,
     });
   }
@@ -1577,7 +1611,7 @@ function PayslipBirTab({
       <Card className={PREMIUM_CARD}>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <CardTitle className="text-sm font-semibold text-white">GCash Payslip</CardTitle>
+            <CardTitle className="text-sm font-semibold text-white">Payslip &amp; Proof of Payment</CardTitle>
             <GuideTooltip text={guide} />
           </div>
         </CardHeader>
@@ -1587,62 +1621,165 @@ function PayslipBirTab({
               {isFree ? "Demo preview only — compute a payroll run to generate real payslips." : "Compute a payroll run first."}
             </p>
           ) : (
-            <div className="space-y-2">
-              {latestRun.breakdown.map((row) => (
-                <div key={row.staffId} className="relative overflow-hidden rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
-                  {isFree && (
-                    <span className="pointer-events-none absolute right-3 top-3 rotate-12 rounded border border-red-500/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-red-400">
-                      Demo
-                    </span>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-white">{row.name}</p>
-                    <CheckCircle2 className="h-4 w-4 text-[#00FF88]" />
-                  </div>
-                  <div className="mt-2 space-y-1 text-xs text-gray-400">
-                    <div className="flex justify-between">
-                      <span>Basic</span>
-                      <span className="text-gray-200">{PESO(row.basicPay)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>OT</span>
-                      <span className="text-gray-200">₱0</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Deductions</span>
-                      <span className="text-gray-200">₱0</span>
-                    </div>
-                    <div className="flex justify-between border-t border-[#1E293B] pt-1.5 text-sm">
-                      <span className="font-semibold text-white">Net Pay</span>
-                      <span className="font-bold text-[#00FF88]">{PESO(row.basicPay)}</span>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDownload(row)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#1E293B] px-3 text-xs text-slate-200 hover:bg-white/5"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      Download PDF
-                    </button>
-                    {isBusinessPlus && (
-                      <button
-                        type="button"
-                        onClick={() => toast("Payslip sent via GCash (mock) ✅")}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#00FF88]/30 px-3 text-xs text-[#00FF88] hover:bg-[#00FF88]/10"
-                      >
-                        <Send className="h-3.5 w-3.5" />
-                        Send 1-click
-                      </button>
-                    )}
-                  </div>
+            <>
+              <div className="mb-4 rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
+                <p className="text-lg font-bold text-white">
+                  {PESO(totalPaid)}{" "}
+                  <span className="text-sm font-normal text-gray-500">
+                    / {PESO(totalAll)} Paid ({paidCount}/{rows.length})
+                  </span>
+                </p>
+                <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/5">
+                  <div className="h-full rounded-full bg-[#00FF88] transition-all" style={{ width: `${progressPct}%` }} />
                 </div>
-              ))}
-            </div>
+                <div className="mt-3 flex gap-1 rounded-xl border border-[#1E293B] bg-[#080F14] p-1">
+                  {(["all", "unpaid", "paid", "confirmed"] as (PaymentProofStatus | "all")[]).map((f) => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setFilter(f)}
+                      className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold capitalize transition ${
+                        filter === f ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {isFree && (
+                <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/[0.06] px-3 py-2 text-center text-xs text-red-300">
+                  Demo preview — upgrade to record and track real payments.
+                </p>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                      <th className="pb-2 pr-4">Employee</th>
+                      <th className="pb-2 pr-4">Net Pay</th>
+                      <th className="pb-2 pr-4">GCash</th>
+                      <th className="pb-2 pr-4">Status</th>
+                      <th className="pb-2 pr-4">Proof</th>
+                      <th className="pb-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRows.map((row) => {
+                      const proof = proofByStaff.get(row.staffId) ?? UNPAID_PROOF;
+                      const gcash = staffById.get(row.staffId)?.gcash ?? null;
+                      return (
+                        <tr key={row.staffId} className="border-b border-[#1E293B]/60 last:border-0">
+                          <td className="py-3 pr-4 font-medium text-white">{row.name}</td>
+                          <td className="py-3 pr-4 text-gray-300">{PESO(row.basicPay)}</td>
+                          <td className="py-3 pr-4 text-gray-300">{maskGcash(gcash)}</td>
+                          <td className="py-3 pr-4">
+                            <PaymentStatusBadge status={proof.status} />
+                          </td>
+                          <td className="py-3 pr-4">
+                            {proof.receiptUrl ? (
+                              <button type="button" onClick={() => setProofModalRow(row)} className="block">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={proof.receiptUrl}
+                                  alt="Receipt"
+                                  className="h-10 w-10 rounded-lg border border-[#1E293B] object-cover hover:border-[#00FF88]/50"
+                                />
+                              </button>
+                            ) : proof.status !== "unpaid" ? (
+                              <button type="button" onClick={() => setProofModalRow(row)} className="text-xs text-gray-400 underline hover:text-white">
+                                {proof.note ?? "View"}
+                              </button>
+                            ) : (
+                              <span className="text-xs text-gray-600">—</span>
+                            )}
+                          </td>
+                          <td className="py-3">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {proof.status === "unpaid" ? (
+                                isFree ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onUpgrade()}
+                                    className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2 text-xs text-[#00FF88] hover:bg-[#00FF88]/10"
+                                  >
+                                    <Lock className="h-3 w-3" /> Upgrade
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPayModalRow(row)}
+                                      className="inline-flex h-7 items-center gap-1 rounded-lg bg-[#00FF88] px-2 text-xs font-semibold text-black hover:bg-[#22C55E]"
+                                    >
+                                      <Wallet className="h-3 w-3" />
+                                      Pay via GCash
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCashModalRow(row)}
+                                      className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
+                                    >
+                                      Mark Paid
+                                    </button>
+                                  </>
+                                )
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setProofModalRow(row)}
+                                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
+                                >
+                                  View Proof
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleDownload(row)}
+                                aria-label="Download payslip PDF"
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[#1E293B] text-slate-300 hover:bg-white/5"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
+
+      {payModalRow && latestRun && (
+        <PayViaGcashModal
+          runId={latestRun.id}
+          row={payModalRow}
+          gcash={staffById.get(payModalRow.staffId)?.gcash ?? null}
+          onClose={() => setPayModalRow(null)}
+          onSaved={() => {
+            setPayModalRow(null);
+            onChanged();
+          }}
+        />
+      )}
+      {cashModalRow && latestRun && (
+        <MarkPaidCashModal
+          runId={latestRun.id}
+          row={cashModalRow}
+          onClose={() => setCashModalRow(null)}
+          onSaved={() => {
+            setCashModalRow(null);
+            onChanged();
+          }}
+        />
+      )}
+      {proofModalRow && latestRun && <ViewProofModal runId={latestRun.id} row={proofModalRow} onClose={() => setProofModalRow(null)} />}
 
       <Card className={PREMIUM_CARD}>
         <CardHeader>
@@ -1692,12 +1829,362 @@ function PayslipBirTab({
   );
 }
 
+function PayViaGcashModal({
+  runId,
+  row,
+  gcash,
+  onClose,
+  onSaved,
+}: {
+  runId: string;
+  row: PayrollBreakdownRow;
+  gcash: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [step, setStep] = useState<"send" | "upload">("send");
+  const [amount, setAmount] = useState(String(row.basicPay));
+  const [gcashRef, setGcashRef] = useState("");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const amountMismatch = Number(amount) !== row.basicPay;
+
+  async function handleCopy(text: string, label: string) {
+    await navigator.clipboard.writeText(text);
+    toast(`${label} copied ✅`);
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setReceiptFile(file);
+    setReceiptPreview(URL.createObjectURL(file));
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!receiptFile) {
+      setError("Upload the GCash receipt screenshot.");
+      return;
+    }
+    if (!gcashRef.trim()) {
+      setError("Enter the GCash reference number.");
+      return;
+    }
+    setError(null);
+    setIsSaving(true);
+    try {
+      const formData = new FormData();
+      formData.append("amount", amount);
+      formData.append("gcashRef", gcashRef.trim());
+      formData.append("receipt", receiptFile);
+      const res = await fetch(`/api/payroll/runs/${runId}/payment/${row.staffId}`, { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to save payment.");
+        return;
+      }
+      toast("Payment recorded ✅");
+      onSaved();
+    } catch {
+      setError("Network error — try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-[#00FF88]/30 bg-[#121A22] p-6 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-white">Pay via GCash</h2>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {step === "send" ? (
+          <div className="mt-4 space-y-4">
+            <div className="rounded-xl border border-[#00FF88]/20 bg-[#00FF88]/[0.04] p-4 text-center">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Send</p>
+              <p className="text-2xl font-black text-[#00FF88]">{PESO(row.basicPay)}</p>
+              <p className="mt-1 text-sm text-gray-300">
+                to {maskGcash(gcash)} ({row.name})
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleCopy(String(row.basicPay), "Amount")}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[#1E293B] text-xs text-slate-200 hover:bg-white/5"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Copy Amount
+              </button>
+              <button
+                type="button"
+                onClick={() => gcash && handleCopy(gcash, "GCash number")}
+                disabled={!gcash}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[#1E293B] text-xs text-slate-200 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                Copy Number
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => window.open("https://www.gcash.com", "_blank")}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#00FF88]/30 py-2.5 text-sm font-semibold text-[#00FF88] hover:bg-[#00FF88]/10"
+            >
+              <Send className="h-4 w-4" />
+              Open GCash App
+            </button>
+            <Button onClick={() => setStep("upload")} className="w-full">
+              I&apos;ve Sent It — Upload Receipt
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-300">GCash Receipt Screenshot</label>
+              {receiptPreview && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={receiptPreview} alt="Receipt preview" className="mb-2 h-32 w-full rounded-lg border border-[#1E293B] object-cover" />
+              )}
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+                className="w-full text-xs text-gray-400 file:mr-3 file:rounded-lg file:border-0 file:bg-[#00FF88]/15 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-[#00FF88]"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-300">GCash Ref No.</label>
+              <Input value={gcashRef} onChange={(e) => setGcashRef(e.target.value)} placeholder="From the receipt" className="border-[#1E293B] bg-[#0B121A]" />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-300">Amount Sent</label>
+              <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="border-[#1E293B] bg-[#0B121A]" />
+              {amountMismatch && (
+                <p className="mt-1 text-xs text-amber-400">Doesn&apos;t match Net Pay {PESO(row.basicPay)} — double check before saving.</p>
+              )}
+            </div>
+            {error && <div className="rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</div>}
+            <Button type="submit" disabled={isSaving} className="w-full">
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {isSaving ? "Saving..." : "Save Proof of Payment"}
+            </Button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MarkPaidCashModal({
+  runId,
+  row,
+  onClose,
+  onSaved,
+}: {
+  runId: string;
+  row: PayrollBreakdownRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [amount, setAmount] = useState(String(row.basicPay));
+  const [note, setNote] = useState("Cash");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setIsSaving(true);
+    try {
+      const formData = new FormData();
+      formData.append("amount", amount);
+      formData.append("note", note.trim() || "Cash");
+      const res = await fetch(`/api/payroll/runs/${runId}/payment/${row.staffId}`, { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to save payment.");
+        return;
+      }
+      toast("Marked as paid ✅");
+      onSaved();
+    } catch {
+      setError("Network error — try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-[#1E293B] bg-[#121A22] p-6 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-white">Mark as Paid — {row.name}</h2>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-gray-500">For cash or any payment made outside GCash — no receipt required.</p>
+        <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Amount</label>
+            <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="border-[#1E293B] bg-[#0B121A]" />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-300">Note</label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Cash" className="border-[#1E293B] bg-[#0B121A]" />
+          </div>
+          {error && <div className="rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</div>}
+          <Button type="submit" disabled={isSaving} className="w-full">
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {isSaving ? "Saving..." : "Mark as Paid"}
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ViewProofModal({ runId, row, onClose }: { runId: string; row: PayrollBreakdownRow; onClose: () => void }) {
+  const [data, setData] = useState<{ proof: PaymentProof; receiptUrl: string | null; confirmedSelfieUrl: string | null } | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/payroll/runs/${runId}/payment/${row.staffId}`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then(setData)
+      .finally(() => setIsLoading(false));
+  }, [runId, row.staffId]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-[#1E293B] bg-[#121A22] p-6 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-white">Proof of Payment — {row.name}</h2>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {isLoading ? (
+          <div className="mt-4 h-40 w-full animate-pulse rounded-lg bg-white/5" />
+        ) : data ? (
+          <div className="mt-4 space-y-3 text-sm">
+            {data.receiptUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={data.receiptUrl} alt="GCash receipt" className="w-full rounded-lg border border-[#1E293B] object-cover" />
+            ) : (
+              <p className="rounded-lg border border-[#1E293B] bg-[#0B121A] px-3 py-2 text-gray-400">{data.proof.note ?? "No receipt uploaded."}</p>
+            )}
+            <div className="space-y-1 text-gray-300">
+              <div className="flex justify-between">
+                <span>Amount</span>
+                <span className="font-semibold text-white">{data.proof.amount !== null ? PESO(data.proof.amount) : "—"}</span>
+              </div>
+              {data.proof.gcashRef && (
+                <div className="flex justify-between">
+                  <span>Ref No.</span>
+                  <span className="font-semibold text-white">{data.proof.gcashRef}</span>
+                </div>
+              )}
+              {data.proof.paidAt && (
+                <div className="flex justify-between">
+                  <span>Paid At</span>
+                  <span className="text-white">{new Date(data.proof.paidAt).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}</span>
+                </div>
+              )}
+              {data.proof.confirmedAt && (
+                <div className="flex justify-between">
+                  <span>Confirmed At</span>
+                  <span className="text-[#00FF88]">{new Date(data.proof.confirmedAt).toLocaleString("en-PH", { timeZone: "Asia/Manila" })}</span>
+                </div>
+              )}
+            </div>
+            {data.confirmedSelfieUrl && (
+              <div>
+                <p className="mb-1 text-xs text-gray-500">Employee confirmation selfie</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={data.confirmedSelfieUrl} alt="Confirmation selfie" className="h-24 w-24 rounded-lg border border-[#1E293B] object-cover" />
+              </div>
+            )}
+            {data.receiptUrl && (
+              <a
+                href={data.receiptUrl}
+                download
+                target="_blank"
+                rel="noreferrer"
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-[#1E293B] py-2 text-xs text-slate-200 hover:bg-white/5"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download Receipt
+              </a>
+            )}
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-gray-500">Failed to load.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface PaymentAuditRow {
+  runId: string;
+  month: string;
+  staffName: string;
+  gcash: string | null;
+  amount: number | null;
+  gcashRef: string | null;
+  note: string | null;
+  status: PaymentProofStatus;
+  paidAt: string | null;
+  confirmedAt: string | null;
+  receiptUrl: string | null;
+}
+
+function exportPaymentAuditCsv(rows: PaymentAuditRow[]) {
+  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const header = ["Employee", "Amount", "GCash", "Ref", "Paid At", "Confirmed At", "Receipt URL"];
+  const lines = [header.map(escape).join(",")];
+  for (const r of rows) {
+    lines.push(
+      [
+        r.staffName,
+        r.amount !== null ? String(r.amount) : "",
+        r.gcash ?? "",
+        r.gcashRef ?? r.note ?? "",
+        r.paidAt ?? "",
+        r.confirmedAt ?? "",
+        r.receiptUrl ?? "",
+      ]
+        .map(escape)
+        .join(","),
+    );
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `payroll-payment-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function ReportsTab({
+  staff,
   runs,
   tier,
   guide,
   onUpgrade,
 }: {
+  staff: Staff[];
   runs: PayrollRun[];
   tier: PayrollTier;
   guide: string;
@@ -1706,6 +2193,31 @@ function ReportsTab({
   const currentYear = new Date().getFullYear();
   const ytdTotal = runs.filter((r) => r.month.startsWith(String(currentYear))).reduce((sum, r) => sum + Number(r.total_sahod), 0);
   const thirteenthMonthAccrual = ytdTotal / 12;
+
+  const staffById = useMemo(() => new Map(staff.map((s) => [s.id, s])), [staff]);
+  const auditRows = useMemo(() => {
+    const rows: PaymentAuditRow[] = [];
+    for (const run of runs) {
+      for (const entry of run.breakdown ?? []) {
+        const proof = getPaymentProof(run.payment_proofs, entry.staffId);
+        if (proof.status === "unpaid") continue;
+        rows.push({
+          runId: run.id,
+          month: run.month,
+          staffName: entry.name,
+          gcash: staffById.get(entry.staffId)?.gcash ?? null,
+          amount: proof.amount,
+          gcashRef: proof.gcashRef,
+          note: proof.note,
+          status: proof.status,
+          paidAt: proof.paidAt,
+          confirmedAt: proof.confirmedAt,
+          receiptUrl: proof.receiptUrl ?? null,
+        });
+      }
+    }
+    return rows;
+  }, [runs, staffById]);
 
   return (
     <div className="space-y-4">
@@ -1761,6 +2273,64 @@ function ReportsTab({
           )}
         </CardContent>
       </Card>
+
+      {auditRows.length > 0 && (
+        <Card className={PREMIUM_CARD}>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-sm font-semibold text-white">Payment Audit Trail</CardTitle>
+            <button
+              type="button"
+              onClick={() => exportPaymentAuditCsv(auditRows)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#1E293B] px-3 text-xs text-slate-200 hover:bg-white/5"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </button>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-3 text-xs text-gray-500">For BIR/DOLE audits — every recorded payment, receipt, and employee confirmation across your payroll history.</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                    <th className="pb-2 pr-4">Month</th>
+                    <th className="pb-2 pr-4">Employee</th>
+                    <th className="pb-2 pr-4">Amount</th>
+                    <th className="pb-2 pr-4">Ref / Note</th>
+                    <th className="pb-2 pr-4">Receipt</th>
+                    <th className="pb-2 pr-4">Paid At</th>
+                    <th className="pb-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditRows.map((r, i) => (
+                    <tr key={`${r.runId}-${i}`} className="border-b border-[#1E293B]/60 last:border-0">
+                      <td className="py-2 pr-4 text-white">{r.month}</td>
+                      <td className="py-2 pr-4 text-gray-300">{r.staffName}</td>
+                      <td className="py-2 pr-4 text-gray-300">{r.amount !== null ? PESO(r.amount) : "—"}</td>
+                      <td className="py-2 pr-4 text-gray-300">{r.gcashRef ?? r.note ?? "—"}</td>
+                      <td className="py-2 pr-4">
+                        {r.receiptUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={r.receiptUrl} alt="Receipt" className="h-8 w-8 rounded border border-[#1E293B] object-cover" />
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="py-2 pr-4 text-gray-300">
+                        {r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric" }) : "—"}
+                      </td>
+                      <td className="py-2">
+                        <PaymentStatusBadge status={r.status} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {runs.length >= 1 && <TaxLayaUpsellBanner />}
     </div>
