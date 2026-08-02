@@ -436,6 +436,7 @@ interface Billing {
   status: string | null;
   billingCycle: BillingCycle | null;
   currentPeriodEnd: string | null;
+  isLifetime?: boolean;
 }
 
 const PLAN_LABEL: Record<PaidPlan, string> = { pro: "Pro", business: "Business" };
@@ -535,7 +536,8 @@ function BillingSection() {
             <div className="flex items-center justify-between rounded-lg border border-slate-700 p-3">
               <div>
                 <p className="text-sm font-semibold capitalize text-slate-100">{currentPlan} plan</p>
-                {billing?.currentPeriodEnd && billing.status === "active" && (
+                {billing?.isLifetime && <p className="text-xs text-[#00FF88]">Lifetime access — no expiration</p>}
+                {!billing?.isLifetime && billing?.currentPeriodEnd && billing.status === "active" && (
                   <p className="text-xs text-slate-400">
                     Renews{" "}
                     {new Date(billing.currentPeriodEnd).toLocaleDateString("en-PH", {

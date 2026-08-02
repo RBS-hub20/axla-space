@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { OWNER_EMAIL } from "@/lib/plans";
 import { logError } from "@/lib/log-error";
 
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  // Lifetime owner override, no DB round-trip — same bypass as getActivePaidPlan (src/lib/usage.ts).
+  if (user.email.toLowerCase() === OWNER_EMAIL) {
+    return NextResponse.json({ plan: "business", status: "active", billingCycle: null, currentPeriodEnd: null, isLifetime: true });
   }
 
   if (!isSupabaseAdminConfigured) {

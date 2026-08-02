@@ -10,6 +10,8 @@ export interface SubscriptionRingProps {
   daysLeft?: number;
   expiryDate?: string;
   plan?: "pro" | "business";
+  /** Lifetime owner override — takes priority over the sample state, shows ∞ instead of a day count. */
+  isLifetime?: boolean;
 }
 
 const SAMPLE_DAYS_LEFT = 26;
@@ -20,22 +22,22 @@ function ringColor(daysLeft: number): string {
   return "#00FF88";
 }
 
-export function SubscriptionRing({ daysLeft, expiryDate, plan }: SubscriptionRingProps) {
+export function SubscriptionRing({ daysLeft, expiryDate, plan, isLifetime }: SubscriptionRingProps) {
   const [open, setOpen] = useState(false);
-  const isSample = daysLeft === undefined;
+  const isSample = !isLifetime && daysLeft === undefined;
   // Nullish coalescing directly on the prop (not the isSample boolean) —
   // TypeScript can't narrow daysLeft's type through a separately-computed
   // boolean, only through a direct check like this.
   const effectiveDays = daysLeft ?? SAMPLE_DAYS_LEFT;
-  const expired = effectiveDays <= 0;
+  const expired = !isLifetime && effectiveDays <= 0;
   const clamped = Math.max(0, Math.min(30, effectiveDays));
 
   const radius = 42;
   const circumference = 2 * Math.PI * radius;
-  const progress = expired ? 0 : clamped / 30;
+  const progress = isLifetime ? 1 : expired ? 0 : clamped / 30;
   const offset = circumference - progress * circumference;
-  const color = expired ? "#EF4444" : ringColor(effectiveDays);
-  const pulse = !isSample && (expired || effectiveDays <= 7);
+  const color = isLifetime ? "#00FF88" : expired ? "#EF4444" : ringColor(effectiveDays);
+  const pulse = !isLifetime && !isSample && (expired || effectiveDays <= 7);
 
   const expiryLabel = expiryDate
     ? new Date(expiryDate).toLocaleDateString("en-PH", { month: "long", day: "numeric", year: "numeric" })
@@ -65,9 +67,9 @@ export function SubscriptionRing({ daysLeft, expiryDate, plan }: SubscriptionRin
           />
         </svg>
         <div className="absolute flex flex-col items-center">
-          <span className="text-2xl font-extrabold text-white">{expired ? "0" : effectiveDays}</span>
+          <span className="text-2xl font-extrabold text-white">{isLifetime ? "∞" : expired ? "0" : effectiveDays}</span>
           <span className="text-[10px] font-medium uppercase tracking-wide text-gray-500">
-            {expired ? "Expired" : "Days Left"}
+            {isLifetime ? "Lifetime" : expired ? "Expired" : "Days Left"}
           </span>
           {isSample && <span className="mt-0.5 rounded bg-white/5 px-1 text-[8px] font-bold uppercase text-gray-500">Sample</span>}
         </div>
@@ -81,7 +83,7 @@ export function SubscriptionRing({ daysLeft, expiryDate, plan }: SubscriptionRin
           >
             <div className="flex items-start justify-between">
               <h2 className="text-base font-bold text-white">
-                {isSample ? "Sample subscription preview" : expired ? "Subscription expired" : "Subscription status"}
+                {isLifetime ? "Lifetime access" : isSample ? "Sample subscription preview" : expired ? "Subscription expired" : "Subscription status"}
               </h2>
               <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="text-gray-500 hover:text-gray-300">
                 <X className="h-4 w-4" />
@@ -92,23 +94,24 @@ export function SubscriptionRing({ daysLeft, expiryDate, plan }: SubscriptionRin
               Plan: <span className="font-semibold text-white">{plan === "business" ? "BUSINESS" : "PRO"}</span>
             </p>
             <p className="mt-1 text-sm text-gray-400">
-              Expires: <span className="font-semibold text-white">{isSample ? "—" : expiryLabel}</span>
+              Expires:{" "}
+              <span className="font-semibold text-white">{isLifetime ? "Never" : isSample ? "—" : expiryLabel}</span>
             </p>
 
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-xs text-gray-500">
-                <span>Days used</span>
-                <span>
-                  {isSample ? "—" : `${daysUsed}/30`}
-                </span>
+            {!isLifetime && (
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>Days used</span>
+                  <span>{isSample ? "—" : `${daysUsed}/30`}</span>
+                </div>
+                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-800">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${isSample ? 13 : Math.min(100, (daysUsed / 30) * 100)}%`, backgroundColor: color }}
+                  />
+                </div>
               </div>
-              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-800">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{ width: `${isSample ? 13 : Math.min(100, (daysUsed / 30) * 100)}%`, backgroundColor: color }}
-                />
-              </div>
-            </div>
+            )}
 
             <div className="mt-4 rounded-xl border border-[#1E293B] bg-white/[0.02] p-3">
               <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">Benefits</p>
@@ -118,13 +121,19 @@ export function SubscriptionRing({ daysLeft, expiryDate, plan }: SubscriptionRin
               </p>
             </div>
 
-            <Link
-              href={`/dashboard/settings?promo=${PROMO.code}`}
-              onClick={() => setOpen(false)}
-              className="mt-5 block w-full rounded-xl bg-[#00FF88] px-4 py-3 text-center text-sm font-bold text-black transition hover:bg-[#00FF88]/90"
-            >
-              Renew Now — ₱{PROMO.proPricePesos}
-            </Link>
+            {isLifetime ? (
+              <p className="mt-5 block w-full rounded-xl bg-[#00FF88]/10 px-4 py-3 text-center text-sm font-bold text-[#00FF88]">
+                Lifetime member — no renewal needed
+              </p>
+            ) : (
+              <Link
+                href={`/dashboard/settings?promo=${PROMO.code}`}
+                onClick={() => setOpen(false)}
+                className="mt-5 block w-full rounded-xl bg-[#00FF88] px-4 py-3 text-center text-sm font-bold text-black transition hover:bg-[#00FF88]/90"
+              >
+                Renew Now — ₱{PROMO.proPricePesos}
+              </Link>
+            )}
           </div>
         </div>
       )}

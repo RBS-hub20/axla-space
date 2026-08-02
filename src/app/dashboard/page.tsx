@@ -23,6 +23,7 @@ import { getBusinesses } from "@/lib/dashboard/businesses";
 import { getUsageSummary } from "@/lib/usage";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { resolveCurrentPeriodEnd, daysLeftUntil } from "@/lib/payments-stats";
+import { OWNER_EMAIL } from "@/lib/plans";
 import { BusinessSwitcher } from "@/components/dashboard/BusinessSwitcher";
 import { TaxHealthGauge } from "@/components/dashboard/TaxHealthGauge";
 import { SubscriptionRing } from "@/components/dashboard/SubscriptionRing";
@@ -104,9 +105,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
   // own labeled sample state instead). currentPeriodEnd falls back to
   // period-start + 30 days when null (see resolveCurrentPeriodEnd) rather
   // than requiring every row to have one.
+  const isLifetimeOwner = user.email.toLowerCase() === OWNER_EMAIL;
   let subscriptionDaysLeft: number | undefined;
   let subscriptionExpiry: string | undefined;
-  if (usage.isUnlimited && isSupabaseAdminConfigured) {
+  if (!isLifetimeOwner && usage.isUnlimited && isSupabaseAdminConfigured) {
     const { data: subRow } = await supabaseAdmin
       .from("subscriptions")
       .select("current_period_start, current_period_end, created_at")
@@ -176,6 +178,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: { 
                 daysLeft={subscriptionDaysLeft}
                 expiryDate={subscriptionExpiry}
                 plan={usage.plan === "business" ? "business" : "pro"}
+                isLifetime={isLifetimeOwner}
               />
             </div>
           </div>

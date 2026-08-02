@@ -1,6 +1,7 @@
 import "server-only";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logError } from "@/lib/log-error";
+import { OWNER_EMAIL } from "@/lib/plans";
 
 export type UsageType = "filing" | "scan" | "ai_chat";
 
@@ -54,8 +55,20 @@ export async function getUserPlan(email: string): Promise<"free" | "pro" | "busi
   return paid ?? "free";
 }
 
-/** A subscription only bypasses free-tier limits while it's actually active — a canceled/past_due pro plan falls back to free limits. */
+/**
+ * A subscription only bypasses free-tier limits while it's actually active
+ * — a canceled/past_due pro plan falls back to free limits.
+ *
+ * Owner override checked first, before any DB round-trip: this single
+ * hardcoded email always resolves as lifetime BUSINESS, regardless of what
+ * (if anything) is in the subscriptions table. Every plan/usage check in
+ * the app funnels through this one function (getUserPlan,
+ * checkAndIncrementUsage, getUsageSummary), so this is the single choke
+ * point for the override — no other email gets this treatment.
+ */
 async function getActivePaidPlan(email: string): Promise<"pro" | "business" | null> {
+  if (email.toLowerCase() === OWNER_EMAIL) return "business";
+
   const { data, error } = await supabaseAdmin
     .from("subscriptions")
     .select("plan, status")
