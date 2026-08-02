@@ -557,8 +557,10 @@ grant select, insert, update, delete on public.bir_loa_cases to service_role;
 create table if not exists public.bir_rdo_transfers (
   id uuid primary key default gen_random_uuid(),
   user_id text not null unique references public.profiles (id) on delete cascade,
-  from_rdo text not null default '',
-  to_rdo text not null default '',
+  from_rdo_code text not null default '',
+  from_rdo_name text not null default '',
+  to_rdo_code text not null default '',
+  to_rdo_name text not null default '',
   checklist jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );

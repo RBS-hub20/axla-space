@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { RdoPicker, parseRdoValue, formatRdoValue } from "@/components/dashboard/RdoPicker";
 import { PLAN_PRICING } from "@/lib/plans";
 import { PROMO, isPromoActive } from "@/lib/promo";
 import { calcBirPenalty } from "@/lib/bir-guard/penalty";
@@ -943,7 +944,7 @@ function LoaTab({ isBusiness, planLoaded }: { isBusiness: boolean; planLoaded: b
 }
 
 function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planLoaded: boolean }) {
-  const [fromRdo, setFromRdo] = useState("");
+  const [fromRdo, setFromRdo] = useState(""); // formatted "044 - Taguig-Pateros" — see RdoPicker
   const [toRdo, setToRdo] = useState("");
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
@@ -960,9 +961,10 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
         const res = await fetch("/api/bir-guard/rdo-transfer", { cache: "no-store" });
         if (res.ok) {
           const data = await res.json();
-          setFromRdo(data.transfer?.from_rdo ?? "");
-          setToRdo(data.transfer?.to_rdo ?? "");
-          setChecklist(data.transfer?.checklist ?? {});
+          const t = data.transfer;
+          setFromRdo(t?.from_rdo_code ? formatRdoValue({ code: t.from_rdo_code, name: t.from_rdo_name }) : "");
+          setToRdo(t?.to_rdo_code ? formatRdoValue({ code: t.to_rdo_code, name: t.to_rdo_name }) : "");
+          setChecklist(t?.checklist ?? {});
         }
       } finally {
         setIsLoading(false);
@@ -976,7 +978,11 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
       const res = await fetch("/api/bir-guard/rdo-transfer", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromRdo, toRdo, checklist }),
+        body: JSON.stringify({
+          fromRdoCode: parseRdoValue(fromRdo)?.code ?? "",
+          toRdoCode: parseRdoValue(toRdo)?.code ?? "",
+          checklist,
+        }),
       });
       if (res.ok) toast("Progress saved ✅");
       else toast("Failed to save — try again.");
@@ -1014,23 +1020,11 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-300">From RDO</label>
-                <Input
-                  value={fromRdo}
-                  onChange={(e) => setFromRdo(e.target.value)}
-                  placeholder="e.g. RDO 044 - Taguig"
-                  disabled={!isBusiness}
-                  className="border-[#1E293B] bg-[#0B121A]"
-                />
+                <RdoPicker value={fromRdo} onChange={setFromRdo} placeholder="Select current RDO" disabled={!isBusiness} />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-300">To RDO</label>
-                <Input
-                  value={toRdo}
-                  onChange={(e) => setToRdo(e.target.value)}
-                  placeholder="e.g. RDO 043 - Pasig"
-                  disabled={!isBusiness}
-                  className="border-[#1E293B] bg-[#0B121A]"
-                />
+                <RdoPicker value={toRdo} onChange={setToRdo} placeholder="Select new RDO" disabled={!isBusiness} />
               </div>
             </div>
 
