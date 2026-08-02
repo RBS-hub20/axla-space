@@ -41,17 +41,8 @@ export function wrapText(text: string, font: PDFFont, size: number, maxWidth: nu
   return lines;
 }
 
-/**
- * Sets up an A4 page with the shared Axla header — same visual language as
- * generate-form-pdf.ts's reference sheets. `kicker` is the small label in
- * the top-right (e.g. "BUSINESS TOOLKIT — OPEN KIT REFERENCE").
- */
-export async function startDoc(kicker: string): Promise<ToolkitDoc> {
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
+/** Draws the shared Axla header on `page` and returns the y-position just below it. `kicker` is the small label in the top-right. */
+function drawHeader(page: PDFPage, font: PDFFont, bold: PDFFont, kicker: string): number {
   let y = 800;
   page.drawText("AXLA", { x: MARGIN, y, size: 20, font: bold, color: GREEN });
   page.drawText(" TAXLAYA", { x: MARGIN + font.widthOfTextAtSize("AXLA", 20) + 2, y, size: 20, font: bold, color: DARK });
@@ -62,8 +53,34 @@ export async function startDoc(kicker: string): Promise<ToolkitDoc> {
   y -= 8;
   page.drawLine({ start: { x: MARGIN, y }, end: { x: PAGE_WIDTH - MARGIN, y }, thickness: 0.5, color: BORDER });
   y -= 24;
+  return y;
+}
 
+/**
+ * Sets up an A4 page with the shared Axla header — same visual language as
+ * generate-form-pdf.ts's reference sheets. `kicker` is the small label in
+ * the top-right (e.g. "BUSINESS TOOLKIT — OPEN KIT REFERENCE").
+ */
+export async function startDoc(kicker: string): Promise<ToolkitDoc> {
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const y = drawHeader(page, font, bold, kicker);
   return { pdfDoc, page, font, bold, y };
+}
+
+/**
+ * Appends a new headered page to an existing doc and points `doc` at it —
+ * for multi-page single-file PDFs (e.g. a 1905 reference sheet followed by
+ * its cover letter in one download) instead of separate files in a ZIP.
+ * Mutates and returns the same ToolkitDoc for chaining.
+ */
+export function addPage(doc: ToolkitDoc, kicker: string): ToolkitDoc {
+  const page = doc.pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  doc.page = page;
+  doc.y = drawHeader(page, doc.font, doc.bold, kicker);
+  return doc;
 }
 
 export function drawSection(doc: ToolkitDoc, title: string, height: number): number {

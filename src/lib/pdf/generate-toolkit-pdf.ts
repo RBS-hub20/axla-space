@@ -1,6 +1,7 @@
 import "server-only";
 import {
   startDoc,
+  addPage,
   finish,
   drawSection,
   row,
@@ -405,6 +406,97 @@ export async function generateSpaNotaryGuide(): Promise<Uint8Array> {
     RED,
     14,
   );
+
+  drawDisclaimerFooter(doc, LEGAL_DISCLAIMER);
+  return finish(doc);
+}
+
+export interface RdoTransferData {
+  fullName: string;
+  businessName: string;
+  tin: string | null;
+  address: string;
+  fromRdoCode: string;
+  fromRdoName: string;
+  toRdoCode: string;
+  toRdoName: string;
+  checklist: { label: string; checked: boolean }[];
+}
+
+/**
+ * BIR Guard — RDO Transfer. A single two-page PDF (not a ZIP): page 1 is
+ * the 1905 reference sheet, page 2 the application letter — everything
+ * pulled from the caller's profile + saved RDO Transfer draft, no manual
+ * fields. See src/app/api/bir-guard/rdo-transfer/generate/route.ts, which
+ * refuses to call this at all if required profile fields are missing
+ * (banner + link to Settings) rather than falling back to a form here.
+ */
+export async function generateRdoTransferPdf(data: RdoTransferData): Promise<Uint8Array> {
+  const doc = await startDoc("BIR GUARD — RDO TRANSFER — 1905 REFERENCE");
+  heading(doc, "BIR Form 1905 — RDO Transfer Reference Sheet");
+  paragraph(doc, "Application for Registration Information Update — Transfer of Registration (Change of RDO).");
+  spacer(doc);
+
+  const ry = drawSection(doc, "TAXPAYER DETAILS", 178);
+  doc.y = ry;
+  row(doc, "Full Name:", data.fullName);
+  row(doc, "TIN:", data.tin || "Not set", data.tin ? DARK : RED);
+  row(doc, "Business Name:", data.businessName || data.fullName);
+  row(doc, "Registered Address:", data.address);
+  row(doc, "From RDO:", data.fromRdoCode ? `RDO ${data.fromRdoCode} - ${data.fromRdoName}` : "Not set", data.fromRdoCode ? DARK : RED);
+  row(doc, "To RDO:", data.toRdoCode ? `RDO ${data.toRdoCode} - ${data.toRdoName}` : "Not set", data.toRdoCode ? DARK : RED);
+  spacer(doc, 16);
+
+  heading(doc, "Fields you'll fill on the actual 1905", 11);
+  checklistItem(doc, "Part I: Taxpayer identification — TIN, current RDO, registered name");
+  checklistItem(doc, "Part II: Check the box for 'Transfer of Registration/Home RDO'");
+  checklistItem(doc, `New RDO: RDO ${data.toRdoCode || "____"} - ${data.toRdoName || "____"}`);
+  checklistItem(doc, "Reason for transfer — change of business/residence address");
+  checklistItem(doc, "Attach: original Certificate of Registration (Form 2303) for annotation");
+  checklistItem(doc, "Signature over printed name, with date");
+
+  drawDisclaimerFooter(doc, REFERENCE_DISCLAIMER);
+
+  addPage(doc, "BIR GUARD — RDO TRANSFER — APPLICATION LETTER");
+  heading(doc, "Application Letter for Transfer of Registration");
+  spacer(doc, 6);
+  paragraph(doc, new Date().toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" }), 9.5, DARK, 14);
+  spacer(doc, 10);
+  paragraph(doc, "The Revenue District Officer", 9.5, DARK, 14);
+  paragraph(doc, data.toRdoCode ? `RDO ${data.toRdoCode} - ${data.toRdoName}` : "____", 9.5, DARK, 14);
+  spacer(doc, 14);
+  paragraph(doc, "Sir/Madam,", 9.5, DARK, 14);
+  spacer(doc, 6);
+  paragraph(
+    doc,
+    `I, ${data.fullName}, TIN ${data.tin || "____________"}, registered under the business name "${data.businessName || data.fullName}" ` +
+      `located at ${data.address}, am writing to formally request the transfer of my registration records from ` +
+      `${data.fromRdoCode ? `RDO ${data.fromRdoCode} - ${data.fromRdoName}` : "my current RDO"} to ` +
+      `${data.toRdoCode ? `RDO ${data.toRdoCode} - ${data.toRdoName}` : "the receiving RDO"}, pursuant to BIR Form 1905.`,
+    9.5,
+    DARK,
+    15,
+  );
+  spacer(doc, 8);
+  paragraph(doc, "Attached to this letter:", 9.5, DARK, 15);
+  spacer(doc, 4);
+  const attached = data.checklist.filter((item) => item.checked);
+  if (attached.length === 0) {
+    checklistItem(doc, "Accomplished BIR Form 1905", true);
+  } else {
+    for (const item of attached) checklistItem(doc, item.label, true);
+  }
+  spacer(doc, 8);
+  paragraph(doc, "I request confirmation of receipt and any further requirements needed to complete this transfer.", 9.5, DARK, 15);
+  spacer(doc, 8);
+  paragraph(doc, "Thank you for your assistance.", 9.5, DARK, 15);
+  spacer(doc, 24);
+  paragraph(doc, "Respectfully,", 9.5, DARK, 15);
+  spacer(doc, 30);
+  doc.page.drawLine({ start: { x: 40, y: doc.y }, end: { x: 220, y: doc.y }, thickness: 0.8, color: DARK });
+  spacer(doc, 4);
+  paragraph(doc, data.fullName, 9.5, DARK, 14);
+  paragraph(doc, "Signature over Printed Name", 8, DARK, 12);
 
   drawDisclaimerFooter(doc, LEGAL_DISCLAIMER);
   return finish(doc);

@@ -26,6 +26,7 @@ import { RdoPicker, parseRdoValue, formatRdoValue } from "@/components/dashboard
 import { PLAN_PRICING } from "@/lib/plans";
 import { PROMO, isPromoActive } from "@/lib/promo";
 import { calcBirPenalty } from "@/lib/bir-guard/penalty";
+import { RDO_CHECKLIST_ITEMS } from "@/lib/bir-guard/rdo-checklist";
 
 type Plan = "free" | "pro" | "business";
 
@@ -68,15 +69,6 @@ const FORM_TYPES = ["1701", "1701Q", "2551Q", "1601C", "0619E", "1601EQ", "2550Q
 const PRO_PRICE = isPromoActive() ? PROMO.proPricePesos : PLAN_PRICING.pro.monthly;
 const BUSINESS_PRICE = PLAN_PRICING.business.monthly;
 
-const RDO_CHECKLIST_ITEMS = [
-  { id: "form_1905", label: "Accomplished BIR Form 1905" },
-  { id: "valid_id", label: "Valid government-issued ID" },
-  { id: "cor", label: "Original COR (Certificate of Registration / Form 2303)" },
-  { id: "books", label: "Registered Books of Accounts" },
-  { id: "unused_receipts", label: "Unused Official Receipts/Invoices (for cancellation)" },
-  { id: "sec_cert", label: "Board Resolution / Secretary's Certificate (corporations only)" },
-  { id: "transfer_letter", label: "Application letter addressed to the new RDO" },
-];
 
 function statusBadge(status: BirCase["status"]) {
   if (status === "filed") return <Badge variant="success">Filed</Badge>;
@@ -949,6 +941,9 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [profileComplete, setProfileComplete] = useState(true); // optimistic until the profile fetch resolves, so the banner doesn't flash for complete profiles
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     if (!planLoaded) return;
@@ -958,13 +953,21 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
     }
     (async () => {
       try {
-        const res = await fetch("/api/bir-guard/rdo-transfer", { cache: "no-store" });
-        if (res.ok) {
-          const data = await res.json();
+        const [transferRes, profileRes] = await Promise.all([
+          fetch("/api/bir-guard/rdo-transfer", { cache: "no-store" }),
+          fetch("/api/dashboard/profile", { cache: "no-store" }),
+        ]);
+        if (transferRes.ok) {
+          const data = await transferRes.json();
           const t = data.transfer;
           setFromRdo(t?.from_rdo_code ? formatRdoValue({ code: t.from_rdo_code, name: t.from_rdo_name }) : "");
           setToRdo(t?.to_rdo_code ? formatRdoValue({ code: t.to_rdo_code, name: t.to_rdo_name }) : "");
           setChecklist(t?.checklist ?? {});
+        }
+        if (profileRes.ok) {
+          const data = await profileRes.json();
+          const p = data.profile;
+          setProfileComplete(Boolean(p?.full_name?.trim() && p?.tin_number?.trim() && p?.address?.trim()));
         }
       } finally {
         setIsLoading(false);
@@ -986,12 +989,29 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
       });
       if (res.ok) toast("Progress saved ✅");
       else toast("Failed to save — try again.");
+      return res.ok;
     } catch {
       toast("Network error — try again.");
+      return false;
     } finally {
       setIsSaving(false);
     }
   }
+
+  async function handleGenerate() {
+    // Save first so the generate endpoint (which reads the persisted draft,
+    // never the request body) always reflects what's on screen.
+    setIsGenerating(true);
+    try {
+      const saved = await handleSave();
+      if (!saved) return;
+      setIsPreviewOpen(true);
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  const rdoSelected = Boolean(parseRdoValue(fromRdo)?.code && parseRdoValue(toRdo)?.code);
 
   const doneCount = RDO_CHECKLIST_ITEMS.filter((item) => checklist[item.id]).length;
 
@@ -1046,10 +1066,30 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
               </div>
             </div>
 
-            <Button onClick={handleSave} disabled={isSaving || !isBusiness} className="w-full">
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {isSaving ? "Saving..." : "Save Progress"}
-            </Button>
+            {!profileComplete && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-3 text-sm text-amber-300">
+                <span>Complete your profile in Settings to auto-generate the 1905.</span>
+                <a href="/dashboard/settings" className="font-semibold text-[#00FF88] hover:underline">
+                  Go to Settings →
+                </a>
+              </div>
+            )}
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Button onClick={handleSave} disabled={isSaving || !isBusiness} variant="outline" className="w-full">
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {isSaving ? "Saving..." : "Save Progress"}
+              </Button>
+              <Button
+                onClick={handleGenerate}
+                disabled={isGenerating || isSaving || !isBusiness || !profileComplete || !rdoSelected}
+                title={!rdoSelected ? "Select both From and To RDO first" : undefined}
+                className="w-full"
+              >
+                {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                Generate Docs
+              </Button>
+            </div>
           </>
         )}
       </CardContent>
@@ -1057,7 +1097,40 @@ function RdoTransferTab({ isBusiness, planLoaded }: { isBusiness: boolean; planL
   );
 
   if (!planLoaded) return content;
-  if (isBusiness) return content;
+  if (isBusiness)
+    return (
+      <>
+        {content}
+        {isPreviewOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setIsPreviewOpen(false)}>
+            <div
+              className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#1E293B] bg-[#121A22] shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-[#1E293B] px-5 py-4">
+                <h2 className="text-base font-bold text-white">1905 + Application Letter Preview</h2>
+                <button type="button" onClick={() => setIsPreviewOpen(false)} className="text-gray-500 hover:text-gray-300" aria-label="Close">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 bg-white">
+                <iframe src="/api/bir-guard/rdo-transfer/generate" className="h-[70vh] w-full" title="RDO Transfer document preview" />
+              </div>
+              <div className="border-t border-[#1E293B] p-4">
+                <a
+                  href="/api/bir-guard/rdo-transfer/generate?download=1"
+                  download="axla-rdo-transfer-1905.pdf"
+                  className="flex w-full items-center justify-center gap-2 rounded-full bg-[#00FF88] px-6 py-3 text-sm font-semibold text-black transition hover:bg-[#22C55E]"
+                >
+                  <Download className="h-4 w-4" />
+                  Download PDF
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
 
   return (
     <div className="relative">
