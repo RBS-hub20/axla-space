@@ -1,27 +1,56 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, CheckCircle2, Clock, Loader2, MapPin, AlertTriangle } from "lucide-react";
+import { Camera, CheckCircle2, Clock, Loader2, MapPin, AlertTriangle, Navigation, RotateCcw } from "lucide-react";
 
 interface EmployeeInfo {
   name: string;
   shop_name: string;
   last_log_type: "in" | "out" | null;
   working_since: string | null;
+  shop_lat: number | null;
+  shop_lng: number | null;
 }
 
-type Step = "loading" | "invalid" | "ready" | "selfie" | "submitting" | "done" | "error";
+type Step =
+  | "loading"
+  | "invalid"
+  | "primer"
+  | "locating"
+  | "location_slow"
+  | "location_error"
+  | "selfie_prompt"
+  | "camera_live"
+  | "selfie_ready"
+  | "submitting"
+  | "error"
+  | "done";
+
+interface Coords {
+  lat: number;
+  lng: number;
+  demo: boolean;
+}
+
+const GEO_TIMEOUT_MS = 15000;
+const isIOS = typeof navigator !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent);
 
 export default function ClockPage({ params }: { params: { token: string } }) {
   const { token } = params;
   const [step, setStep] = useState<Step>("loading");
   const [info, setInfo] = useState<EmployeeInfo | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [coords, setCoords] = useState<Coords | null>(null);
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [result, setResult] = useState<{ needsApproval: boolean; distance: number | null; type: "in" | "out" } | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const geoSettledRef = useRef(false);
 
   useEffect(() => {
     fetch(`/api/payroll/employee/by-token/${token}`)
@@ -32,57 +61,163 @@ export default function ClockPage({ params }: { params: { token: string } }) {
         }
         const data = await res.json();
         setInfo(data);
-        setStep("ready");
+        setStep("primer");
       })
       .catch(() => setStep("invalid"));
   }, [token]);
 
+  // Live camera stream is only attached to <video> once step === "camera_live"
+  // actually renders it — and torn down the moment we leave that step, so it
+  // never keeps recording in the background.
+  useEffect(() => {
+    if (step === "camera_live" && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    } else if (step !== "camera_live" && streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  }, [step]);
+
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      if (selfiePreview) URL.revokeObjectURL(selfiePreview);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const nextAction: "in" | "out" = info?.last_log_type === "in" ? "out" : "in";
+
+  /**
+   * Called directly from the primer button's onClick — no async/await
+   * before this line, no camera app-switch beforehand. iOS Safari only
+   * honors navigator.geolocation as a "real" user gesture when it's the
+   * immediate, synchronous result of the tap, which is why this used to
+   * live inside the (async) submit handler and silently fail there instead.
+   */
+  function handleEnableLocation() {
+    setStep("locating");
+    setErrorMessage("");
+    geoSettledRef.current = false;
+
+    const slowTimer = setTimeout(() => {
+      if (!geoSettledRef.current) {
+        setStep("location_slow");
+      }
+    }, GEO_TIMEOUT_MS);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (geoSettledRef.current) return;
+        geoSettledRef.current = true;
+        clearTimeout(slowTimer);
+        setCoords({ lat: position.coords.latitude, lng: position.coords.longitude, demo: false });
+        setStep("selfie_prompt");
+      },
+      (err) => {
+        if (geoSettledRef.current) return;
+        geoSettledRef.current = true;
+        clearTimeout(slowTimer);
+        setErrorMessage(
+          err.code === err.PERMISSION_DENIED
+            ? "Location access was denied. On iPhone: Settings → Safari → Location → Ask, or Settings → Privacy & Security → Location Services. Then reload this page."
+            : "Couldn't get your location. Please try again.",
+        );
+        setStep("location_error");
+      },
+      { enableHighAccuracy: true, timeout: GEO_TIMEOUT_MS },
+    );
+  }
+
+  function handleUseDemoMode() {
+    geoSettledRef.current = true;
+    if (info?.shop_lat == null || info?.shop_lng == null) {
+      setErrorMessage("Demo Mode isn't ready yet — ask your employer to set the shop location first, then try again.");
+      setStep("location_error");
+      return;
+    }
+    setCoords({ lat: info.shop_lat, lng: info.shop_lng, demo: true });
+    setStep("selfie_prompt");
+  }
+
+  function handleSelfieButtonClick() {
+    if (isIOS && navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({ video: { facingMode: "user" }, audio: false })
+        .then((stream) => {
+          streamRef.current = stream;
+          setStep("camera_live");
+        })
+        .catch(() => fileInputRef.current?.click());
+      return;
+    }
+    fileInputRef.current?.click();
+  }
 
   function handleSelfieChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setSelfieFile(file);
     setSelfiePreview(URL.createObjectURL(file));
-    setStep("selfie");
+    setStep("selfie_ready");
+  }
+
+  function handleCapturePhoto() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth || 480;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        const file = new File([blob], `selfie-${Date.now()}.jpg`, { type: "image/jpeg" });
+        setSelfieFile(file);
+        setSelfiePreview(URL.createObjectURL(file));
+        setStep("selfie_ready");
+      },
+      "image/jpeg",
+      0.85,
+    );
+  }
+
+  function handleRetake() {
+    if (selfiePreview) URL.revokeObjectURL(selfiePreview);
+    setSelfieFile(null);
+    setSelfiePreview(null);
+    setStep("selfie_prompt");
   }
 
   async function handleConfirm() {
-    if (!selfieFile) return;
+    if (!selfieFile || !coords) return;
     setStep("submitting");
     setErrorMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("token", token);
+      formData.append("type", nextAction);
+      formData.append("lat", String(coords.lat));
+      formData.append("lng", String(coords.lng));
+      formData.append("code", code.trim());
+      formData.append("selfie", selfieFile);
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const formData = new FormData();
-          formData.append("token", token);
-          formData.append("type", nextAction);
-          formData.append("lat", String(position.coords.latitude));
-          formData.append("lng", String(position.coords.longitude));
-          formData.append("code", code.trim());
-          formData.append("selfie", selfieFile);
-
-          const res = await fetch("/api/payroll/timekeeping/clock", { method: "POST", body: formData });
-          const data = await res.json();
-          if (!res.ok) {
-            setErrorMessage(data.error || "Something went wrong. Please try again.");
-            setStep("error");
-            return;
-          }
-          setResult({ needsApproval: data.needs_approval, distance: data.distance, type: nextAction });
-          setStep("done");
-        } catch {
-          setErrorMessage("Network error — please try again.");
-          setStep("error");
-        }
-      },
-      () => {
-        setErrorMessage("Location access is required to clock in/out. Please enable it and try again.");
+      const res = await fetch("/api/payroll/timekeeping/clock", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMessage(data.error || "Something went wrong. Please try again.");
         setStep("error");
-      },
-      { enableHighAccuracy: true, timeout: 15000 },
-    );
+        return;
+      }
+      setResult({ needsApproval: data.needs_approval, distance: data.distance, type: nextAction });
+      setStep("done");
+    } catch {
+      setErrorMessage("Network error — please try again.");
+      setStep("error");
+    }
   }
 
   return (
@@ -109,7 +244,7 @@ export default function ClockPage({ params }: { params: { token: string } }) {
           </div>
         )}
 
-        {info && (step === "ready" || step === "selfie" || step === "submitting") && (
+        {info && step !== "loading" && step !== "invalid" && (
           <div className="space-y-5">
             <div className="text-center">
               <p className="text-xl font-bold text-white">Hi {info.name}! 👋</p>
@@ -123,19 +258,93 @@ export default function ClockPage({ params }: { params: { token: string } }) {
               )}
             </div>
 
-            {step === "ready" && (
+            {/* Always mounted (not step-gated) so refs from other steps —
+                e.g. the camera_live fallback button — can reliably reach it
+                the instant they call fileInputRef.current?.click(). */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="user"
+              onChange={handleSelfieChange}
+              onClick={(e) => {
+                (e.currentTarget as HTMLInputElement).value = "";
+              }}
+              className="hidden"
+            />
+
+            {step === "primer" && (
               <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="user"
-                  onChange={handleSelfieChange}
-                  className="hidden"
-                />
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={handleEnableLocation}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#00FF88] py-4 text-base font-bold text-black transition hover:bg-[#22C55E]"
+                >
+                  <Navigation className="h-5 w-5" />
+                  Allow Location &amp; Continue
+                </button>
+                <p className="text-center text-xs text-gray-500">We use this once, just to confirm you&apos;re at the shop.</p>
+              </>
+            )}
+
+            {step === "locating" && (
+              <div className="flex flex-col items-center gap-3 py-6 text-center">
+                <Loader2 className="h-8 w-8 animate-spin text-[#00FF88]" />
+                <p className="text-sm font-semibold text-white">Getting your location... 📍</p>
+                <p className="text-xs text-gray-500">If iOS asks to allow location, tap Allow.</p>
+              </div>
+            )}
+
+            {step === "location_slow" && (
+              <div className="flex flex-col items-center gap-3 py-4 text-center">
+                <AlertTriangle className="h-8 w-8 text-amber-400" />
+                <p className="text-sm font-semibold text-white">GPS is taking a while.</p>
+                <p className="text-xs text-gray-500">Keep waiting, or continue without exact GPS — your employer can still review it.</p>
+                <button
+                  type="button"
+                  onClick={handleUseDemoMode}
+                  className="mt-1 w-full rounded-xl border border-[#00FF88]/40 py-3 text-sm font-semibold text-[#00FF88] hover:bg-[#00FF88]/10"
+                >
+                  Use Demo Mode
+                </button>
+                <button type="button" onClick={handleEnableLocation} className="text-xs text-gray-500 underline">
+                  Try GPS again
+                </button>
+              </div>
+            )}
+
+            {step === "location_error" && (
+              <div className="flex flex-col items-center gap-3 py-4 text-center">
+                <AlertTriangle className="h-8 w-8 text-red-400" />
+                <p className="text-sm font-semibold text-white">Location Denied</p>
+                <p className="text-xs text-gray-400">{errorMessage}</p>
+                <button
+                  type="button"
+                  onClick={handleEnableLocation}
+                  className="mt-1 w-full rounded-xl bg-[#00FF88] py-3 text-sm font-bold text-black hover:bg-[#22C55E]"
+                >
+                  Try Again
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUseDemoMode}
+                  className="w-full rounded-xl border border-white/10 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5"
+                >
+                  Use Demo Mode
+                </button>
+              </div>
+            )}
+
+            {step === "selfie_prompt" && (
+              <>
+                {coords?.demo && (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-center text-[11px] text-amber-300">
+                    Demo Mode — using the shop&apos;s location instead of your exact GPS.
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSelfieButtonClick}
                   className={`flex w-full items-center justify-center gap-2 rounded-xl py-4 text-base font-bold transition ${
                     nextAction === "in" ? "bg-[#00FF88] text-black hover:bg-[#22C55E]" : "bg-amber-500 text-black hover:bg-amber-400"
                   }`}
@@ -143,14 +352,54 @@ export default function ClockPage({ params }: { params: { token: string } }) {
                   <Camera className="h-5 w-5" />
                   {nextAction === "in" ? "Time In" : "Time Out"}
                 </button>
-                <p className="text-center text-xs text-gray-500">Taps open your camera for a quick selfie, then we'll ask for today's shop code.</p>
+                <p className="text-center text-xs text-gray-500">Taps open your camera for a quick selfie, then we&apos;ll ask for today&apos;s shop code.</p>
               </>
             )}
 
-            {(step === "selfie" || step === "submitting") && selfiePreview && (
+            {step === "camera_live" && (
+              <div className="space-y-3">
+                <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
+                  {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                  <video ref={videoRef} playsInline muted autoPlay className="aspect-square w-full scale-x-[-1] object-cover" />
+                </div>
+                <canvas ref={canvasRef} className="hidden" />
+                <button
+                  type="button"
+                  onClick={handleCapturePhoto}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#00FF88] py-4 text-base font-bold text-black hover:bg-[#22C55E]"
+                >
+                  <Camera className="h-5 w-5" />
+                  Capture
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep("selfie_prompt");
+                    fileInputRef.current?.click();
+                  }}
+                  className="w-full text-center text-xs text-gray-500 underline"
+                >
+                  Having trouble? Use device camera instead
+                </button>
+              </div>
+            )}
+
+            {(step === "selfie_ready" || step === "submitting") && selfiePreview && (
               <div className="space-y-4">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={selfiePreview} alt="Selfie preview" className="mx-auto h-40 w-40 rounded-xl border border-white/10 object-cover" />
+                <div className="relative mx-auto h-40 w-40">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={selfiePreview} alt="Selfie preview" className="h-40 w-40 rounded-xl border border-white/10 object-cover" />
+                  {step === "selfie_ready" && (
+                    <button
+                      type="button"
+                      onClick={handleRetake}
+                      aria-label="Retake photo"
+                      className="absolute -right-2 -top-2 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-[#1a1a1a] text-slate-300 hover:text-white"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-300">Today&apos;s Shop Code</label>
                   <input
@@ -185,7 +434,7 @@ export default function ClockPage({ params }: { params: { token: string } }) {
             <p className="text-sm font-semibold text-white">{errorMessage}</p>
             <button
               type="button"
-              onClick={() => setStep("ready")}
+              onClick={() => setStep(coords ? "selfie_ready" : "primer")}
               className="mt-2 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-200 hover:bg-white/5"
             >
               Try Again

@@ -41,7 +41,7 @@ export async function GET(_req: Request, { params }: { params: { token: string }
   }
 
   const [{ data: shop }, { data: lastLog }] = await Promise.all([
-    supabaseAdmin.from("shop_settings").select("shop_name").eq("owner_id", staff.owner_id).maybeSingle(),
+    supabaseAdmin.from("shop_settings").select("shop_name, lat, lng").eq("owner_id", staff.owner_id).maybeSingle(),
     supabaseAdmin
       .from("timekeeping_logs")
       .select("type, created_at")
@@ -59,5 +59,11 @@ export async function GET(_req: Request, { params }: { params: { token: string }
     shop_name: shop?.shop_name ?? "the shop",
     last_log_type: lastLogType,
     working_since: workingSince,
+    // Only used client-side for the Safari/iOS "Demo Mode" fallback when
+    // getCurrentPosition fails or times out — lets that clock-in still
+    // submit (correctly landing "inside" the shop) instead of leaving the
+    // staff member stuck with no way to clock in at all.
+    shop_lat: shop?.lat ?? null,
+    shop_lng: shop?.lng ?? null,
   });
 }
