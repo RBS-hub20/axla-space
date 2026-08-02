@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Users,
@@ -22,6 +22,12 @@ import {
   Building2,
   CalendarClock,
   ShieldCheck,
+  MapPin,
+  Copy,
+  QrCode,
+  Check,
+  XCircle,
+  RefreshCw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,16 +55,56 @@ import {
   type PayrollBreakdownRow,
 } from "@/lib/payroll/sahod";
 
+const CLOCK_LINK_ORIGIN = "https://axla.space";
+
 const PREMIUM_CARD =
   "rounded-2xl border-[#1E293B] bg-[#121A22] shadow-sm transition hover:border-[#00FF88]/30 hover:shadow-lg hover:shadow-green-500/10";
 const PESO = (n: number) => `₱${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+
+function maskGcash(g: string | null): string {
+  if (!g) return "—";
+  const digits = g.replace(/\D/g, "");
+  if (digits.length < 8) return g;
+  return `${digits.slice(0, 4)}****${digits.slice(-4)}`;
+}
+
+function clockLinkFor(token: string | null): string | null {
+  return token ? `${CLOCK_LINK_ORIGIN}/c/${token}` : null;
+}
 
 interface Staff {
   id: string;
   name: string;
   gcash: string | null;
   daily_rate: number;
+  clock_token: string | null;
   created_at: string;
+}
+
+interface TimekeepingLog {
+  id: string;
+  staff_id: string;
+  staff_name: string;
+  type: "in" | "out";
+  lat: number | null;
+  lng: number | null;
+  distance_meters: number | null;
+  is_outside: boolean;
+  daily_code_match: boolean;
+  needs_approval: boolean;
+  approved: boolean | null;
+  selfie_url: string | null;
+  created_at: string;
+}
+
+interface ShopSettings {
+  owner_id: string;
+  shop_name: string;
+  lat: number | null;
+  lng: number | null;
+  radius_meters: number;
+  daily_code: string | null;
+  daily_code_date: string | null;
 }
 
 interface AttendanceRow {
@@ -89,7 +135,7 @@ interface Company {
   created_at: string;
 }
 
-type Tab = "staff" | "timekeeping" | "run" | "payslip" | "reports";
+type Tab = "staff" | "timekeeping" | "run" | "payslip" | "reports" | "settings";
 
 function toast(message: string) {
   const el = document.createElement("div");
@@ -129,16 +175,19 @@ const TAB_LABELS: Record<Tab, string> = {
   run: "Payroll Run",
   payslip: "Payslip & BIR",
   reports: "Reports",
+  settings: "Settings",
 };
 
 /** Same copy is reused as the tour modal step body, the per-tab "?" tooltip, and (for Staff/Timekeeping) the data-driven empty-state message — one source of truth instead of three copies drifting apart. */
 function tabGuide(ownerId: string): Record<Tab, string> {
   return {
     staff: "Step 1: Add your staff here. Name, GCash number, Daily rate (₱479 Batangas min). This is base for salary. DOLE Guard will warn if below minimum.",
-    timekeeping: `Step 2: Where days come from. Add manual time in/out per staff, or share clock link axla.space/payroll/clock/${ownerId} for AI Selfie. No attendance = no days = ₱0 payroll — add at least 1 entry!`,
+    timekeeping:
+      "Step 2: Where days come from. Each staff gets their own AI Selfie clock link (copy it from the Staff tab) — share it, they tap Time In/Out with a selfie + location, and you approve anything outside the shop. No attendance = no days = ₱0 payroll — add at least 1 entry!",
     run: "Step 3: One-click compute. Click Compute Sahod → Select cut-off Aug 1-15 → Preview Gross = Daily Rate × Days Present → Net → Finalize. This saves to history and updates This Month Payroll KPI.",
     payslip: "Step 4: After finalizing, view PDF payslip per staff, 1-click send to GCash number, BIR 1601C + 2316 auto-generated from your runs — NO FILLUP from company profile.",
     reports: "Step 5: Monitor. Monthly history, 13th month = total/12, SIL 5 days tracker, DOLE alerts. When you have 1 run, see Explore TaxLaya upsell banner for BIR filing.",
+    settings: "Set your shop's location and geofence radius so AI Selfie clock-ins can tell if staff are actually on-site.",
   };
 }
 
@@ -480,6 +529,7 @@ export function PayrollAppDashboard({
               { id: "run", label: "Payroll Run" },
               { id: "payslip", label: "Payslip & BIR" },
               { id: "reports", label: "Reports" },
+              { id: "settings", label: "Settings" },
             ] as { id: Tab; label: string }[]
           ).map((t) => (
             <button
@@ -514,6 +564,7 @@ export function PayrollAppDashboard({
             guide={tabGuide(ownerId).timekeeping}
             onChanged={loadData}
             onUpgrade={openCheckout}
+            onGoToSettings={() => setTab("settings")}
           />
         )}
         {tab === "run" && (
@@ -540,6 +591,7 @@ export function PayrollAppDashboard({
           />
         )}
         {tab === "reports" && <ReportsTab runs={runs} tier={tier} guide={tabGuide(ownerId).reports} onUpgrade={openCheckout} />}
+        {tab === "settings" && <SettingsTab guide={tabGuide(ownerId).settings} />}
       </div>
 
       {showCompanySetup && (
@@ -798,27 +850,13 @@ function StaffTab({
                   <th className="pb-2 pr-4">Name</th>
                   <th className="pb-2 pr-4">GCash</th>
                   <th className="pb-2 pr-4">Daily Rate</th>
+                  <th className="pb-2 pr-4">Clock Link</th>
                   <th className="pb-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {staff.map((s) => (
-                  <tr key={s.id} className="border-b border-[#1E293B]/60 last:border-0">
-                    <td className="py-3 pr-4 font-medium text-white">{s.name}</td>
-                    <td className="py-3 pr-4 text-gray-300">{s.gcash || "—"}</td>
-                    <td className={`py-3 pr-4 ${Number(s.daily_rate) < DOLE_MIN_DAILY_WAGE ? "text-amber-400" : "text-gray-300"}`}>
-                      {PESO(s.daily_rate)}
-                    </td>
-                    <td className="py-3">
-                      <button
-                        type="button"
-                        onClick={() => handleRemove(s.id)}
-                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-red-900/40 px-2 text-xs text-red-300 hover:bg-red-950/30"
-                      >
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
+                  <StaffRow key={s.id} staff={s} onRemove={() => handleRemove(s.id)} />
                 ))}
               </tbody>
             </table>
@@ -832,6 +870,70 @@ function StaffTab({
   );
 }
 
+function StaffRow({ staff, onRemove }: { staff: Staff; onRemove: () => void }) {
+  const link = clockLinkFor(staff.clock_token);
+
+  async function handleCopy() {
+    if (!link) return;
+    await navigator.clipboard.writeText(link);
+    toast("Clock link copied ✅");
+  }
+
+  async function handleDownloadQr() {
+    if (!link) return;
+    const QRCode = (await import("qrcode")).default;
+    const dataUrl = await QRCode.toDataURL(link, { width: 480, margin: 2, color: { dark: "#0a0a0a", light: "#ffffff" } });
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `${staff.name.trim().replace(/\s+/g, "-").toLowerCase()}-clock-qr.png`;
+    a.click();
+  }
+
+  return (
+    <tr className="border-b border-[#1E293B]/60 last:border-0">
+      <td className="py-3 pr-4 font-medium text-white">{staff.name}</td>
+      <td className="py-3 pr-4 text-gray-300">{maskGcash(staff.gcash)}</td>
+      <td className={`py-3 pr-4 ${Number(staff.daily_rate) < DOLE_MIN_DAILY_WAGE ? "text-amber-400" : "text-gray-300"}`}>
+        {PESO(staff.daily_rate)}
+      </td>
+      <td className="py-3 pr-4">
+        {link ? (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleCopy}
+              title={link}
+              className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2 text-xs text-[#00FF88] hover:bg-[#00FF88]/10"
+            >
+              <Copy className="h-3 w-3" />
+              Copy Link
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadQr}
+              className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
+            >
+              <QrCode className="h-3 w-3" />
+              QR
+            </button>
+          </div>
+        ) : (
+          <span className="text-xs text-gray-600">—</span>
+        )}
+      </td>
+      <td className="py-3">
+        <button
+          type="button"
+          onClick={onRemove}
+          className="inline-flex h-7 items-center gap-1 rounded-lg border border-red-900/40 px-2 text-xs text-red-300 hover:bg-red-950/30"
+        >
+          Remove
+        </button>
+      </td>
+    </tr>
+  );
+}
+
 function TimekeepingTab({
   staff,
   attendance,
@@ -840,6 +942,7 @@ function TimekeepingTab({
   guide,
   onChanged,
   onUpgrade,
+  onGoToSettings,
 }: {
   staff: Staff[];
   attendance: AttendanceRow[];
@@ -848,6 +951,7 @@ function TimekeepingTab({
   guide: string;
   onChanged: () => void;
   onUpgrade: (plan?: PayrollPlan) => void;
+  onGoToSettings: () => void;
 }) {
   const [clockingId, setClockingId] = useState<string | null>(null);
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -884,88 +988,301 @@ function TimekeepingTab({
   }
 
   return (
-    <Card className={PREMIUM_CARD}>
-      <CardHeader>
-        <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      <ShopCodeBanner onGoToSettings={onGoToSettings} />
+
+      <TimekeepingLogsSection />
+
+      <Card className={PREMIUM_CARD}>
+        <CardHeader>
           <div className="flex items-center gap-2">
-            <CardTitle className="text-sm font-semibold text-white">Timekeeping — Today</CardTitle>
+            <CardTitle className="text-sm font-semibold text-white">Manual Time In/Out — Today</CardTitle>
             <GuideTooltip text={guide} />
           </div>
-          {tier === "business" || tier === "enterprise" ? (
-            <span className="rounded-full bg-[#00FF88]/15 px-2 py-0.5 text-[10px] font-bold uppercase text-[#00FF88]">AI Selfie Ready</span>
-          ) : null}
-        </div>
-      </CardHeader>
-      <CardContent>
-        {isBusinessPlusSelfieHint(tier)}
-        {!isLoading && staff.length > 0 && attendance.length === 0 && (
-          <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-300">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>{guide}</span>
-          </div>
-        )}
-        {isLoading ? (
-          <div className="h-12 w-full animate-pulse rounded-lg bg-white/5" />
-        ) : staff.length === 0 ? (
-          <p className="py-8 text-center text-sm text-gray-500">Add a staff member first.</p>
-        ) : (
-          <div className="space-y-2">
-            {staff.map((s) => {
-              const today = todaysByStaff.get(s.id);
-              const isClocking = clockingId === s.id;
-              return (
-                <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1E293B] bg-[#0B121A] px-4 py-3">
-                  <div>
-                    <p className="text-sm font-semibold text-white">{s.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {today?.time_in ? `In: ${new Date(today.time_in).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}` : "Not timed in"}
-                      {today?.time_out ? ` · Out: ${new Date(today.time_out).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}` : ""}
-                    </p>
+        </CardHeader>
+        <CardContent>
+          {!isLoading && staff.length > 0 && attendance.length === 0 && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-300">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{guide}</span>
+            </div>
+          )}
+          {isLoading ? (
+            <div className="h-12 w-full animate-pulse rounded-lg bg-white/5" />
+          ) : staff.length === 0 ? (
+            <p className="py-8 text-center text-sm text-gray-500">Add a staff member first.</p>
+          ) : (
+            <div className="space-y-2">
+              {staff.map((s) => {
+                const today = todaysByStaff.get(s.id);
+                const isClocking = clockingId === s.id;
+                return (
+                  <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#1E293B] bg-[#0B121A] px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{s.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {today?.time_in ? `In: ${new Date(today.time_in).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}` : "Not timed in"}
+                        {today?.time_out ? ` · Out: ${new Date(today.time_out).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={isClocking || Boolean(today?.time_in)}
+                        onClick={() => handleClock(s.id, "in")}
+                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2.5 text-xs text-[#00FF88] hover:bg-[#00FF88]/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <Clock className="h-3.5 w-3.5" />
+                        Time In
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isClocking || !today?.time_in || Boolean(today?.time_out)}
+                        onClick={() => handleClock(s.id, "out")}
+                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#1E293B] px-2.5 text-xs text-slate-200 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {isClocking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
+                        Time Out
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      disabled={isClocking || Boolean(today?.time_in)}
-                      onClick={() => handleClock(s.id, "in")}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2.5 text-xs text-[#00FF88] hover:bg-[#00FF88]/10 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      <Clock className="h-3.5 w-3.5" />
-                      Time In
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isClocking || !today?.time_in || Boolean(today?.time_out)}
-                      onClick={() => handleClock(s.id, "out")}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#1E293B] px-2.5 text-xs text-slate-200 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      {isClocking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
-                      Time Out
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <p className="mt-3 text-xs text-gray-500">
-          <Camera className="mr-1 inline h-3 w-3" />
-          Selfie capture is a placeholder in this phase — timekeeping records the timestamp only.
-        </p>
-        {tier === "free" && (
-          <p className="mt-1 text-xs text-gray-500">Free plan: {FREE_ATTENDANCE_LIMIT} manual entry. Upgrade to Starter ₱149/mo for real timekeeping.</p>
-        )}
-      </CardContent>
-    </Card>
+                );
+              })}
+            </div>
+          )}
+          <p className="mt-3 text-xs text-gray-500">
+            <Camera className="mr-1 inline h-3 w-3" />
+            For clocking staff in yourself, e.g. at a shared counter. Staff clocking in on their own phone should use their Clock Link from the Staff tab instead — it's the one with selfie + location verification.
+          </p>
+          {tier === "free" && (
+            <p className="mt-1 text-xs text-gray-500">Free plan: {FREE_ATTENDANCE_LIMIT} manual entry. Upgrade to Starter ₱149/mo for unlimited.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
-function isBusinessPlusSelfieHint(tier: PayrollTier) {
-  if (tier !== "business" && tier !== "enterprise") return null;
+function ShopCodeBanner({ onGoToSettings }: { onGoToSettings: () => void }) {
+  const [settings, setSettings] = useState<ShopSettings | null>(null);
+
+  useEffect(() => {
+    fetch("/api/payroll/shop/settings", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setSettings(data.settings))
+      .catch(() => {});
+  }, []);
+
   return (
-    <div className="mb-4 flex items-center gap-2 rounded-lg border border-[#00FF88]/20 bg-[#00FF88]/[0.04] px-3 py-2 text-xs text-[#00FF88]">
-      <Camera className="h-3.5 w-3.5" />
-      AI Selfie Timekeeping is enabled on your plan — camera capture UI coming soon, manual entry works today.
+    <div className="rounded-2xl border border-[#00FF88]/20 bg-[#00FF88]/[0.04] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-[#00FF88]/10 px-4 py-2 text-center">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-[#00FF88]/70">Today&apos;s Shop Code</p>
+            <p className="text-2xl font-black tracking-widest text-[#00FF88]">{settings?.daily_code ?? "····"}</p>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-white">
+              <Sparkles className="mr-1 inline h-3.5 w-3.5 text-[#00FF88]" />
+              AI Selfie Timekeeping enabled
+            </p>
+            <p className="text-xs text-gray-400">Write the code on the whiteboard. Share each staff&apos;s link from the Staff tab.</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onGoToSettings}
+          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#00FF88]/30 px-3 text-xs font-semibold text-[#00FF88] hover:bg-[#00FF88]/10"
+        >
+          <MapPin className="h-3.5 w-3.5" />
+          Shop Location
+        </button>
+      </div>
     </div>
+  );
+}
+
+type LogFilter = "all" | "inside" | "needsApproval";
+
+function TimekeepingLogsSection() {
+  const [logs, setLogs] = useState<TimekeepingLog[]>([]);
+  const [counts, setCounts] = useState({ all: 0, inside: 0, needsApproval: 0 });
+  const [isLoading, setIsLoading] = useState(true);
+  const [filter, setFilter] = useState<LogFilter>("all");
+  const [viewingSelfie, setViewingSelfie] = useState<string | null>(null);
+  const [actingId, setActingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/payroll/timekeeping/logs", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data.logs ?? []);
+        setCounts(data.counts ?? { all: 0, inside: 0, needsApproval: 0 });
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  async function handleReview(id: string, approved: boolean) {
+    setActingId(id);
+    try {
+      const res = await fetch(`/api/payroll/timekeeping/logs/${id}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved }),
+      });
+      if (res.ok) {
+        toast(approved ? "Approved ✅" : "Rejected");
+        load();
+      } else {
+        toast("Failed to update — try again.");
+      }
+    } catch {
+      toast("Network error — try again.");
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  const filtered = logs.filter((l) => {
+    if (filter === "inside") return !l.is_outside;
+    if (filter === "needsApproval") return l.needs_approval;
+    return true;
+  });
+
+  return (
+    <Card className={PREMIUM_CARD}>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-sm font-semibold text-white">Clock-In Activity</CardTitle>
+        <div className="flex gap-1 rounded-xl border border-[#1E293B] bg-[#0B121A] p-1">
+          {(
+            [
+              { id: "all", label: `All (${counts.all})` },
+              { id: "inside", label: `Inside Only (${counts.inside})` },
+              { id: "needsApproval", label: `Needs Approval (${counts.needsApproval})` },
+            ] as { id: LogFilter; label: string }[]
+          ).map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setFilter(f.id)}
+              className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                filter === f.id ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="h-12 w-full animate-pulse rounded-lg bg-white/5" />
+        ) : filtered.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-500">No clock-in activity yet — share a staff link from the Staff tab.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                  <th className="pb-2 pr-4">Time</th>
+                  <th className="pb-2 pr-4">Employee</th>
+                  <th className="pb-2 pr-4">Type</th>
+                  <th className="pb-2 pr-4">Distance</th>
+                  <th className="pb-2 pr-4">Selfie</th>
+                  <th className="pb-2 pr-4">Code</th>
+                  <th className="pb-2 pr-4">Status</th>
+                  <th className="pb-2">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((log) => (
+                  <tr key={log.id} className="border-b border-[#1E293B]/60 last:border-0">
+                    <td className="py-3 pr-4 text-gray-300">
+                      {new Date(log.created_at).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}
+                    </td>
+                    <td className="py-3 pr-4 font-medium text-white">{log.staff_name}</td>
+                    <td className="py-3 pr-4">
+                      <span className={log.type === "in" ? "text-[#00FF88]" : "text-amber-400"}>{log.type.toUpperCase()}</span>
+                    </td>
+                    <td className="py-3 pr-4 text-gray-300">
+                      {log.distance_meters === null ? (
+                        "—"
+                      ) : log.is_outside ? (
+                        <span className="text-amber-400">
+                          ⚠️ {log.distance_meters >= 1000 ? `${(log.distance_meters / 1000).toFixed(1)}km` : `${Math.round(log.distance_meters)}m`} Outside
+                        </span>
+                      ) : (
+                        <span className="text-[#00FF88]">📍 {Math.round(log.distance_meters)}m Inside</span>
+                      )}
+                    </td>
+                    <td className="py-3 pr-4">
+                      {log.selfie_url ? (
+                        <button type="button" onClick={() => setViewingSelfie(log.selfie_url)} className="block">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={log.selfie_url} alt="Selfie" className="h-10 w-10 rounded-lg border border-[#1E293B] object-cover hover:border-[#00FF88]/50" />
+                        </button>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="py-3 pr-4">{log.daily_code_match ? "✓" : "✗"}</td>
+                    <td className="py-3 pr-4">
+                      {log.needs_approval ? (
+                        <Badge variant="warning">⏳ Pending</Badge>
+                      ) : log.approved === false ? (
+                        <Badge variant="destructive">Rejected</Badge>
+                      ) : (
+                        <Badge variant="success">✅ Approved</Badge>
+                      )}
+                    </td>
+                    <td className="py-3">
+                      {log.needs_approval && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={actingId === log.id}
+                            onClick={() => handleReview(log.id, true)}
+                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2 text-xs text-[#00FF88] hover:bg-[#00FF88]/10 disabled:opacity-50"
+                          >
+                            <Check className="h-3 w-3" />
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            disabled={actingId === log.id}
+                            onClick={() => handleReview(log.id, false)}
+                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-red-900/40 px-2 text-xs text-red-300 hover:bg-red-950/30 disabled:opacity-50"
+                          >
+                            <XCircle className="h-3 w-3" />
+                            Reject
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+
+      {viewingSelfie && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setViewingSelfie(null)}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={viewingSelfie} alt="Selfie full size" className="max-h-[80vh] max-w-full rounded-2xl border border-white/10" />
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -1490,5 +1807,251 @@ function TaxLayaUpsellBanner() {
         Explore TaxLaya →
       </a>
     </div>
+  );
+}
+
+const BATANGAS_CITY = { lat: 13.7565, lng: 121.0583 };
+const LEAFLET_VERSION = "1.9.4";
+
+/**
+ * Vanilla Leaflet loaded from a pinned CDN version, not the npm package —
+ * avoids the classic webpack-breaks-Leaflet's-default-marker-icon-paths
+ * problem entirely, and needs no API key (OpenStreetMap tiles are free).
+ * Loaded once and cached on `window.L` if the map picker mounts more than
+ * once in a session.
+ */
+function ShopLocationMap({
+  lat,
+  lng,
+  radius,
+  onChange,
+}: {
+  lat: number;
+  lng: number;
+  radius: number;
+  onChange: (lat: number, lng: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const circleRef = useRef<any>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function ensureLeafletLoaded() {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((window as any).L) return;
+      await new Promise<void>((resolve, reject) => {
+        if (!document.querySelector('link[data-leaflet]')) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.css`;
+          link.setAttribute("data-leaflet", "1");
+          document.head.appendChild(link);
+        }
+        const script = document.createElement("script");
+        script.src = `https://unpkg.com/leaflet@${LEAFLET_VERSION}/dist/leaflet.js`;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("Failed to load map"));
+        document.body.appendChild(script);
+      });
+    }
+
+    ensureLeafletLoaded().then(() => {
+      if (cancelled || !containerRef.current || mapRef.current) return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const L = (window as any).L;
+      const map = L.map(containerRef.current).setView([lat, lng], 17);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+        maxZoom: 19,
+      }).addTo(map);
+      const marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+      const circle = L.circle([lat, lng], { radius, color: "#00FF88", fillColor: "#00FF88", fillOpacity: 0.15 }).addTo(map);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      function handleMove(newLat: number, newLng: number) {
+        circle.setLatLng([newLat, newLng]);
+        onChange(newLat, newLng);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      marker.on("dragend", () => {
+        const pos = marker.getLatLng();
+        handleMove(pos.lat, pos.lng);
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      map.on("click", (e: any) => {
+        marker.setLatLng(e.latlng);
+        handleMove(e.latlng.lat, e.latlng.lng);
+      });
+
+      mapRef.current = map;
+      markerRef.current = marker;
+      circleRef.current = circle;
+    });
+
+    return () => {
+      cancelled = true;
+      mapRef.current?.remove();
+      mapRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Marker/view follow lat/lng when set programmatically (e.g. "Use My Location"), not on every render.
+  useEffect(() => {
+    if (markerRef.current && mapRef.current) {
+      markerRef.current.setLatLng([lat, lng]);
+      circleRef.current?.setLatLng([lat, lng]);
+      mapRef.current.setView([lat, lng]);
+    }
+  }, [lat, lng]);
+
+  useEffect(() => {
+    circleRef.current?.setRadius(radius);
+  }, [radius]);
+
+  return <div ref={containerRef} className="h-64 w-full rounded-xl border border-[#1E293B]" />;
+}
+
+function SettingsTab({ guide }: { guide: string }) {
+  const [settings, setSettings] = useState<ShopSettings | null>(null);
+  const [shopName, setShopName] = useState("");
+  const [lat, setLat] = useState(BATANGAS_CITY.lat);
+  const [lng, setLng] = useState(BATANGAS_CITY.lng);
+  const [radius, setRadius] = useState(150);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/payroll/shop/settings", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data?.settings) return;
+        const s: ShopSettings = data.settings;
+        setSettings(s);
+        setShopName(s.shop_name);
+        if (s.lat !== null) setLat(s.lat);
+        if (s.lng !== null) setLng(s.lng);
+        setRadius(s.radius_meters);
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  function handleUseMyLocation() {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLat(pos.coords.latitude);
+        setLng(pos.coords.longitude);
+      },
+      () => toast("Couldn't get your location — check browser permissions."),
+    );
+  }
+
+  async function handleSave() {
+    if (!shopName.trim()) {
+      toast("Shop name is required.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/payroll/shop/update-location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lat, lng, radius, shopName: shopName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast(data.error || "Failed to save shop location.");
+        return;
+      }
+      setSettings(data.settings);
+      toast("Shop location saved ✅");
+    } catch {
+      toast("Network error — try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <Card className={PREMIUM_CARD}>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-sm font-semibold text-white">Shop Settings</CardTitle>
+          <GuideTooltip text={guide} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {isLoading ? (
+          <div className="h-64 w-full animate-pulse rounded-xl bg-white/5" />
+        ) : (
+          <>
+            <div className="flex items-center justify-between rounded-xl border border-[#00FF88]/20 bg-[#00FF88]/[0.04] px-4 py-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-[#00FF88]/70">Today&apos;s Shop Code</p>
+                <p className="text-3xl font-black tracking-widest text-[#00FF88]">{settings?.daily_code ?? "····"}</p>
+              </div>
+              <RefreshCw className="h-5 w-5 text-[#00FF88]/50" />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-300">Shop Name</label>
+              <Input value={shopName} onChange={(e) => setShopName(e.target.value)} placeholder="DOUBLE R WATER" className="border-[#1E293B] bg-[#0B121A]" />
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-sm font-medium text-slate-300">Shop Location</label>
+                <button
+                  type="button"
+                  onClick={handleUseMyLocation}
+                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
+                >
+                  <MapPin className="h-3 w-3" />
+                  Use My Location
+                </button>
+              </div>
+              <ShopLocationMap
+                lat={lat}
+                lng={lng}
+                radius={radius}
+                onChange={(newLat, newLng) => {
+                  setLat(newLat);
+                  setLng(newLng);
+                }}
+              />
+              <p className="mt-1 text-[11px] text-gray-500">Drag the pin or tap the map to set your shop's exact spot.</p>
+            </div>
+
+            <div>
+              <div className="mb-1 flex items-center justify-between">
+                <label className="text-sm font-medium text-slate-300">Geofence Radius</label>
+                <span className="text-sm font-bold text-[#00FF88]">{radius}m</span>
+              </div>
+              <input
+                type="range"
+                min={50}
+                max={500}
+                step={10}
+                value={radius}
+                onChange={(e) => setRadius(Number(e.target.value))}
+                className="w-full accent-[#00FF88]"
+              />
+              <p className="mt-1 text-[11px] text-gray-500">Clock-ins beyond this radius are flagged for your approval, not blocked.</p>
+            </div>
+
+            <Button onClick={handleSave} disabled={isSaving} className="w-full">
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {isSaving ? "Saving..." : "Save Shop Location"}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
