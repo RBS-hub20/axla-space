@@ -14,12 +14,12 @@ export function PayrollHeroCta() {
     try {
       const res = await fetch("/api/payroll/status", { cache: "no-store" });
       if (res.status === 401) {
-        router.push(`/login?next=${encodeURIComponent("/payroll/app")}`);
+        router.push(`/payroll/login?next=${encodeURIComponent("/payroll/app")}`);
         return;
       }
       router.push("/payroll/app");
     } catch {
-      router.push(`/login?next=${encodeURIComponent("/payroll/app")}`);
+      router.push(`/payroll/login?next=${encodeURIComponent("/payroll/app")}`);
     } finally {
       setIsChecking(false);
     }

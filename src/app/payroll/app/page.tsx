@@ -26,7 +26,7 @@ function isPayrollPlan(value: string | undefined): value is PayrollPlan {
  */
 export default async function PayrollAppPage({ searchParams }: { searchParams: { checkout?: string; plan?: string } }) {
   const user = await getCurrentUser();
-  if (!user) redirect(`/login?next=${encodeURIComponent("/payroll/app")}`);
+  if (!user) redirect(`/payroll/login?next=${encodeURIComponent("/payroll/app")}`);
 
   if (searchParams.checkout === "success") {
     return <ConfirmPayrollCheckout />;

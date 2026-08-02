@@ -203,7 +203,7 @@ export function PayrollAppDashboard({
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
-    router.replace("/login");
+    router.replace("/payroll/login");
     router.refresh();
   }
 
@@ -1041,54 +1041,101 @@ function ReportsTab({ runs, tier, onUpgrade }: { runs: PayrollRun[]; tier: Payro
   const thirteenthMonthAccrual = ytdTotal / 12;
 
   return (
-    <Card className={PREMIUM_CARD}>
-      <CardHeader>
-        <CardTitle className="text-sm font-semibold text-white">Reports</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {runs.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-center">
-            <FileText className="h-10 w-10 text-[#00FF88]" />
-            <p className="text-sm font-semibold text-white">No payroll history yet.</p>
-            {tier === "free" && (
-              <Button size="sm" onClick={() => onUpgrade()} className="mt-2">
-                Upgrade to Unlock
-              </Button>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
-                <p className="text-xs text-gray-500">YTD Payroll ({currentYear})</p>
-                <p className="mt-1 text-xl font-bold text-white">{PESO(ytdTotal)}</p>
-              </div>
-              <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
-                <p className="text-xs text-gray-500">13th Month Accrual (YTD ÷ 12)</p>
-                <p className="mt-1 text-xl font-bold text-[#00FF88]">{PESO(thirteenthMonthAccrual)}</p>
-              </div>
+    <div className="space-y-4">
+      <Card className={PREMIUM_CARD}>
+        <CardHeader>
+          <CardTitle className="text-sm font-semibold text-white">Reports</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {runs.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-10 text-center">
+              <FileText className="h-10 w-10 text-[#00FF88]" />
+              <p className="text-sm font-semibold text-white">No payroll history yet.</p>
+              {tier === "free" && (
+                <Button size="sm" onClick={() => onUpgrade()} className="mt-2">
+                  Upgrade to Unlock
+                </Button>
+              )}
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
-                    <th className="pb-2 pr-4">Month</th>
-                    <th className="pb-2">Total Sahod</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((r) => (
-                    <tr key={r.id} className="border-b border-[#1E293B]/60 last:border-0">
-                      <td className="py-2 pr-4 text-white">{r.month}</td>
-                      <td className="py-2 text-gray-300">{PESO(r.total_sahod)}</td>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
+                  <p className="text-xs text-gray-500">YTD Payroll ({currentYear})</p>
+                  <p className="mt-1 text-xl font-bold text-white">{PESO(ytdTotal)}</p>
+                </div>
+                <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
+                  <p className="text-xs text-gray-500">13th Month Accrual (YTD ÷ 12)</p>
+                  <p className="mt-1 text-xl font-bold text-[#00FF88]">{PESO(thirteenthMonthAccrual)}</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                      <th className="pb-2 pr-4">Month</th>
+                      <th className="pb-2">Total Sahod</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {runs.map((r) => (
+                      <tr key={r.id} className="border-b border-[#1E293B]/60 last:border-0">
+                        <td className="py-2 pr-4 text-white">{r.month}</td>
+                        <td className="py-2 text-gray-300">{PESO(r.total_sahod)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          )}
+        </CardContent>
+      </Card>
+
+      {runs.length >= 1 && <TaxLayaUpsellBanner />}
+    </div>
+  );
+}
+
+const UPSELL_DISMISSED_KEY = "axla_payroll_taxlaya_upsell_dismissed";
+
+/**
+ * Cross-sell, not a paywall — Payroll is the entry product here, TaxLaya is
+ * the expansion. Only shown once the user has at least one finalized
+ * payroll run (a real signal they've gotten value, not just poking around
+ * on the free tier), and dismissible forever via localStorage so it never
+ * nags a "no thanks" back into view on every visit.
+ */
+function TaxLayaUpsellBanner() {
+  const [dismissed, setDismissed] = useState(() => typeof window !== "undefined" && localStorage.getItem(UPSELL_DISMISSED_KEY) === "1");
+
+  if (dismissed) return null;
+
+  function handleDismiss() {
+    localStorage.setItem(UPSELL_DISMISSED_KEY, "1");
+    setDismissed(true);
+  }
+
+  return (
+    <div className="relative rounded-2xl border border-[#00FF88]/20 bg-[#00FF88]/[0.04] p-5">
+      <button
+        type="button"
+        onClick={handleDismiss}
+        className="absolute right-3 top-3 text-gray-500 hover:text-gray-300"
+        aria-label="Dismiss"
+      >
+        <X className="h-4 w-4" />
+      </button>
+      <p className="pr-6 text-sm font-semibold text-white">Loving Axla Payroll?</p>
+      <p className="mt-1 pr-6 text-sm text-gray-400">
+        Auto-compute your BIR 2551Q &amp; 1701Q too — same Axla account, no new signup.
+      </p>
+      <a
+        href="/dashboard?utm_source=payroll_upsell"
+        className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-[#00FF88] hover:underline"
+      >
+        Explore TaxLaya →
+      </a>
+    </div>
   );
 }

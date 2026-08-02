@@ -81,12 +81,11 @@ export function PayrollPricing() {
     setLoadingPlan(plan);
     try {
       const res = await fetch("/api/payroll/status", { cache: "no-store" });
-      const next = `/payroll/app?plan=${plan}`;
       if (res.status === 401) {
-        router.push(`/login?next=${encodeURIComponent(next)}`);
+        router.push(`/payroll/login?plan=${plan}&next=${encodeURIComponent("/payroll/app")}`);
         return;
       }
-      router.push(next);
+      router.push(`/payroll/app?plan=${plan}`);
     } catch {
       setError("Network error. Please try again.");
     } finally {

@@ -21,7 +21,7 @@ export default function PayrollPage() {
     <main className="bg-[#0B0F1A] text-white">
       <div className="sticky top-0 z-50">
         <PayrollPromoCountdown />
-        <Navbar loginHref={`/login?next=${encodeURIComponent("/payroll/app")}`} ctaHref="#pricing" />
+        <Navbar loginHref={`/payroll/login?next=${encodeURIComponent("/payroll/app")}`} ctaHref="#pricing" />
       </div>
 
       {/* Hero */}
