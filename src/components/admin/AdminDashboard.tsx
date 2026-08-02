@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Download, LogOut, RefreshCw } from "lucide-react";
+import { Download, LogOut, RefreshCw, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -31,11 +32,13 @@ import { RecentPaymentsFeed } from "@/components/admin/RecentPaymentsFeed";
 import { SubscribersTable } from "@/components/admin/SubscribersTable";
 import { UserMap } from "@/components/admin/UserMap";
 import { TopReferrerCard } from "@/components/admin/TopReferrerCard";
+import { PayrollStatsCards } from "@/components/admin/PayrollStatsCards";
+import { PayrollWaitlistTable } from "@/components/admin/PayrollWaitlistTable";
 import type { ChatMessageRow, WaitlistRow } from "@/lib/supabase/admin";
 import type { PaymentsPayload } from "@/lib/payments-stats";
 import type { ReferralStats } from "@/app/api/referral/stats/route";
 
-type Tab = "overview" | "subscribers" | "compliance" | "jarvis-hud";
+type Tab = "overview" | "subscribers" | "payroll" | "compliance" | "jarvis-hud";
 
 const AUTO_REFRESH_MS = 30_000;
 
@@ -249,6 +252,15 @@ export function AdminDashboard() {
             </button>
             <button
               type="button"
+              onClick={() => setTab("payroll")}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                tab === "payroll" ? "bg-taxlaya-green text-gray-950" : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              Payroll
+            </button>
+            <button
+              type="button"
               onClick={() => setTab("compliance")}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
                 tab === "compliance" ? "bg-taxlaya-green text-gray-950" : "text-gray-400 hover:text-gray-200"
@@ -285,6 +297,20 @@ export function AdminDashboard() {
               onRefresh={fetchData}
             />
           )
+        ) : tab === "payroll" ? (
+          payments?.payroll && (
+            <div className="space-y-4">
+              <PayrollStatsCards payroll={payments.payroll} />
+              {payments.payroll.isMock && (
+                <span className="inline-block rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-inset ring-amber-500/30">
+                  Demo data — no live Payroll payments yet
+                </span>
+              )}
+              <RevenueChart data={payments.payroll.revenueByDay} />
+              <RecentPaymentsFeed payments={payments.payroll.recentPayments} />
+              <PayrollWaitlistTable subscriptionsByEmail={payments.payroll.subscriptionsByEmail} waitlistSignups={signups} />
+            </div>
+          )
         ) : tab === "compliance" ? (
           <ComplianceTable />
         ) : tab === "jarvis-hud" ? (
@@ -313,6 +339,18 @@ export function AdminDashboard() {
               <div className="space-y-4">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Revenue</h2>
                 <PaymentsStatsCards stats={payments.stats} />
+                {payments.payroll && (
+                  <Card className="max-w-xs">
+                    <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle>Payroll MRR</CardTitle>
+                      <TrendingUp className="h-4 w-4 text-accent" />
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-2xl font-bold text-white">₱{Math.round(payments.payroll.stats.mrr).toLocaleString()}</p>
+                      <p className="mt-1 text-xs text-gray-500">{payments.payroll.stats.activePaidUsers} active Payroll subscriber{payments.payroll.stats.activePaidUsers === 1 ? "" : "s"}</p>
+                    </CardContent>
+                  </Card>
+                )}
                 {invoicesPaidTotal !== null && (
                   <p className="text-xs text-gray-500">
                     Invoices Paid Total: <span className="text-gray-300">PHP {invoicesPaidTotal.toLocaleString()}</span> + PayMongo{" "}

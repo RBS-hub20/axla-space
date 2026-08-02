@@ -21,16 +21,16 @@ function isPayrollPlan(value: unknown): value is PayrollPlan {
  * Payroll subscription must always be tied to a real account from the
  * start, no anonymous-then-claim-later flow.
  *
- * Deliberately uses createPayMongoOneTimeCheckout (no email collected at
- * PayMongo, no send_email_receipt) rather than createPayMongoCheckoutSession
- * — the latter sets `billing.email`, which would make the shared
- * /api/webhooks/paymongo handler pick this payment up via its email-presence
- * check and misfile it as a TaxLaya subscription (its derivePlan() matches
- * the literal word "business", which the Payroll Business tier's own name
- * would trigger). Confirmation instead happens synchronously at
- * /api/payroll/checkout/confirm once the user is redirected back — same
- * verified-status pattern already proven for Negosyo Tracker
- * (src/app/api/negosyo-tracker/download).
+ * Uses createPayMongoOneTimeCheckout with a synthetic
+ * axla-payroll+{timestamp}@axla.space `email` — NOT the buyer's real
+ * address — purely so /api/webhooks/paymongo's dedicated early payroll
+ * branch can record this payment into the shared payments/subscriptions
+ * tables for admin-dashboard visibility (Payroll tab). Real access control
+ * never depends on that: it's confirmed synchronously at
+ * /api/payroll/checkout/confirm once the user is redirected back (same
+ * verified-status pattern already proven for Negosyo Tracker), which is
+ * what actually activates payroll_subscriptions and is tied to the real
+ * logged-in account, not this placeholder.
  */
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -67,6 +67,7 @@ export async function POST(req: Request) {
     description,
     successUrl: SUCCESS_URL,
     cancelUrl: CANCEL_URL,
+    email: `axla-payroll+${Date.now()}@axla.space`,
   });
 
   if (!result.url || !result.checkoutSessionId) {

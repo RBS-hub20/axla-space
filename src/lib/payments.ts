@@ -133,6 +133,19 @@ export interface OneTimeCheckoutParams {
   description: string;
   successUrl: string;
   cancelUrl: string;
+  /**
+   * Optional — omitted entirely for true anonymous one-time purchases
+   * (Negosyo Tracker), which is what keeps them invisible to
+   * /api/webhooks/paymongo's email-presence check and unable to trigger its
+   * subscriptions upsert. Axla Payroll's checkout (src/app/api/payroll/checkout)
+   * DOES pass one (a synthetic axla-payroll+{timestamp}@axla.space, not a
+   * real account address) specifically so that webhook's dedicated early
+   * payroll branch can pick the payment up for admin-dashboard visibility —
+   * that branch matches on the "axla-payroll+" prefix and writes
+   * payroll_starter/business/enterprise, never "pro"/"business", so it can't
+   * be confused with a real TaxLaya subscription either way.
+   */
+  email?: string;
 }
 
 export interface OneTimeCheckoutResult {
@@ -143,14 +156,14 @@ export interface OneTimeCheckoutResult {
 
 /**
  * Same PayMongo account, same secret key, same Checkout Sessions API as
- * createPayMongoCheckoutSession above — this variant exists for one-time,
- * non-subscription product purchases (e.g. Negosyo Tracker's ₱149 download)
- * that don't fit that function's plan/billingCycle-shaped params and, unlike
- * a subscription purchase, must NEVER cause /api/webhooks/paymongo's
- * subscriptions upsert to fire. Callers verify payment via
- * getPayMongoCheckoutSessionStatus() below rather than relying on that
- * shared webhook, so a one-time buyer can never be silently upgraded to a
- * recurring "pro" subscription.
+ * createPayMongoCheckoutSession above — this variant exists for one-time
+ * product purchases that don't fit that function's plan/billingCycle-shaped
+ * params. Callers that don't pass `email` (Negosyo Tracker) verify payment
+ * via getPayMongoCheckoutSessionStatus() below rather than relying on the
+ * shared webhook at all, so an anonymous buyer can never be silently
+ * upgraded to anything. Callers that DO pass `email` (Axla Payroll) still
+ * verify the same way for real access control — the webhook pickup is
+ * purely for admin reporting, see OneTimeCheckoutParams.email above.
  */
 export async function createPayMongoOneTimeCheckout(params: OneTimeCheckoutParams): Promise<OneTimeCheckoutResult> {
   if (!PAYMONGO_SECRET_KEY) {
@@ -179,11 +192,12 @@ export async function createPayMongoOneTimeCheckout(params: OneTimeCheckoutParam
             payment_method_types: PAYMONGO_ACTIVE_PAYMENT_METHODS,
             success_url: params.successUrl,
             cancel_url: params.cancelUrl,
-            // No email is collected in this flow (no account/login needed
-            // for a Negosyo Tracker purchase) — nothing to send a receipt
-            // to, so this is off rather than silently failing per-payment.
+            // Always off, even when `email` is set — for Payroll that email
+            // is a synthetic per-transaction placeholder for the webhook to
+            // key on, not a real inbox anyone reads a receipt from.
             send_email_receipt: false,
             show_line_items: true,
+            ...(params.email ? { billing: { email: params.email } } : {}),
           },
         },
       }),

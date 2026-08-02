@@ -44,6 +44,12 @@ interface JarvisStats {
   paidLast30Days: number;
   /** True only when the page_views query failed with Postgres 42P01 (undefined_table) — lets Jarvis say the table isn't set up yet instead of silently reporting 0 visitors. */
   pageViewsTableMissing: boolean;
+  /** Axla Payroll — same payments/subscriptions rows as paymongoRevenue/mrr above, filtered to product="axla_payroll" / plan starting "payroll_" so this never disagrees with the admin dashboard's Payroll tab. */
+  payrollTotalSignups: number;
+  payrollMrr: number;
+  payrollRevenue: number;
+  payrollActiveUsers: number;
+  payrollFailedPayments: number;
 }
 
 interface SourceBreakdown {
@@ -289,7 +295,7 @@ async function gatherStats(): Promise<{
     supabaseAdmin.from("chat_messages").select("created_at, message"),
     supabaseAdmin.from("invoices").select("total, status, created_at"),
     supabaseAdmin.from("business_registrations").select("type, data"),
-    supabaseAdmin.from("payments").select("id, email, amount, currency, status, provider, payment_method, plan, created_at"),
+    supabaseAdmin.from("payments").select("id, email, amount, currency, status, provider, payment_method, plan, product, created_at"),
     supabaseAdmin
       .from("subscriptions")
       .select("email, plan, status, amount, provider, billing_cycle, current_period_start, current_period_end, created_at"),
@@ -342,6 +348,18 @@ async function gatherStats(): Promise<{
       .filter((s) => s.status === "active")
       .reduce((sum, s) => sum + (s.billing_cycle === "yearly" ? Number(s.amount) / 12 : Number(s.amount)), 0),
   );
+
+  // Axla Payroll — a payroll subscription's plan value is always one of
+  // payroll_starter/payroll_business/payroll_enterprise (never "pro"/
+  // "business"), so this filter can never accidentally include a real
+  // TaxLaya subscriber. See migration 018 for why payroll shares this table
+  // rather than getting its own.
+  const payrollSubs = (subscriptions ?? []).filter((s) => s.plan?.startsWith("payroll_"));
+  const payrollActiveSubs = payrollSubs.filter((s) => s.status === "active");
+  const payrollMrr = Math.round(payrollActiveSubs.reduce((sum, s) => sum + Number(s.amount), 0));
+  const payrollPayments = (payments ?? []).filter((p) => p.product === "axla_payroll");
+  const payrollRevenue = payrollPayments.filter((p) => p.status === "paid").reduce((sum, p) => sum + Number(p.amount), 0);
+  const payrollFailedPayments = payrollPayments.filter((p) => p.status === "failed").length;
 
   const recentSubscribers: PaidSubscriber[] = (subscriptions ?? [])
     .filter((s) => s.status === "active")
@@ -412,6 +430,11 @@ async function gatherStats(): Promise<{
       conversionRatePct,
       paidLast30Days,
       pageViewsTableMissing,
+      payrollTotalSignups: payrollSubs.length,
+      payrollMrr,
+      payrollRevenue,
+      payrollActiveUsers: payrollActiveSubs.length,
+      payrollFailedPayments,
     },
     latestUsers: (recentProfiles ?? []).map((p) => ({ email: p.email, createdAt: p.created_at })),
     latestWaitlist: (recentWaitlist ?? []).map((w) => ({ email: w.email, createdAt: w.created_at })),
@@ -492,6 +515,18 @@ function buildAnswer(
     return (
       `📈 Sir, we have ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now, ` +
       `top source ${stats.topUtmSource ?? "n/a"}, conversion ${stats.conversionRatePct}% — ${stats.paidLast30Days} paid in last 30d.`
+    );
+  }
+
+  // Checked before the generic revenue/report branches below — "payroll
+  // revenue"/"payroll report" both contain those words too and would
+  // otherwise match the combined-product answer instead of this one.
+  if (query.includes("payroll")) {
+    return (
+      `📋 Axla Payroll, Sir — ${stats.payrollTotalSignups} total signup${stats.payrollTotalSignups === 1 ? "" : "s"}, ` +
+      `${stats.payrollActiveUsers} active. MRR PHP ${stats.payrollMrr.toLocaleString()}, ` +
+      `Total Revenue PHP ${stats.payrollRevenue.toLocaleString()}.` +
+      `${stats.payrollFailedPayments > 0 ? ` ${stats.payrollFailedPayments} failed payment${stats.payrollFailedPayments === 1 ? "" : "s"}.` : ""}`
     );
   }
 
@@ -610,6 +645,15 @@ function buildVoiceAnswer(
       `Sir, we have ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now, ` +
       `top source ${stats.topUtmSource ?? "not available"}, conversion ${stats.conversionRatePct} percent — ` +
       `${stats.paidLast30Days} paid in the last 30 days.${egg}`
+    );
+  }
+
+  if (query.includes("payroll")) {
+    return (
+      `Axla Payroll, Sir — ${stats.payrollTotalSignups} total signup${stats.payrollTotalSignups === 1 ? "" : "s"}, ` +
+      `${stats.payrollActiveUsers} active. M R R ${stats.payrollMrr.toLocaleString()} pesos, ` +
+      `Total Revenue ${stats.payrollRevenue.toLocaleString()} pesos.` +
+      `${stats.payrollFailedPayments > 0 ? ` ${stats.payrollFailedPayments} failed payment${stats.payrollFailedPayments === 1 ? "" : "s"}.` : ""}${egg}`
     );
   }
 

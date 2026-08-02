@@ -9,6 +9,8 @@ export interface SubscriptionSummary {
   /** Real current_period_end when set, else a computed fallback (period start + 30 days) — never null, so every caller can render a countdown without its own null-handling. */
   currentPeriodEnd: string;
   daysLeft: number;
+  /** The subscriptions row's own created_at — "Date Joined" for views (e.g. the Payroll tab's subscriber table) that have no separate waitlist-signup date to show instead. */
+  createdAt: string;
 }
 
 export interface PaymentsStats {
@@ -43,6 +45,13 @@ export interface PaymentsPayload {
   payments: RecentPayment[];
   subscriptionsByEmail: Record<string, SubscriptionSummary>;
   isMock: boolean;
+  /** Axla Payroll — same shape, pre-filtered to product="axla_payroll"/plan starting "payroll_", for the admin dashboard's Payroll tab. Optional so existing consumers of this type are unaffected. */
+  payroll?: PayrollPayload;
+}
+
+/** Same fields as PaymentsPayload's stats, plus totalSignups — "how many have ever subscribed" (any status), distinct from activePaidUsers ("currently active"). */
+export interface PayrollPayload extends PaymentsPayload {
+  totalSignups: number;
 }
 
 export interface RawPaymentRow {
@@ -54,6 +63,8 @@ export interface RawPaymentRow {
   provider: string;
   payment_method: string | null;
   plan: string | null;
+  /** Tags which product a payment belongs to — null/"axla_taxlaya" for the original TaxLaya Pro/Business flow, "negosyo_tracker" or "axla_payroll" for the newer ones. */
+  product?: string | null;
   created_at: string;
 }
 
@@ -147,7 +158,7 @@ export function reconcilePayments(payments: RawPaymentRow[], subscriptions: RawS
 }
 
 /** Aggregates real payments/subscriptions rows into the shape the admin dashboard renders. */
-export function aggregatePayments(rawPayments: RawPaymentRow[], subscriptions: RawSubscriptionRow[]): PaymentsPayload {
+function aggregatePaymentsCore(rawPayments: RawPaymentRow[], subscriptions: RawSubscriptionRow[]): PaymentsPayload {
   // Re-sorted after merging — synthesized rows are appended in subscriptions
   // order, not chronological order, and recentPayments below assumes the
   // array is already sorted newest-first.
@@ -208,6 +219,7 @@ export function aggregatePayments(rawPayments: RawPaymentRow[], subscriptions: R
       nextBilling: s.current_period_end,
       currentPeriodEnd,
       daysLeft: daysLeftUntil(currentPeriodEnd),
+      createdAt: s.created_at,
     };
   }
 
@@ -219,6 +231,29 @@ export function aggregatePayments(rawPayments: RawPaymentRow[], subscriptions: R
     subscriptionsByEmail,
     isMock: false,
   };
+}
+
+/**
+ * Public entry point — same aggregation as aggregatePaymentsCore, plus a
+ * `payroll` sub-payload computed from the same rows pre-filtered to Axla
+ * Payroll (product="axla_payroll" payments, plan starting "payroll_"
+ * subscriptions — see migration 018 for why Payroll shares this table).
+ * Every existing consumer of PaymentsPayload keeps working unchanged
+ * (totalRevenue/mrr/etc already include Payroll rows automatically, since
+ * the top-level aggregation was never product-filtered); `payroll` is
+ * purely additive for the dashboard's dedicated Payroll tab.
+ */
+export function aggregatePayments(rawPayments: RawPaymentRow[], subscriptions: RawSubscriptionRow[]): PaymentsPayload {
+  const combined = aggregatePaymentsCore(rawPayments, subscriptions);
+
+  const payrollPayments = rawPayments.filter((p) => p.product === "axla_payroll");
+  const payrollSubs = subscriptions.filter((s) => s.plan.startsWith("payroll_"));
+  const payroll: PayrollPayload = {
+    ...aggregatePaymentsCore(payrollPayments, payrollSubs),
+    totalSignups: payrollSubs.length,
+  };
+
+  return { ...combined, payroll };
 }
 
 /**
@@ -278,6 +313,7 @@ export function buildMockPaymentsPayload(): PaymentsPayload {
       nextBilling,
       currentPeriodEnd: nextBilling,
       daysLeft: 30 - p.daysAgo,
+      createdAt: new Date(today.getTime() - p.daysAgo * 86_400_000).toISOString(),
     };
   }
 
@@ -288,6 +324,8 @@ export function buildMockPaymentsPayload(): PaymentsPayload {
     0,
   );
 
+  const emptyPayrollRevenueByDay: RevenueDay[] = revenueByDay.map((d) => ({ date: d.date, amount: 0 }));
+
   return {
     stats: { totalRevenue, mrr, activePaidUsers, failedPayments },
     revenueByDay,
@@ -295,5 +333,14 @@ export function buildMockPaymentsPayload(): PaymentsPayload {
     payments: recentPayments,
     subscriptionsByEmail,
     isMock: true,
+    payroll: {
+      stats: { totalRevenue: 0, mrr: 0, activePaidUsers: 0, failedPayments: 0 },
+      revenueByDay: emptyPayrollRevenueByDay,
+      recentPayments: [],
+      payments: [],
+      subscriptionsByEmail: {},
+      isMock: true,
+      totalSignups: 0,
+    },
   };
 }

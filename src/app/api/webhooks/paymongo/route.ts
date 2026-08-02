@@ -4,6 +4,7 @@ import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { resend, isResendConfigured, RESEND_FROM_EMAIL } from "@/lib/resend";
 import { proUpgradeEmailTemplate, adminNewProNotificationTemplate } from "@/lib/email-templates";
 import { ADMIN_EMAIL } from "@/lib/admin";
+import { PAYROLL_PLAN_PRICING, type PayrollPlan } from "@/lib/payroll/pricing";
 import { logError } from "@/lib/log-error";
 
 const PAYMONGO_SECRET_KEY = process.env.PAYMONGO_SECRET_KEY;
@@ -31,6 +32,32 @@ function verifyPaymongoSignature(rawBody: string, header: string | null): boolea
 
 function derivePlan(description: unknown): string {
   return typeof description === "string" && description.toLowerCase().includes("business") ? "business" : "pro";
+}
+
+const PAYROLL_EMAIL_PREFIX = "axla-payroll+";
+
+/**
+ * Description first — authoritative, matches src/app/api/payroll/checkout's
+ * "Axla Payroll — {Label} plan" line item text, same pattern
+ * /api/payroll/checkout/confirm already uses. Amount is only a fallback for
+ * the rare case the description didn't come through, and is NOT reliable on
+ * its own: ₱299 is simultaneously Starter's regular price AND Business's
+ * promo price (src/lib/payroll/pricing.ts) — an amount-only match on 299
+ * would silently misclassify half the time, so an ambiguous amount returns
+ * null (skipped, logged) rather than guessing.
+ */
+function derivePayrollPlan(description: unknown, amount: number): PayrollPlan | null {
+  if (typeof description === "string" && description.toLowerCase().includes("axla payroll")) {
+    const lower = description.toLowerCase();
+    const fromDescription = (["starter", "business", "enterprise"] as const).find((p) => lower.includes(p));
+    if (fromDescription) return fromDescription;
+  }
+
+  const matches = (["starter", "business", "enterprise"] as const).filter((plan) => {
+    const pricing = PAYROLL_PLAN_PRICING[plan];
+    return amount === pricing.promo || amount === pricing.regular;
+  });
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function deriveMethod(sourceType: unknown): string {
@@ -90,10 +117,19 @@ function extractPaymentDetails(resource: Record<string, unknown> | undefined): E
   // Checkout Sessions have no top-level `amount` — only `line_items[].amount`
   // (summed, in case of multiple line items) — checked after the nested
   // payment's amount but before falling back to a bare `resourceAttrs.amount`
-  // (which Links/Payments do carry directly).
-  const lineItems = resourceAttrs.line_items as Array<{ amount?: number }> | undefined;
+  // (which Links/Payments do carry directly). Same reasoning for
+  // `description` below it — a Checkout Session has no top-level
+  // `description` attribute either (see createPayMongoOneTimeCheckout/
+  // createPayMongoCheckoutSession in src/lib/payments.ts, which both only
+  // ever set it on the line item), so line_items[0].description is checked
+  // as a fallback there too — without it this silently came back undefined
+  // for every Checkout Session-sourced payment, TaxLaya's derivePlan() and
+  // the Payroll branch's plan lookup below both depend on it actually
+  // resolving.
+  const lineItems = resourceAttrs.line_items as Array<{ amount?: number; description?: string }> | undefined;
   const lineItemsTotal = Array.isArray(lineItems) ? lineItems.reduce((sum, li) => sum + (Number(li.amount) || 0), 0) : 0;
   const amountCentavos = Number(nestedAttrs.amount) || Number(resourceAttrs.amount) || lineItemsTotal || 0;
+  const lineItemDescription = lineItems?.[0]?.description;
 
   return {
     paymentId: (nestedPayment?.id as string | undefined) ?? (resource?.id as string | undefined) ?? null,
@@ -101,7 +137,7 @@ function extractPaymentDetails(resource: Record<string, unknown> | undefined): E
     email,
     method: deriveMethod(source?.type),
     status: nestedAttrs.status ?? resourceAttrs.status,
-    description: resourceAttrs.description ?? nestedAttrs.description,
+    description: resourceAttrs.description ?? nestedAttrs.description ?? lineItemDescription,
   };
 }
 
@@ -204,6 +240,66 @@ export async function POST(req: Request) {
     // anything but lowercase here would silently strand a real paid
     // subscription that never matches on lookup.
     const email = details.email.trim().toLowerCase();
+
+    // Axla Payroll — checked and handled entirely separately, BEFORE any of
+    // the TaxLaya pro/business logic below runs, and always returns rather
+    // than falling through. This payment's email is a synthetic
+    // axla-payroll+{timestamp}@axla.space (see src/app/api/payroll/checkout),
+    // never a real account address, so this write is purely for admin
+    // dashboard visibility (Payroll tab) — real access control for the
+    // buyer's actual account already happened via
+    // /api/payroll/checkout/confirm and doesn't depend on this at all.
+    // Storing plan as "payroll_starter"/"payroll_business"/"payroll_enterprise"
+    // (never the bare "pro"/"business" this same table uses for TaxLaya)
+    // means getUserPlan()'s exact-string check can never match it either.
+    if (email.startsWith(PAYROLL_EMAIL_PREFIX)) {
+      const payrollPlan = derivePayrollPlan(details.description, amount);
+      if (!payrollPlan) {
+        logError("webhooks/paymongo: payroll payment with unrecognized amount", new Error(`email=${email} amount=${amount}`));
+        return NextResponse.json({ received: true, stored: false });
+      }
+      const subscriptionPlan = `payroll_${payrollPlan}`;
+
+      try {
+        const { error: payrollInsertError } = await supabaseAdmin.from("payments").insert({
+          email,
+          amount,
+          currency: "PHP",
+          status: isPaid ? "paid" : "failed",
+          provider: "paymongo",
+          provider_payment_id: details.paymentId,
+          payment_method: details.method,
+          plan: subscriptionPlan,
+          product: "axla_payroll",
+        });
+        if (payrollInsertError) logError("webhooks/paymongo: payroll payments insert failed", payrollInsertError);
+
+        if (isPaid) {
+          const now = new Date();
+          const nextBilling = new Date(now.getTime() + 30 * 86_400_000);
+
+          const { error: payrollSubError } = await supabaseAdmin.from("subscriptions").upsert(
+            {
+              email,
+              plan: subscriptionPlan,
+              status: "active",
+              amount,
+              provider: "paymongo",
+              billing_cycle: "monthly",
+              current_period_start: now.toISOString(),
+              current_period_end: nextBilling.toISOString(),
+            },
+            { onConflict: "email" },
+          );
+          if (payrollSubError) logError("webhooks/paymongo: payroll subscriptions upsert failed", payrollSubError);
+          else console.log(`webhooks/paymongo: payroll subscriptions upserted — email=${email} plan=${subscriptionPlan} amount=${amount}`);
+        }
+      } catch (err) {
+        logError("webhooks/paymongo: payroll DB write threw", err);
+      }
+
+      return NextResponse.json({ received: true, product: "axla_payroll" });
+    }
 
     try {
       const { error: insertError } = await supabaseAdmin.from("payments").insert({

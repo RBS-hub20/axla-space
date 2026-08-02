@@ -235,7 +235,7 @@ create table if not exists public.subscriptions (
   id uuid primary key default gen_random_uuid(),
   email text not null unique,
   user_id text references public.profiles (id) on delete set null,
-  plan text not null default 'free' check (plan in ('free', 'pro', 'business')),
+  plan text not null default 'free' check (plan in ('free', 'pro', 'business', 'payroll_starter', 'payroll_business', 'payroll_enterprise')),
   status text not null default 'trial' check (status in ('trial', 'active', 'past_due', 'canceled')),
   amount integer not null default 0,
   provider text check (provider in ('paymongo', 'xendit')),
