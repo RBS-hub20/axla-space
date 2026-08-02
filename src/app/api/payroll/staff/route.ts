@@ -2,21 +2,20 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPayrollPlan } from "@/lib/payroll/plan";
-import { PAYROLL_STAFF_LIMITS, DEFAULT_DAILY_RATE } from "@/lib/payroll/pricing";
+import { PAYROLL_STAFF_LIMITS, DEFAULT_DAILY_RATE, tierOf } from "@/lib/payroll/pricing";
 import { logError } from "@/lib/log-error";
 
+/** Freemium — every logged-in user can view/add staff, free tier just capped at 1 (see PAYROLL_STAFF_LIMITS). No plan required to reach this route at all. */
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
-  const plan = await getPayrollPlan(user.email);
-  if (!plan) {
-    return NextResponse.json({ error: "No active Payroll subscription.", code: "NO_SUBSCRIPTION" }, { status: 403 });
-  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const plan = await getPayrollPlan(user.email);
+  const tier = tierOf(plan);
 
   const { data, error } = await supabaseAdmin
     .from("payroll_staff")
@@ -29,7 +28,7 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to load staff." }, { status: 500 });
   }
 
-  return NextResponse.json({ staff: data ?? [], plan, limit: PAYROLL_STAFF_LIMITS[plan] });
+  return NextResponse.json({ staff: data ?? [], plan, limit: PAYROLL_STAFF_LIMITS[tier] });
 }
 
 interface StaffBody {
@@ -43,15 +42,13 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
-  const plan = await getPayrollPlan(user.email);
-  if (!plan) {
-    return NextResponse.json({ error: "No active Payroll subscription.", code: "NO_SUBSCRIPTION" }, { status: 403 });
-  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const plan = await getPayrollPlan(user.email);
+  const tier = tierOf(plan);
 
-  const limit = PAYROLL_STAFF_LIMITS[plan];
+  const limit = PAYROLL_STAFF_LIMITS[tier];
   if (limit !== null) {
     const { count, error: countError } = await supabaseAdmin
       .from("payroll_staff")
@@ -63,7 +60,13 @@ export async function POST(req: Request) {
     }
     if ((count ?? 0) >= limit) {
       return NextResponse.json(
-        { error: `Your plan is capped at ${limit} staff — upgrade for more.`, code: "STAFF_LIMIT_REACHED" },
+        {
+          error:
+            tier === "free"
+              ? "Upgrade to Starter ₱149/mo for up to 5 staff."
+              : `Your plan is capped at ${limit} staff — upgrade for more.`,
+          code: "STAFF_LIMIT_REACHED",
+        },
         { status: 403 },
       );
     }

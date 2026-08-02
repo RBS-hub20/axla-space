@@ -670,12 +670,26 @@ create index if not exists payroll_subscriptions_email_idx on public.payroll_sub
 alter table public.payroll_subscriptions enable row level security;
 grant select, insert, update, delete on public.payroll_subscriptions to service_role;
 
+create table if not exists public.payroll_companies (
+  owner_id text primary key references public.profiles (id) on delete cascade,
+  business_name text not null,
+  rdo_code text,
+  min_wage numeric not null default 479,
+  tin text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.payroll_companies enable row level security;
+grant select, insert, update, delete on public.payroll_companies to service_role;
+
 create table if not exists public.payroll_staff (
   id uuid primary key default gen_random_uuid(),
   owner_id text not null references public.profiles (id) on delete cascade,
   name text not null,
   gcash text,
   daily_rate numeric not null default 479,
+  position text,
+  branch text,
   created_at timestamptz not null default now()
 );
 
@@ -690,6 +704,7 @@ create table if not exists public.payroll_attendance (
   date date not null,
   time_in timestamptz,
   time_out timestamptz,
+  hours numeric,
   selfie_url text,
   created_at timestamptz not null default now(),
   unique (staff_id, date)
@@ -704,7 +719,9 @@ create table if not exists public.payroll_runs (
   id uuid primary key default gen_random_uuid(),
   owner_id text not null references public.profiles (id) on delete cascade,
   month text not null,
+  cut_off text,
   total_sahod numeric not null default 0,
+  staff_count integer,
   status text not null default 'draft' check (status in ('draft', 'finalized')),
   breakdown jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now()

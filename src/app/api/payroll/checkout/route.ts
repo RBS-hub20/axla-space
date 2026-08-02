@@ -68,6 +68,7 @@ export async function POST(req: Request) {
     successUrl: SUCCESS_URL,
     cancelUrl: CANCEL_URL,
     email: `axla-payroll+${Date.now()}@axla.space`,
+    metadata: { product: "axla_payroll", plan, user_id: user.id, email: user.email },
   });
 
   if (!result.url || !result.checkoutSessionId) {

@@ -1,19 +1,15 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
-import { hasPayrollAccess } from "@/lib/payroll/plan";
 import { logError } from "@/lib/log-error";
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
 
-/** Attendance for the caller's own staff only, scoped via the payroll_staff join (owner_id), never the raw staff_id alone. */
+/** Freemium — attendance for the caller's own staff only, scoped via the payroll_staff join (owner_id), never the raw staff_id alone. No plan required to view; the entry cap is enforced on write, in clock/route.ts. */
 export async function GET(req: Request) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!(await hasPayrollAccess(user.email))) {
-    return NextResponse.json({ error: "No active Payroll subscription.", code: "NO_SUBSCRIPTION" }, { status: 403 });
   }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });

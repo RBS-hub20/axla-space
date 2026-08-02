@@ -17,10 +17,21 @@ export const PAYROLL_PLAN_PRICING: Record<PayrollPlan, { regular: number; promo:
   enterprise: { regular: 1499, promo: 799 },
 };
 
-export const PAYROLL_STAFF_LIMITS: Record<PayrollPlan, number | null> = {
+/** No active subscription — every logged-in user starts here, not blocked from the dashboard, just capped. */
+export type PayrollTier = "free" | PayrollPlan;
+
+export function tierOf(plan: PayrollPlan | null): PayrollTier {
+  return plan ?? "free";
+}
+
+export const PAYROLL_STAFF_LIMITS: Record<PayrollTier, number | null> = {
+  free: 1,
   starter: 5,
   business: 50,
   enterprise: null, // unlimited
 };
+
+/** Free tier: one manual attendance entry, lifetime (not per day) — enough to see the feature work, not enough to run real timekeeping. */
+export const FREE_ATTENDANCE_LIMIT = 1;
 
 export const DEFAULT_DAILY_RATE = 479; // Batangas minimum wage reference, used as the Add Staff form's auto-suggested daily rate

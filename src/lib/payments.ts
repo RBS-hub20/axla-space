@@ -146,6 +146,15 @@ export interface OneTimeCheckoutParams {
    * be confused with a real TaxLaya subscription either way.
    */
   email?: string;
+  /**
+   * Optional PayMongo checkout-session metadata (arbitrary string key/value
+   * pairs PayMongo echoes back verbatim in webhook events) — Axla Payroll
+   * sets { product: "axla_payroll", plan, user_id } so the webhook's payroll
+   * branch has an even more direct signal than parsing the description
+   * string, though it still falls back to that (and the email prefix) if
+   * metadata is ever missing from a given event payload.
+   */
+  metadata?: Record<string, string>;
 }
 
 export interface OneTimeCheckoutResult {
@@ -198,6 +207,7 @@ export async function createPayMongoOneTimeCheckout(params: OneTimeCheckoutParam
             send_email_receipt: false,
             show_line_items: true,
             ...(params.email ? { billing: { email: params.email } } : {}),
+            ...(params.metadata ? { metadata: params.metadata } : {}),
           },
         },
       }),

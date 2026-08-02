@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Loader2 } from "lucide-react";
 import { PAYROLL_PLAN_PRICING, PAYROLL_PLAN_LABELS, type PayrollPlan } from "@/lib/payroll/pricing";
 import { isPayrollPromoActive } from "@/lib/payroll/promo";
-
-const CHECKOUT_STORAGE_KEY = "axla_payroll_checkout";
 
 interface PlanCard {
   plan: PayrollPlan;
@@ -64,52 +62,37 @@ const PLAN_CARDS: PlanCard[] = [
   },
 ];
 
-export function PayrollPricing({ autoPlan }: { autoPlan?: PayrollPlan }) {
+export function PayrollPricing() {
   const router = useRouter();
   const [loadingPlan, setLoadingPlan] = useState<PayrollPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const autoTriggered = useRef(false);
   const promoActive = isPayrollPromoActive();
 
+  /**
+   * No checkout is created from the landing page at all — clicking a plan
+   * just routes to /payroll/app (via login first if needed), where the
+   * in-app PayrollCheckoutModal (src/app/payroll/app/components) opens
+   * automatically for that plan and handles the actual PayMongo checkout.
+   * Logged-in-or-not is checked via a lightweight authed GET rather than
+   * duplicating a "who am I" endpoint.
+   */
   async function handleSubscribe(plan: PayrollPlan) {
     setError(null);
     setLoadingPlan(plan);
     try {
-      const res = await fetch("/api/payroll/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
-      });
-
+      const res = await fetch("/api/payroll/status", { cache: "no-store" });
+      const next = `/payroll/app?plan=${plan}`;
       if (res.status === 401) {
-        router.push(`/login?next=${encodeURIComponent(`/payroll?plan=${plan}`)}`);
+        router.push(`/login?next=${encodeURIComponent(next)}`);
         return;
       }
-
-      const data = await res.json();
-      if (!res.ok || !data.checkoutUrl) {
-        setError(data.error || "Couldn't start checkout. Please try again.");
-        return;
-      }
-
-      sessionStorage.setItem(CHECKOUT_STORAGE_KEY, JSON.stringify({ checkoutSessionId: data.checkoutSessionId, plan }));
-      window.location.href = data.checkoutUrl;
+      router.push(next);
     } catch {
       setError("Network error. Please try again.");
     } finally {
       setLoadingPlan(null);
     }
   }
-
-  // Came back from a login redirect with the plan they picked before —
-  // resume checkout automatically instead of making them click again.
-  useEffect(() => {
-    if (autoPlan && !autoTriggered.current) {
-      autoTriggered.current = true;
-      handleSubscribe(autoPlan);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoPlan]);
 
   return (
     <section id="pricing" className="border-t border-white/10 py-16 sm:py-20">

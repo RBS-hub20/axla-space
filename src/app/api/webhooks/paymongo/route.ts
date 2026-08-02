@@ -36,17 +36,22 @@ function derivePlan(description: unknown): string {
 
 const PAYROLL_EMAIL_PREFIX = "axla-payroll+";
 
+const PAYROLL_PLAN_VALUES = new Set(["starter", "business", "enterprise"]);
+
 /**
- * Description first — authoritative, matches src/app/api/payroll/checkout's
- * "Axla Payroll — {Label} plan" line item text, same pattern
- * /api/payroll/checkout/confirm already uses. Amount is only a fallback for
- * the rare case the description didn't come through, and is NOT reliable on
- * its own: ₱299 is simultaneously Starter's regular price AND Business's
- * promo price (src/lib/payroll/pricing.ts) — an amount-only match on 299
- * would silently misclassify half the time, so an ambiguous amount returns
- * null (skipped, logged) rather than guessing.
+ * Metadata first — src/app/api/payroll/checkout sets { product:
+ * "axla_payroll", plan, user_id, email } directly on the PayMongo checkout
+ * session, so `metadata.plan` is the most direct signal when it survives to
+ * the webhook payload. Falls back to the description text ("Axla Payroll —
+ * {Label} plan"), then amount — amount alone is NOT reliable: ₱299 is
+ * simultaneously Starter's regular price AND Business's promo price
+ * (src/lib/payroll/pricing.ts), so an ambiguous amount returns null
+ * (skipped, logged) rather than guessing.
  */
-function derivePayrollPlan(description: unknown, amount: number): PayrollPlan | null {
+function derivePayrollPlan(metadata: Record<string, unknown> | undefined, description: unknown, amount: number): PayrollPlan | null {
+  const metaPlan = typeof metadata?.plan === "string" ? metadata.plan : undefined;
+  if (metaPlan && PAYROLL_PLAN_VALUES.has(metaPlan)) return metaPlan as PayrollPlan;
+
   if (typeof description === "string" && description.toLowerCase().includes("axla payroll")) {
     const lower = description.toLowerCase();
     const fromDescription = (["starter", "business", "enterprise"] as const).find((p) => lower.includes(p));
@@ -58,6 +63,12 @@ function derivePayrollPlan(description: unknown, amount: number): PayrollPlan | 
     return amount === pricing.promo || amount === pricing.regular;
   });
   return matches.length === 1 ? matches[0] : null;
+}
+
+/** True when this payment is unambiguously an Axla Payroll purchase — metadata.product is the primary signal, description containing "payroll" is the fallback (per spec), matched in addition to (not instead of) the existing email-prefix check at the call site. */
+function isPayrollPayment(metadata: Record<string, unknown> | undefined, description: unknown): boolean {
+  if (metadata?.product === "axla_payroll") return true;
+  return typeof description === "string" && description.toLowerCase().includes("payroll");
 }
 
 function deriveMethod(sourceType: unknown): string {
@@ -80,6 +91,7 @@ interface ExtractedPayment {
   method: string;
   status: unknown;
   description: unknown;
+  metadata: Record<string, unknown> | undefined;
 }
 
 /**
@@ -138,6 +150,7 @@ function extractPaymentDetails(resource: Record<string, unknown> | undefined): E
     method: deriveMethod(source?.type),
     status: nestedAttrs.status ?? resourceAttrs.status,
     description: resourceAttrs.description ?? nestedAttrs.description ?? lineItemDescription,
+    metadata,
   };
 }
 
@@ -243,7 +256,14 @@ export async function POST(req: Request) {
 
     // Axla Payroll — checked and handled entirely separately, BEFORE any of
     // the TaxLaya pro/business logic below runs, and always returns rather
-    // than falling through. This payment's email is a synthetic
+    // than falling through. Triggered by any of three independent signals
+    // (metadata.product, description containing "payroll", or the
+    // axla-payroll+ email prefix) — each one alone is already unambiguous
+    // for this product (TaxLaya/Negosyo Tracker payments never set
+    // metadata, never mention "payroll" in a fixed description string, and
+    // Negosyo Tracker never sets an email at all, see the `!details.email`
+    // guard above), so combining them is pure resilience, not new risk.
+    // This payment's email is itself a synthetic
     // axla-payroll+{timestamp}@axla.space (see src/app/api/payroll/checkout),
     // never a real account address, so this write is purely for admin
     // dashboard visibility (Payroll tab) — real access control for the
@@ -252,8 +272,8 @@ export async function POST(req: Request) {
     // Storing plan as "payroll_starter"/"payroll_business"/"payroll_enterprise"
     // (never the bare "pro"/"business" this same table uses for TaxLaya)
     // means getUserPlan()'s exact-string check can never match it either.
-    if (email.startsWith(PAYROLL_EMAIL_PREFIX)) {
-      const payrollPlan = derivePayrollPlan(details.description, amount);
+    if (email.startsWith(PAYROLL_EMAIL_PREFIX) || isPayrollPayment(details.metadata, details.description)) {
+      const payrollPlan = derivePayrollPlan(details.metadata, details.description, amount);
       if (!payrollPlan) {
         logError("webhooks/paymongo: payroll payment with unrecognized amount", new Error(`email=${email} amount=${amount}`));
         return NextResponse.json({ received: true, stored: false });
@@ -293,6 +313,34 @@ export async function POST(req: Request) {
           );
           if (payrollSubError) logError("webhooks/paymongo: payroll subscriptions upsert failed", payrollSubError);
           else console.log(`webhooks/paymongo: payroll subscriptions upserted — email=${email} plan=${subscriptionPlan} amount=${amount}`);
+
+          // Real access-control activation, redundant with (not instead of)
+          // /api/payroll/checkout/confirm's polling-based flow — a resilience
+          // backup for the rare case a buyer closes the checkout tab before
+          // the modal's poll catches the "paid" state. Only runs when
+          // metadata.user_id is present, which is only ever true for
+          // payments this app's own /api/payroll/checkout created (never
+          // client-suppliable), so this is as trustworthy as the confirm
+          // route's own lookup.
+          const realUserId = typeof details.metadata?.user_id === "string" ? details.metadata.user_id : null;
+          const realEmail = typeof details.metadata?.email === "string" ? details.metadata.email.toLowerCase() : email;
+          if (realUserId) {
+            const { error: realSubError } = await supabaseAdmin.from("payroll_subscriptions").upsert(
+              {
+                user_id: realUserId,
+                email: realEmail,
+                plan: payrollPlan,
+                status: "active",
+                price: amount,
+                product: "axla_payroll",
+                next_billing: nextBilling.toISOString(),
+                updated_at: now.toISOString(),
+              },
+              { onConflict: "user_id" },
+            );
+            if (realSubError) logError("webhooks/paymongo: payroll_subscriptions upsert failed", realSubError);
+            else console.log(`webhooks/paymongo: payroll_subscriptions upserted (real access) — user_id=${realUserId} plan=${payrollPlan}`);
+          }
         }
       } catch (err) {
         logError("webhooks/paymongo: payroll DB write threw", err);

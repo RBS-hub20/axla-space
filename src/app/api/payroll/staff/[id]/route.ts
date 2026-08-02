@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
-import { hasPayrollAccess } from "@/lib/payroll/plan";
 import { logError } from "@/lib/log-error";
 
 interface PatchBody {
@@ -14,9 +13,6 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!(await hasPayrollAccess(user.email))) {
-    return NextResponse.json({ error: "No active Payroll subscription.", code: "NO_SUBSCRIPTION" }, { status: 403 });
   }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
@@ -63,9 +59,6 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
-  }
-  if (!(await hasPayrollAccess(user.email))) {
-    return NextResponse.json({ error: "No active Payroll subscription.", code: "NO_SUBSCRIPTION" }, { status: 403 });
   }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });

@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { PayrollPromoCountdown } from "@/components/payroll/PayrollPromoCountdown";
 import { PayrollPricing } from "@/components/payroll/PayrollPricing";
-import { PAYROLL_PLANS, type PayrollPlan } from "@/lib/payroll/pricing";
+import { PayrollHeroCta } from "@/components/payroll/PayrollHeroCta";
 
 export const metadata = {
   title: "Axla Payroll — Payroll & Compliance Agent | Axla",
@@ -17,18 +16,12 @@ const HOW_IT_WORKS = [
   { step: "3", title: "I-compute ang sahod", desc: "Auto payslip, auto BIR 1601C, DOLE-compliant agad." },
 ];
 
-function isPayrollPlan(value: string | undefined): value is PayrollPlan {
-  return typeof value === "string" && (PAYROLL_PLANS as string[]).includes(value);
-}
-
-export default function PayrollPage({ searchParams }: { searchParams: { plan?: string } }) {
-  const autoPlan = isPayrollPlan(searchParams.plan) ? searchParams.plan : undefined;
-
+export default function PayrollPage() {
   return (
     <main className="bg-[#0B0F1A] text-white">
       <div className="sticky top-0 z-50">
         <PayrollPromoCountdown />
-        <Navbar />
+        <Navbar loginHref={`/login?next=${encodeURIComponent("/payroll/app")}`} ctaHref="#pricing" />
       </div>
 
       {/* Hero */}
@@ -58,12 +51,7 @@ export default function PayrollPage({ searchParams }: { searchParams: { plan?: s
             </div>
 
             <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
-              <Link
-                href="#pricing"
-                className="w-full rounded-full bg-[#00FF88] px-7 py-3.5 text-center text-base font-semibold text-black shadow-lg shadow-[#00FF88]/25 transition hover:bg-[#22C55E] sm:w-auto"
-              >
-                Gumawa ng Payroll — Libre mag browse
-              </Link>
+              <PayrollHeroCta />
               <a
                 href="#paano"
                 className="w-full rounded-full border border-white/20 px-7 py-3.5 text-center text-base font-semibold text-white transition hover:border-[#00FF88]/50 hover:text-[#00FF88] sm:w-auto"
@@ -155,7 +143,7 @@ export default function PayrollPage({ searchParams }: { searchParams: { plan?: s
       </section>
 
       {/* Pricing */}
-      <PayrollPricing autoPlan={autoPlan} />
+      <PayrollPricing />
 
       <Footer />
     </main>
