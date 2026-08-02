@@ -1,0 +1,79 @@
+import { NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/session";
+import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { hasBirGuardBusinessAccess } from "@/lib/dashboard/bir-guard-access";
+import { logError } from "@/lib/log-error";
+
+/** One active RDO-transfer draft per user — GET returns it (or empty defaults), PUT upserts it. */
+export async function GET() {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  if (!isSupabaseAdminConfigured) {
+    return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
+  }
+  if (!(await hasBirGuardBusinessAccess(user.email))) {
+    return NextResponse.json({ error: "RDO Transfer is a BUSINESS feature.", code: "BUSINESS_ONLY" }, { status: 403 });
+  }
+
+  const { data, error } = await supabaseAdmin.from("bir_rdo_transfers").select("*").eq("user_id", user.id).maybeSingle();
+
+  if (error) {
+    logError("bir-guard/rdo-transfer GET: query failed", error);
+    return NextResponse.json({ error: "Failed to load RDO transfer draft." }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    transfer: data ?? { from_rdo: "", to_rdo: "", checklist: {} },
+  });
+}
+
+interface TransferBody {
+  fromRdo?: unknown;
+  toRdo?: unknown;
+  checklist?: unknown;
+}
+
+export async function PUT(req: Request) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  if (!isSupabaseAdminConfigured) {
+    return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
+  }
+  if (!(await hasBirGuardBusinessAccess(user.email))) {
+    return NextResponse.json({ error: "RDO Transfer is a BUSINESS feature.", code: "BUSINESS_ONLY" }, { status: 403 });
+  }
+
+  let body: TransferBody;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  const fromRdo = typeof body.fromRdo === "string" ? body.fromRdo.trim().slice(0, 200) : "";
+  const toRdo = typeof body.toRdo === "string" ? body.toRdo.trim().slice(0, 200) : "";
+  const checklist =
+    body.checklist && typeof body.checklist === "object" && !Array.isArray(body.checklist)
+      ? (body.checklist as Record<string, boolean>)
+      : {};
+
+  const { data, error } = await supabaseAdmin
+    .from("bir_rdo_transfers")
+    .upsert(
+      { user_id: user.id, from_rdo: fromRdo, to_rdo: toRdo, checklist, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    )
+    .select()
+    .single();
+
+  if (error || !data) {
+    logError("bir-guard/rdo-transfer PUT: upsert failed", error);
+    return NextResponse.json({ error: "Failed to save RDO transfer draft." }, { status: 500 });
+  }
+
+  return NextResponse.json({ transfer: data });
+}

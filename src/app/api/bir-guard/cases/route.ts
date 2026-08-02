@@ -1,15 +1,22 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
-import { hasBirGuardAccess } from "@/lib/dashboard/bir-guard-access";
+import { checkBirGuardCaseLimit } from "@/lib/dashboard/bir-guard-access";
+import { getUserPlan } from "@/lib/usage";
+import { calcBirPenalty } from "@/lib/bir-guard/penalty";
 import { resend, isResendConfigured, RESEND_FROM_EMAIL } from "@/lib/resend";
 import { birGuardAlertEmailTemplate } from "@/lib/email-templates";
 import { logError } from "@/lib/log-error";
 
-const VALID_STATUSES = ["open", "penalty", "filed"];
 const SCREENSHOT_BUCKET = "bir-guard-screenshots";
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour — re-signed fresh on every page load, so screenshot_url only ever stores the raw storage path, never a URL that can go stale.
 
+/**
+ * Viewing is intentionally NOT plan-gated — FREE users can see their cards
+ * and case list too (Total Penalty is blurred client-side, Add Case is
+ * disabled). Only mutating actions check the plan (see POST below, and
+ * hasBirGuardAccess for PATCH/screenshot/draft-letter).
+ */
 export async function GET() {
   const user = await getCurrentUser();
   if (!user) {
@@ -19,11 +26,7 @@ export async function GET() {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
 
-  if (!(await hasBirGuardAccess(user.email))) {
-    return NextResponse.json({ error: "BIR Guard is a PRO feature.", code: "UPGRADE_REQUIRED" }, { status: 403 });
-  }
-
-  const [{ data, error }, { data: logData, error: logError_ }] = await Promise.all([
+  const [{ data, error }, { data: logData, error: logError_ }, plan] = await Promise.all([
     supabaseAdmin.from("bir_open_cases").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
     supabaseAdmin
       .from("bir_sync_logs")
@@ -31,6 +34,7 @@ export async function GET() {
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(20),
+    getUserPlan(user.email),
   ]);
 
   if (error) {
@@ -43,22 +47,38 @@ export async function GET() {
 
   const cases = await Promise.all(
     (data ?? []).map(async (row) => {
-      if (!row.screenshot_url) return row;
+      // Live recompute — penalty_amount/status reflect TODAY, not whatever
+      // they were frozen at on the day the case was created, so interest
+      // keeps accruing without needing a cron job.
+      let liveRow = row;
+      if (row.due_date && row.status !== "filed") {
+        const breakdown = calcBirPenalty(Number(row.tax_due_amount), row.due_date);
+        liveRow = {
+          ...row,
+          penalty_amount: breakdown.total,
+          days_late: breakdown.daysLate,
+          status: breakdown.daysLate > 0 ? "penalty" : "open",
+        };
+      } else if (row.due_date && row.status === "filed" && row.resolved_at) {
+        const breakdown = calcBirPenalty(Number(row.tax_due_amount), row.due_date, new Date(row.resolved_at));
+        liveRow = { ...row, penalty_amount: breakdown.total, days_late: breakdown.daysLate };
+      }
+
+      if (!row.screenshot_url) return liveRow;
       const { data: signed } = await supabaseAdmin.storage
         .from(SCREENSHOT_BUCKET)
         .createSignedUrl(row.screenshot_url, SIGNED_URL_TTL_SECONDS);
-      return { ...row, screenshot_signed_url: signed?.signedUrl ?? null };
+      return { ...liveRow, screenshot_signed_url: signed?.signedUrl ?? null };
     }),
   );
 
-  return NextResponse.json({ cases, logs: logData ?? [] });
+  return NextResponse.json({ cases, logs: logData ?? [], plan });
 }
 
 interface CaseBody {
   formType?: unknown;
   taxPeriod?: unknown;
-  status?: unknown;
-  penaltyAmount?: unknown;
+  taxDueAmount?: unknown;
   dueDate?: unknown;
   notes?: unknown;
 }
@@ -73,8 +93,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
 
-  if (!(await hasBirGuardAccess(user.email))) {
-    return NextResponse.json({ error: "BIR Guard is a PRO feature.", code: "UPGRADE_REQUIRED" }, { status: 403 });
+  const limitCheck = await checkBirGuardCaseLimit(user.email, user.id);
+  if (!limitCheck.allowed) {
+    return NextResponse.json({ error: limitCheck.error, code: limitCheck.code }, { status: 403 });
   }
 
   let body: CaseBody;
@@ -90,13 +111,17 @@ export async function POST(req: Request) {
   if (typeof body.taxPeriod !== "string" || !body.taxPeriod.trim()) {
     return NextResponse.json({ error: "Tax period is required." }, { status: 400 });
   }
-  const status = typeof body.status === "string" && VALID_STATUSES.includes(body.status) ? body.status : "open";
-  const penaltyAmount = Number(body.penaltyAmount) || 0;
-  if (!Number.isFinite(penaltyAmount) || penaltyAmount < 0) {
-    return NextResponse.json({ error: "Penalty amount must be a non-negative number." }, { status: 400 });
+  if (typeof body.dueDate !== "string" || !body.dueDate) {
+    return NextResponse.json({ error: "Due date is required." }, { status: 400 });
   }
-  const dueDate = typeof body.dueDate === "string" && body.dueDate ? body.dueDate : null;
+  const taxDueAmount = Number(body.taxDueAmount);
+  if (!Number.isFinite(taxDueAmount) || taxDueAmount < 0) {
+    return NextResponse.json({ error: "Tax due amount must be a non-negative number." }, { status: 400 });
+  }
   const notes = typeof body.notes === "string" ? body.notes.slice(0, 2000) : null;
+
+  const breakdown = calcBirPenalty(taxDueAmount, body.dueDate);
+  const status = breakdown.daysLate > 0 ? "penalty" : "open";
 
   const startedAt = Date.now();
   const { data, error } = await supabaseAdmin
@@ -106,10 +131,11 @@ export async function POST(req: Request) {
       form_type: body.formType.trim(),
       tax_period: body.taxPeriod.trim(),
       status,
-      penalty_amount: penaltyAmount,
-      due_date: dueDate,
+      penalty_amount: breakdown.total,
+      tax_due_amount: taxDueAmount,
+      due_date: body.dueDate,
       notes,
-      resolved_at: status === "filed" ? new Date().toISOString() : null,
+      resolved_at: null,
     })
     .select()
     .single();
@@ -128,7 +154,7 @@ export async function POST(req: Request) {
 
   // Best-effort alert email when the newly-logged case carries a penalty —
   // never blocks the response the UI is waiting on.
-  if ((status === "penalty" || penaltyAmount > 0) && isResendConfigured) {
+  if (status === "penalty" && isResendConfigured) {
     (async () => {
       try {
         const [{ data: openCases }, { data: profile }] = await Promise.all([

@@ -523,6 +523,7 @@ create table if not exists public.bir_open_cases (
   tax_period text not null,
   status text not null default 'open' check (status in ('open', 'penalty', 'filed')),
   penalty_amount numeric not null default 0,
+  tax_due_amount numeric not null default 0,
   due_date date,
   notes text,
   screenshot_url text,
@@ -534,6 +535,36 @@ create index if not exists bir_open_cases_user_idx on public.bir_open_cases (use
 
 alter table public.bir_open_cases enable row level security;
 grant select, insert, update, delete on public.bir_open_cases to service_role;
+
+-- BIR Guard [BUSINESS ONLY] — LOA (Letter of Authority) tracker.
+create table if not exists public.bir_loa_cases (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null references public.profiles (id) on delete cascade,
+  loa_no text not null,
+  rdo text not null,
+  received_date date not null,
+  deadline date not null,
+  status text not null default 'open' check (status in ('open', 'submitted', 'closed')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists bir_loa_cases_user_idx on public.bir_loa_cases (user_id, created_at desc);
+
+alter table public.bir_loa_cases enable row level security;
+grant select, insert, update, delete on public.bir_loa_cases to service_role;
+
+-- BIR Guard [BUSINESS ONLY] — one active RDO-transfer draft per user.
+create table if not exists public.bir_rdo_transfers (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null unique references public.profiles (id) on delete cascade,
+  from_rdo text not null default '',
+  to_rdo text not null default '',
+  checklist jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.bir_rdo_transfers enable row level security;
+grant select, insert, update, delete on public.bir_rdo_transfers to service_role;
 
 create table if not exists public.bir_sync_logs (
   id uuid primary key default gen_random_uuid(),
