@@ -40,6 +40,7 @@ export default async function PayrollAppPage({ searchParams }: { searchParams: {
     <PayrollAppDashboard
       businessName={businessName}
       plan={plan}
+      ownerId={user.id}
       autoOpenCheckoutPlan={isPayrollPlan(searchParams.plan) ? searchParams.plan : undefined}
     />
   );

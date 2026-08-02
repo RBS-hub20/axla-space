@@ -2,13 +2,23 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { hasPayrollAccess } from "@/lib/payroll/plan";
-import { computeBasicPay, type StaffAttendanceSummary } from "@/lib/payroll/sahod";
+import {
+  computeBasicPay,
+  getCutOffRange,
+  DEFAULT_DAYS_BY_CUTOFF,
+  type StaffAttendanceSummary,
+  type CutOff,
+} from "@/lib/payroll/sahod";
 import { logError } from "@/lib/log-error";
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
+const VALID_CUTOFFS: CutOff[] = ["1-15", "16-31", "full"];
 
 interface ComputeBody {
   month?: unknown;
+  cutOff?: unknown;
+  /** True only after the client's "No attendance found — use default days?" modal was explicitly confirmed by the user. Missing/false means a zero-attendance staff computes to 0 days, same as before this feature existed — the server never applies a default on its own initiative. */
+  useDefaultForMissing?: unknown;
 }
 
 export async function POST(req: Request) {
@@ -27,9 +37,13 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    // fall through — default month below
+    // fall through — defaults below
   }
   const month = typeof body.month === "string" && MONTH_RE.test(body.month) ? body.month : new Date().toISOString().slice(0, 7);
+  const cutOff: CutOff = typeof body.cutOff === "string" && VALID_CUTOFFS.includes(body.cutOff as CutOff) ? (body.cutOff as CutOff) : "full";
+  const useDefaultForMissing = body.useDefaultForMissing === true;
+
+  const range = getCutOffRange(month, cutOff);
 
   const [{ data: staff, error: staffError }, { data: attendance, error: attError }] = await Promise.all([
     supabaseAdmin.from("payroll_staff").select("id, name, daily_rate").eq("owner_id", user.id),
@@ -37,13 +51,8 @@ export async function POST(req: Request) {
       .from("payroll_attendance")
       .select("staff_id, date, time_in, time_out, payroll_staff!inner(owner_id)")
       .eq("payroll_staff.owner_id", user.id)
-      .gte("date", `${month}-01`)
-      .lt(
-        "date",
-        new Date(new Date(`${month}-01T00:00:00Z`).getFullYear(), new Date(`${month}-01T00:00:00Z`).getMonth() + 1, 1)
-          .toISOString()
-          .slice(0, 10),
-      ),
+      .gte("date", range.from)
+      .lt("date", range.to),
   ]);
 
   if (staffError || attError) {
@@ -61,18 +70,31 @@ export async function POST(req: Request) {
     }
   }
 
-  const summaries: StaffAttendanceSummary[] = staff.map((s) => ({
-    staffId: s.id,
-    name: s.name,
-    dailyRate: Number(s.daily_rate),
-    daysPresent: daysPresentByStaff.get(s.id) ?? 0,
-  }));
+  // The default is applied per-staff, only to whoever genuinely has zero
+  // real attendance rows in this exact cut-off — a staff member with even
+  // one real clocked day keeps their real count, never overridden.
+  const defaultDays = DEFAULT_DAYS_BY_CUTOFF[cutOff];
+  const summaries: StaffAttendanceSummary[] = staff.map((s) => {
+    const realDays = daysPresentByStaff.get(s.id) ?? 0;
+    if (realDays === 0 && useDefaultForMissing) {
+      return { staffId: s.id, name: s.name, dailyRate: Number(s.daily_rate), daysPresent: defaultDays, estimated: true };
+    }
+    return { staffId: s.id, name: s.name, dailyRate: Number(s.daily_rate), daysPresent: realDays };
+  });
   const breakdown = computeBasicPay(summaries);
   const totalSahod = breakdown.reduce((sum, r) => sum + r.basicPay, 0);
 
   const { data: run, error: insertError } = await supabaseAdmin
     .from("payroll_runs")
-    .insert({ owner_id: user.id, month, total_sahod: totalSahod, status: "finalized", breakdown })
+    .insert({
+      owner_id: user.id,
+      month,
+      cut_off: cutOff,
+      total_sahod: totalSahod,
+      staff_count: staff.length,
+      status: "finalized",
+      breakdown,
+    })
     .select()
     .single();
 

@@ -39,7 +39,15 @@ import {
   type PayrollTier,
 } from "@/lib/payroll/pricing";
 import { PAYROLL_PROMO } from "@/lib/payroll/promo";
-import { DOLE_MIN_DAILY_WAGE, estimateWithholdingTax, computeBasicPay, type PayrollBreakdownRow } from "@/lib/payroll/sahod";
+import {
+  DOLE_MIN_DAILY_WAGE,
+  estimateWithholdingTax,
+  getCutOffRange,
+  CUTOFF_LABELS,
+  DEFAULT_DAYS_BY_CUTOFF,
+  type CutOff,
+  type PayrollBreakdownRow,
+} from "@/lib/payroll/sahod";
 
 const PREMIUM_CARD =
   "rounded-2xl border-[#1E293B] bg-[#121A22] shadow-sm transition hover:border-[#00FF88]/30 hover:shadow-lg hover:shadow-green-500/10";
@@ -65,6 +73,7 @@ interface AttendanceRow {
 interface PayrollRun {
   id: string;
   month: string;
+  cut_off?: CutOff | null;
   total_sahod: number;
   status: "draft" | "finalized";
   breakdown: PayrollBreakdownRow[];
@@ -111,6 +120,98 @@ function daysUntilBirDue(now = new Date()): number {
   return Math.ceil((due.getTime() - now.getTime()) / 86_400_000);
 }
 
+const TOUR_SEEN_KEY = "axla_payroll_tour_seen";
+
+const TAB_ORDER: Tab[] = ["staff", "timekeeping", "run", "payslip", "reports"];
+const TAB_LABELS: Record<Tab, string> = {
+  staff: "Staff",
+  timekeeping: "Timekeeping",
+  run: "Payroll Run",
+  payslip: "Payslip & BIR",
+  reports: "Reports",
+};
+
+/** Same copy is reused as the tour modal step body, the per-tab "?" tooltip, and (for Staff/Timekeeping) the data-driven empty-state message — one source of truth instead of three copies drifting apart. */
+function tabGuide(ownerId: string): Record<Tab, string> {
+  return {
+    staff: "Step 1: Add your staff here. Name, GCash number, Daily rate (₱479 Batangas min). This is base for salary. DOLE Guard will warn if below minimum.",
+    timekeeping: `Step 2: Where days come from. Add manual time in/out per staff, or share clock link axla.space/payroll/clock/${ownerId} for AI Selfie. No attendance = no days = ₱0 payroll — add at least 1 entry!`,
+    run: "Step 3: One-click compute. Click Compute Sahod → Select cut-off Aug 1-15 → Preview Gross = Daily Rate × Days Present → Net → Finalize. This saves to history and updates This Month Payroll KPI.",
+    payslip: "Step 4: After finalizing, view PDF payslip per staff, 1-click send to GCash number, BIR 1601C + 2316 auto-generated from your runs — NO FILLUP from company profile.",
+    reports: "Step 5: Monitor. Monthly history, 13th month = total/12, SIL 5 days tracker, DOLE alerts. When you have 1 run, see Explore TaxLaya upsell banner for BIR filing.",
+  };
+}
+
+function GuideTooltip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Tab guide"
+        className="flex h-5 w-5 items-center justify-center rounded-full border border-[#00FF88]/40 text-[10px] font-bold text-[#00FF88] hover:bg-[#00FF88]/10"
+      >
+        ?
+      </button>
+      {open && (
+        <div className="absolute right-0 top-7 z-20 w-72 rounded-xl border border-[#00FF88]/30 bg-[#121A22] p-3 text-xs leading-relaxed text-slate-200 shadow-xl">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PayrollTourModal({
+  ownerId,
+  onGoToTab,
+  onClose,
+}: {
+  ownerId: string;
+  onGoToTab: (tab: Tab) => void;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState(0);
+  const guide = tabGuide(ownerId);
+  const tab = TAB_ORDER[step];
+  const isLast = step === TAB_ORDER.length - 1;
+
+  useEffect(() => onGoToTab(tab), [tab, onGoToTab]);
+
+  function finish() {
+    localStorage.setItem(TOUR_SEEN_KEY, "1");
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 sm:items-center">
+      <div className="w-full max-w-sm rounded-2xl border border-[#00FF88]/30 bg-[#121A22] p-6 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <span className="rounded-full bg-[#00FF88]/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[#00FF88]">
+            Step {step + 1} of {TAB_ORDER.length}
+          </span>
+          <button type="button" onClick={finish} className="text-gray-500 hover:text-gray-300" aria-label="Skip tour">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <h2 className="mt-3 text-base font-bold text-white">{TAB_LABELS[tab]}</h2>
+        <p className="mt-1 text-sm leading-relaxed text-slate-300">{guide[tab]}</p>
+        <div className="mt-5 flex gap-2">
+          {step > 0 && (
+            <Button variant="outline" className="flex-1" onClick={() => setStep((s) => s - 1)}>
+              Back
+            </Button>
+          )}
+          <Button className="flex-1" onClick={() => (isLast ? finish() : setStep((s) => s + 1))}>
+            {isLast ? "Done" : "Next"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BlurValue({ locked, children }: { locked: boolean; children: React.ReactNode }) {
   if (!locked) return <>{children}</>;
   return (
@@ -124,10 +225,12 @@ function BlurValue({ locked, children }: { locked: boolean; children: React.Reac
 export function PayrollAppDashboard({
   businessName,
   plan,
+  ownerId,
   autoOpenCheckoutPlan,
 }: {
   businessName: string;
   plan: PayrollPlan | null;
+  ownerId: string;
   autoOpenCheckoutPlan?: PayrollPlan;
 }) {
   const router = useRouter();
@@ -146,6 +249,8 @@ export function PayrollAppDashboard({
   const [isLoading, setIsLoading] = useState(true);
 
   const [tab, setTab] = useState<Tab>("staff");
+  const [showTour, setShowTour] = useState(false);
+  const [tourHighlightTab, setTourHighlightTab] = useState<Tab | null>(null);
 
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [checkoutPlan, setCheckoutPlan] = useState<PayrollPlan | undefined>(undefined);
@@ -194,6 +299,27 @@ export function PayrollAppDashboard({
     if (autoOpenCheckoutPlan) openCheckout(autoOpenCheckoutPlan);
   }, [autoOpenCheckoutPlan, openCheckout]);
 
+  // First-time tour: only once we know for sure they have no payroll history
+  // yet (post-load, not mid-skeleton) and company setup isn't fighting for
+  // the same modal real estate — checked every time loading finishes rather
+  // than once on mount, since company setup can still be open on that pass.
+  useEffect(() => {
+    if (isLoading || showCompanySetup) return;
+    if (runs.length > 0) return;
+    if (localStorage.getItem(TOUR_SEEN_KEY) === "1") return;
+    setShowTour(true);
+  }, [isLoading, showCompanySetup, runs.length]);
+
+  const handleTourGoToTab = useCallback((t: Tab) => {
+    setTab(t);
+    setTourHighlightTab(t);
+  }, []);
+
+  function closeTour() {
+    setShowTour(false);
+    setTourHighlightTab(null);
+  }
+
   function handleCheckoutSuccess(newPlan: PayrollPlan) {
     setCurrentPlan(newPlan);
     setCheckoutOpen(false);
@@ -210,6 +336,13 @@ export function PayrollAppDashboard({
   const minWage = company?.min_wage ?? DOLE_MIN_DAILY_WAGE;
   const doleWarnings = useMemo(() => staff.filter((s) => Number(s.daily_rate) < minWage), [staff, minWage]);
   const latestRun = runs[0];
+  // Sum, not "latest run" — a month can have two runs now (1-15 and 16-31
+  // cut-offs), and "latest" alone would silently drop the other one, or
+  // show last month's total if this month hasn't been computed yet.
+  const thisMonthTotal = useMemo(
+    () => runs.filter((r) => r.month === currentMonthKey()).reduce((sum, r) => sum + Number(r.total_sahod), 0),
+    [runs],
+  );
   const daysLeftPromo = Math.max(0, Math.ceil((PAYROLL_PROMO.endDate.getTime() - Date.now()) / 86_400_000));
 
   return (
@@ -270,7 +403,14 @@ export function PayrollAppDashboard({
             }}
             className="h-12 w-full rounded-2xl border border-[#00FF88]/20 bg-[#0B121A] pl-11 pr-11 text-sm text-white placeholder-slate-500 focus:border-[#00FF88] focus:outline-none"
           />
-          <Mic className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <button
+            type="button"
+            onClick={() => toast("Coming soon - AI Agent will auto run payroll for you!")}
+            aria-label="AI voice command"
+            className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-white/5 hover:text-[#00FF88]"
+          >
+            <Mic className="h-4 w-4" />
+          </button>
         </div>
 
         {/* Overview KPIs */}
@@ -288,7 +428,7 @@ export function PayrollAppDashboard({
               <Wallet className="h-4 w-4 text-[#00FF88]" />
             </div>
             <p className="mt-2 text-2xl font-bold text-white">
-              <BlurValue locked={isFree}>{isLoading ? "—" : latestRun ? PESO(latestRun.total_sahod) : "₱0"}</BlurValue>
+              <BlurValue locked={isFree}>{isLoading ? "—" : PESO(thisMonthTotal)}</BlurValue>
             </p>
           </div>
           <div className={`${PREMIUM_CARD} p-5`}>
@@ -348,7 +488,7 @@ export function PayrollAppDashboard({
               onClick={() => setTab(t.id)}
               className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
                 tab === t.id ? "bg-[#00FF88] text-black" : "text-gray-400 hover:bg-white/5 hover:text-white"
-              }`}
+              } ${tourHighlightTab === t.id ? "ring-2 ring-[#00FF88] ring-offset-2 ring-offset-[#121A22]" : ""}`}
             >
               {t.label}
             </button>
@@ -356,7 +496,14 @@ export function PayrollAppDashboard({
         </div>
 
         {tab === "staff" && (
-          <StaffTab staff={staff} isLoading={isLoading} tier={tier} onChanged={loadData} onUpgrade={openCheckout} />
+          <StaffTab
+            staff={staff}
+            isLoading={isLoading}
+            tier={tier}
+            guide={tabGuide(ownerId).staff}
+            onChanged={loadData}
+            onUpgrade={openCheckout}
+          />
         )}
         {tab === "timekeeping" && (
           <TimekeepingTab
@@ -364,17 +511,35 @@ export function PayrollAppDashboard({
             attendance={attendance}
             isLoading={isLoading}
             tier={tier}
+            guide={tabGuide(ownerId).timekeeping}
             onChanged={loadData}
             onUpgrade={openCheckout}
           />
         )}
         {tab === "run" && (
-          <PayrollRunTab staff={staff} runs={runs} isLoading={isLoading} tier={tier} onChanged={loadData} onUpgrade={openCheckout} />
+          <PayrollRunTab
+            staff={staff}
+            attendance={attendance}
+            runs={runs}
+            isLoading={isLoading}
+            tier={tier}
+            guide={tabGuide(ownerId).run}
+            onChanged={loadData}
+            onUpgrade={openCheckout}
+            onGoToTimekeeping={() => setTab("timekeeping")}
+          />
         )}
         {tab === "payslip" && (
-          <PayslipBirTab company={company} latestRun={latestRun} tier={tier} isBusinessPlus={isBusinessPlus} onUpgrade={openCheckout} />
+          <PayslipBirTab
+            company={company}
+            latestRun={latestRun}
+            tier={tier}
+            isBusinessPlus={isBusinessPlus}
+            guide={tabGuide(ownerId).payslip}
+            onUpgrade={openCheckout}
+          />
         )}
-        {tab === "reports" && <ReportsTab runs={runs} tier={tier} onUpgrade={openCheckout} />}
+        {tab === "reports" && <ReportsTab runs={runs} tier={tier} guide={tabGuide(ownerId).reports} onUpgrade={openCheckout} />}
       </div>
 
       {showCompanySetup && (
@@ -406,6 +571,8 @@ export function PayrollAppDashboard({
         preselectedPlan={checkoutPlan}
         onSuccess={handleCheckoutSuccess}
       />
+
+      {showTour && <PayrollTourModal ownerId={ownerId} onGoToTab={handleTourGoToTab} onClose={closeTour} />}
     </div>
   );
 }
@@ -492,12 +659,14 @@ function StaffTab({
   staff,
   isLoading,
   tier,
+  guide,
   onChanged,
   onUpgrade,
 }: {
   staff: Staff[];
   isLoading: boolean;
   tier: PayrollTier;
+  guide: string;
   onChanged: () => void;
   onUpgrade: (plan?: PayrollPlan) => void;
 }) {
@@ -569,6 +738,7 @@ function StaffTab({
           <span className="text-xs text-gray-500">
             {staff.length}/{limit ?? "∞"}
           </span>
+          <GuideTooltip text={guide} />
         </div>
         <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
           <Button size="sm" onClick={() => (atLimit ? onUpgrade(tier === "free" ? "starter" : undefined) : setIsAddOpen(true))}>
@@ -614,7 +784,7 @@ function StaffTab({
         ) : staff.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-12 text-center">
             <Users className="h-10 w-10 text-[#00FF88]" />
-            <p className="text-sm font-semibold text-white">Wala pang staff. Add mo na — libre ang una!</p>
+            <p className="max-w-sm text-sm font-semibold text-white">{guide}</p>
             <Button size="sm" onClick={() => setIsAddOpen(true)}>
               <Plus className="h-4 w-4" />
               Add Staff
@@ -667,6 +837,7 @@ function TimekeepingTab({
   attendance,
   isLoading,
   tier,
+  guide,
   onChanged,
   onUpgrade,
 }: {
@@ -674,6 +845,7 @@ function TimekeepingTab({
   attendance: AttendanceRow[];
   isLoading: boolean;
   tier: PayrollTier;
+  guide: string;
   onChanged: () => void;
   onUpgrade: (plan?: PayrollPlan) => void;
 }) {
@@ -715,7 +887,10 @@ function TimekeepingTab({
     <Card className={PREMIUM_CARD}>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-semibold text-white">Timekeeping — Today</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold text-white">Timekeeping — Today</CardTitle>
+            <GuideTooltip text={guide} />
+          </div>
           {tier === "business" || tier === "enterprise" ? (
             <span className="rounded-full bg-[#00FF88]/15 px-2 py-0.5 text-[10px] font-bold uppercase text-[#00FF88]">AI Selfie Ready</span>
           ) : null}
@@ -723,6 +898,12 @@ function TimekeepingTab({
       </CardHeader>
       <CardContent>
         {isBusinessPlusSelfieHint(tier)}
+        {!isLoading && staff.length > 0 && attendance.length === 0 && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-300">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{guide}</span>
+          </div>
+        )}
         {isLoading ? (
           <div className="h-12 w-full animate-pulse rounded-lg bg-white/5" />
         ) : staff.length === 0 ? (
@@ -788,35 +969,126 @@ function isBusinessPlusSelfieHint(tier: PayrollTier) {
   );
 }
 
+function MissingAttendanceModal({
+  cutOff,
+  missingCount,
+  onUseDefault,
+  onGoToTimekeeping,
+  onClose,
+}: {
+  cutOff: CutOff;
+  missingCount: number;
+  onUseDefault: () => void;
+  onGoToTimekeeping: () => void;
+  onClose: () => void;
+}) {
+  const defaultDays = DEFAULT_DAYS_BY_CUTOFF[cutOff];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-sm rounded-2xl border border-amber-500/40 bg-[#121A22] p-6 shadow-2xl">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+          <div>
+            <h2 className="text-base font-bold text-white">No attendance found</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              {missingCount} staff have no attendance on file for this cut-off ({CUTOFF_LABELS[cutOff]}). Use default {defaultDays}{" "}
+              days? Or add attendance first in the Timekeeping tab.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex flex-col gap-2">
+          <Button onClick={onUseDefault} className="w-full">
+            Use {defaultDays} days default
+          </Button>
+          <Button variant="outline" onClick={onGoToTimekeeping} className="w-full">
+            Go to Timekeeping
+          </Button>
+          <button type="button" onClick={onClose} className="mt-1 text-xs text-gray-500 hover:text-gray-300">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RunDetailsModal({ run, onClose }: { run: PayrollRun; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-[#1E293B] bg-[#121A22] p-6 shadow-2xl">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-white">
+            {run.month} {run.cut_off ? `· ${CUTOFF_LABELS[run.cut_off]}` : ""}
+          </h2>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-4 max-h-96 space-y-2 overflow-y-auto">
+          {run.breakdown.map((row) => (
+            <div key={row.staffId} className="rounded-lg border border-[#1E293B] bg-[#0B121A] px-3 py-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-white">{row.name}</p>
+                {row.estimated && (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">
+                    Estimated
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 flex justify-between text-xs text-gray-400">
+                <span>
+                  {PESO(row.dailyRate)} × {row.daysPresent} days
+                </span>
+                <span className="font-semibold text-[#00FF88]">{PESO(row.basicPay)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-between border-t border-[#1E293B] pt-3 text-sm">
+          <span className="font-semibold text-white">Total Sahod</span>
+          <span className="font-bold text-[#00FF88]">{PESO(run.total_sahod)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PayrollRunTab({
   staff,
+  attendance,
   runs,
   isLoading,
   tier,
+  guide,
   onChanged,
   onUpgrade,
+  onGoToTimekeeping,
 }: {
   staff: Staff[];
+  attendance: AttendanceRow[];
   runs: PayrollRun[];
   isLoading: boolean;
   tier: PayrollTier;
+  guide: string;
   onChanged: () => void;
   onUpgrade: (plan?: PayrollPlan) => void;
+  onGoToTimekeeping: () => void;
 }) {
   const [isComputing, setIsComputing] = useState(false);
+  const [cutOff, setCutOff] = useState<CutOff>("1-15");
+  const [missingCount, setMissingCount] = useState(0);
+  const [showMissingModal, setShowMissingModal] = useState(false);
+  const [viewingRun, setViewingRun] = useState<PayrollRun | null>(null);
   const isFree = tier === "free";
 
-  async function handleCompute() {
-    if (isFree) {
-      onUpgrade("starter");
-      return;
-    }
+  async function doCompute(useDefaultForMissing: boolean) {
+    setShowMissingModal(false);
     setIsComputing(true);
     try {
       const res = await fetch("/api/payroll/runs/compute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month: currentMonthKey() }),
+        body: JSON.stringify({ month: currentMonthKey(), cutOff, useDefaultForMissing }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -827,7 +1099,7 @@ function PayrollRunTab({
         toast(data.error || "Failed to compute sahod.");
         return;
       }
-      toast("Sahod computed ✅");
+      toast(`Sahod computed ✅ ${PESO(data.run.total_sahod)}`);
       onChanged();
     } catch {
       toast("Network error — try again.");
@@ -836,14 +1108,50 @@ function PayrollRunTab({
     }
   }
 
+  function handleComputeClick() {
+    if (isFree) {
+      onUpgrade("starter");
+      return;
+    }
+    const range = getCutOffRange(currentMonthKey(), cutOff);
+    const missing = staff.filter(
+      (s) => !attendance.some((a) => a.staff_id === s.id && a.date >= range.from && a.date < range.to && a.time_in && a.time_out),
+    );
+    if (missing.length > 0) {
+      setMissingCount(missing.length);
+      setShowMissingModal(true);
+      return;
+    }
+    doCompute(false);
+  }
+
   return (
     <Card className={PREMIUM_CARD}>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-sm font-semibold text-white">Payroll Run — {currentMonthKey()}</CardTitle>
-        <Button size="sm" onClick={handleCompute} disabled={isComputing || staff.length === 0} variant={isFree ? "outline" : "default"}>
-          {isComputing ? <Loader2 className="h-4 w-4 animate-spin" /> : isFree ? <Lock className="h-4 w-4" /> : <Wallet className="h-4 w-4" />}
-          {isComputing ? "Computing..." : isFree ? "Unlock for ₱149" : "Compute Sahod"}
-        </Button>
+      <CardHeader className="flex-col items-start gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-sm font-semibold text-white">Payroll Run — {currentMonthKey()}</CardTitle>
+          <GuideTooltip text={guide} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex gap-1 rounded-xl border border-[#1E293B] bg-[#0B121A] p-1">
+            {(Object.keys(CUTOFF_LABELS) as CutOff[]).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCutOff(c)}
+                className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                  cutOff === c ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
+                }`}
+              >
+                {CUTOFF_LABELS[c]}
+              </button>
+            ))}
+          </div>
+          <Button size="sm" onClick={handleComputeClick} disabled={isComputing || staff.length === 0} variant={isFree ? "outline" : "default"}>
+            {isComputing ? <Loader2 className="h-4 w-4 animate-spin" /> : isFree ? <Lock className="h-4 w-4" /> : <Wallet className="h-4 w-4" />}
+            {isComputing ? "Computing..." : isFree ? "Unlock for ₱149" : "Compute Sahod"}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -851,7 +1159,7 @@ function PayrollRunTab({
         ) : runs.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-10 text-center">
             <Wallet className="h-10 w-10 text-[#00FF88]" />
-            <p className="text-sm font-semibold text-white">Run your first payroll — Unlock Business</p>
+            <p className="max-w-sm text-sm font-semibold text-white">{isFree ? "Run your first payroll — Unlock Business" : guide}</p>
             {isFree && (
               <Button size="sm" onClick={() => onUpgrade()} className="mt-2">
                 Upgrade Now
@@ -864,19 +1172,31 @@ function PayrollRunTab({
               <thead>
                 <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
                   <th className="pb-2 pr-4">Month</th>
+                  <th className="pb-2 pr-4">Cut-off</th>
                   <th className="pb-2 pr-4">Total Sahod</th>
                   <th className="pb-2 pr-4">Staff</th>
-                  <th className="pb-2">Status</th>
+                  <th className="pb-2 pr-4">Status</th>
+                  <th className="pb-2" />
                 </tr>
               </thead>
               <tbody>
                 {runs.map((r) => (
                   <tr key={r.id} className="border-b border-[#1E293B]/60 last:border-0">
                     <td className="py-3 pr-4 font-medium text-white">{r.month}</td>
+                    <td className="py-3 pr-4 text-gray-300">{r.cut_off ? CUTOFF_LABELS[r.cut_off] : "—"}</td>
                     <td className="py-3 pr-4 text-gray-300">{PESO(r.total_sahod)}</td>
                     <td className="py-3 pr-4 text-gray-300">{r.breakdown?.length ?? 0}</td>
-                    <td className="py-3">
+                    <td className="py-3 pr-4">
                       <Badge variant="success">{r.status === "finalized" ? "Finalized" : "Draft"}</Badge>
+                    </td>
+                    <td className="py-3">
+                      <button
+                        type="button"
+                        onClick={() => setViewingRun(r)}
+                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
+                      >
+                        View Details
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -885,6 +1205,21 @@ function PayrollRunTab({
           </div>
         )}
       </CardContent>
+
+      {showMissingModal && (
+        <MissingAttendanceModal
+          cutOff={cutOff}
+          missingCount={missingCount}
+          onUseDefault={() => doCompute(true)}
+          onGoToTimekeeping={() => {
+            setShowMissingModal(false);
+            onGoToTimekeeping();
+          }}
+          onClose={() => setShowMissingModal(false)}
+        />
+      )}
+
+      {viewingRun && <RunDetailsModal run={viewingRun} onClose={() => setViewingRun(null)} />}
     </Card>
   );
 }
@@ -894,12 +1229,14 @@ function PayslipBirTab({
   latestRun,
   tier,
   isBusinessPlus,
+  guide,
   onUpgrade,
 }: {
   company: Company | null;
   latestRun: PayrollRun | undefined;
   tier: PayrollTier;
   isBusinessPlus: boolean;
+  guide: string;
   onUpgrade: (plan?: PayrollPlan) => void;
 }) {
   const isFree = tier === "free";
@@ -922,7 +1259,10 @@ function PayslipBirTab({
     <div className="space-y-4">
       <Card className={PREMIUM_CARD}>
         <CardHeader>
-          <CardTitle className="text-sm font-semibold text-white">GCash Payslip</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold text-white">GCash Payslip</CardTitle>
+            <GuideTooltip text={guide} />
+          </div>
         </CardHeader>
         <CardContent>
           {!latestRun ? (
@@ -1035,7 +1375,17 @@ function PayslipBirTab({
   );
 }
 
-function ReportsTab({ runs, tier, onUpgrade }: { runs: PayrollRun[]; tier: PayrollTier; onUpgrade: (plan?: PayrollPlan) => void }) {
+function ReportsTab({
+  runs,
+  tier,
+  guide,
+  onUpgrade,
+}: {
+  runs: PayrollRun[];
+  tier: PayrollTier;
+  guide: string;
+  onUpgrade: (plan?: PayrollPlan) => void;
+}) {
   const currentYear = new Date().getFullYear();
   const ytdTotal = runs.filter((r) => r.month.startsWith(String(currentYear))).reduce((sum, r) => sum + Number(r.total_sahod), 0);
   const thirteenthMonthAccrual = ytdTotal / 12;
@@ -1044,13 +1394,16 @@ function ReportsTab({ runs, tier, onUpgrade }: { runs: PayrollRun[]; tier: Payro
     <div className="space-y-4">
       <Card className={PREMIUM_CARD}>
         <CardHeader>
-          <CardTitle className="text-sm font-semibold text-white">Reports</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold text-white">Reports</CardTitle>
+            <GuideTooltip text={guide} />
+          </div>
         </CardHeader>
         <CardContent>
           {runs.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-10 text-center">
               <FileText className="h-10 w-10 text-[#00FF88]" />
-              <p className="text-sm font-semibold text-white">No payroll history yet.</p>
+              <p className="max-w-sm text-sm font-semibold text-white">{guide}</p>
               {tier === "free" && (
                 <Button size="sm" onClick={() => onUpgrade()} className="mt-2">
                   Upgrade to Unlock
