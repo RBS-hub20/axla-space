@@ -7,10 +7,13 @@ interface EmployeeInfo {
   name: string;
   shop_name: string;
   last_log_type: "in" | "out" | null;
+  last_log: { type: "in" | "out"; timestamp: string } | null;
   working_since: string | null;
   shop_lat: number | null;
   shop_lng: number | null;
 }
+
+const MANILA_TIME_ZONE = "Asia/Manila";
 
 type Step =
   | "loading"
@@ -35,6 +38,18 @@ interface Coords {
 const GEO_TIMEOUT_MS = 15000;
 const isIOS = typeof navigator !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent);
 
+/** Always Asia/Manila regardless of the device's own timezone — a phone with the wrong system timezone shouldn't misreport what time someone actually clocked in. */
+function formatManilaTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit", timeZone: MANILA_TIME_ZONE });
+}
+
+function formatDuration(sinceIso: string): string {
+  const totalMin = Math.max(0, Math.floor((Date.now() - new Date(sinceIso).getTime()) / 60000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h === 0 ? `${m}m` : `${h}h ${m}m`;
+}
+
 export default function ClockPage({ params }: { params: { token: string } }) {
   const { token } = params;
   const [step, setStep] = useState<Step>("loading");
@@ -52,18 +67,45 @@ export default function ClockPage({ params }: { params: { token: string } }) {
   const streamRef = useRef<MediaStream | null>(null);
   const geoSettledRef = useRef(false);
 
-  useEffect(() => {
-    fetch(`/api/payroll/employee/by-token/${token}`)
+  /**
+   * `?t=` cache-busts the URL itself and `cache: "no-store"` tells fetch
+   * not to reuse a prior response — Safari has been observed serving a
+   * stale Time In/Out state from its own HTTP cache when the same link is
+   * reopened, on top of (and separate from) the server-side caching this
+   * route's `dynamic = "force-dynamic"` already rules out.
+   */
+  function loadInfo() {
+    return fetch(`/api/payroll/employee/by-token/${token}?t=${Date.now()}`, { cache: "no-store" })
       .then(async (res) => {
         if (!res.ok) {
           setStep("invalid");
           return;
         }
-        const data = await res.json();
+        const data: EmployeeInfo = await res.json();
         setInfo(data);
-        setStep("primer");
+        setStep((prev) => (prev === "loading" ? "primer" : prev));
       })
       .catch(() => setStep("invalid"));
+  }
+
+  useEffect(() => {
+    loadInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  // Safari can restore this page from its back/forward cache (bfcache) on
+  // reopen without re-running the mount effect at all — the JS heap and
+  // React state are frozen and resumed as-is, so `info` would otherwise
+  // stay exactly as stale as it was when the tab was suspended. `pageshow`
+  // with `persisted: true` is the standard signal for "this is a bfcache
+  // restore, not a fresh load" and forces a refetch in that case.
+  useEffect(() => {
+    function handlePageShow(e: PageTransitionEvent) {
+      if (e.persisted) loadInfo();
+    }
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   // Live camera stream is only attached to <video> once step === "camera_live"
@@ -213,6 +255,19 @@ export default function ClockPage({ params }: { params: { token: string } }) {
         return;
       }
       setResult({ needsApproval: data.needs_approval, distance: data.distance, type: nextAction });
+      // Toggle immediately from this response rather than waiting on (or
+      // trusting) a follow-up GET — the button/status would otherwise keep
+      // showing the pre-clock state until the page is reopened.
+      setInfo((prev) =>
+        prev
+          ? {
+              ...prev,
+              last_log_type: data.last_log_type ?? nextAction,
+              last_log: { type: data.last_log_type ?? nextAction, timestamp: data.timestamp },
+              working_since: (data.last_log_type ?? nextAction) === "in" ? data.timestamp : null,
+            }
+          : prev,
+      );
       setStep("done");
     } catch {
       setErrorMessage("Network error — please try again.");
@@ -249,11 +304,20 @@ export default function ClockPage({ params }: { params: { token: string } }) {
             <div className="text-center">
               <p className="text-xl font-bold text-white">Hi {info.name}! 👋</p>
               <p className="mt-1 text-sm text-gray-400">{info.shop_name}</p>
-              {info.last_log_type === "in" && info.working_since && (
-                <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-[#00FF88]/10 px-3 py-1 text-xs font-medium text-[#00FF88]">
-                  <Clock className="h-3 w-3" />
-                  Working since{" "}
-                  {new Date(info.working_since).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}
+              {info.last_log?.type === "in" ? (
+                <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-[#00FF88]/10 px-3 py-1.5 text-xs font-medium text-[#00FF88]">
+                  <Clock className="h-3 w-3 shrink-0" />
+                  Working since {formatManilaTime(info.last_log.timestamp)} · {formatDuration(info.last_log.timestamp)} — tap Time Out when done
+                </p>
+              ) : info.last_log?.type === "out" ? (
+                <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs font-medium text-gray-400">
+                  <Clock className="h-3 w-3 shrink-0" />
+                  Last out at {formatManilaTime(info.last_log.timestamp)} — see you tomorrow!
+                </p>
+              ) : (
+                <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white/5 px-3 py-1.5 text-xs font-medium text-gray-400">
+                  <Clock className="h-3 w-3 shrink-0" />
+                  Not yet timed in today
                 </p>
               )}
             </div>

@@ -12,9 +12,12 @@ const BUCKET = "payroll-selfies";
 
 // POST handlers are already excluded from Next's Full Route Cache, but the
 // rate-limit check and shop-settings read here are exactly the kind of
-// per-request-must-be-live query that bit employee/by-token/route.ts (see
-// its comment) — declared explicitly rather than relying on that default.
+// per-request-must-be-live query that bit employee/by-token/route.ts — see
+// its comment for how `dynamic = "force-dynamic"` alone turned out not to
+// be reliable, hence also setting `fetchCache` explicitly here.
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+export const revalidate = 0;
 
 const slugify = (s: string) => s.trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "staff";
 
@@ -165,5 +168,14 @@ export async function POST(req: Request) {
     .from("payroll_attendance")
     .upsert({ staff_id: staff.id, date: today, ...(existingAttendance ?? {}), ...patch, selfie_url: selfiePath }, { onConflict: "staff_id,date" });
 
-  return NextResponse.json({ success: true, distance, needs_approval: needsApproval, timestamp: nowIso });
+  // last_log_type/timestamp let the client flip its Time In/Out button
+  // immediately from this response, instead of depending on a follow-up
+  // GET (and whatever caching layer might serve that GET a stale result).
+  return NextResponse.json({
+    success: true,
+    distance,
+    needs_approval: needsApproval,
+    timestamp: nowIso,
+    last_log_type: type,
+  });
 }
