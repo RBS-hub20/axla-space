@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getBusinesses, createBusiness } from "@/lib/dashboard/businesses";
 import { logActivity } from "@/lib/dashboard/activity";
@@ -24,8 +25,12 @@ export async function GET() {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view businesses." }, { status: 403 });
+  }
 
-  const businesses = await getBusinesses(user.id);
+  const businesses = await getBusinesses(owner.ownerId);
   return NextResponse.json({ businesses });
 }
 
@@ -36,6 +41,10 @@ export async function POST(req: Request) {
   }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
+  }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditFilings) {
+    return NextResponse.json({ error: "You don't have permission to add businesses." }, { status: 403 });
   }
 
   let body: CreateBusinessBody;
@@ -59,9 +68,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Branch code must be 3 digits, e.g. 000 or 001." }, { status: 400 });
   }
 
-  const plan = await getUserPlan(user.email);
+  const plan = await getUserPlan(owner.ownerEmail);
   const maxBusinesses = PLAN_LIMITS.maxBusinesses[plan];
-  const existing = await getBusinesses(user.id);
+  const existing = await getBusinesses(owner.ownerId);
   if (existing.length >= maxBusinesses) {
     return NextResponse.json(
       {
@@ -77,7 +86,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const { business, error } = await createBusiness(user.id, {
+  const { business, error } = await createBusiness(owner.ownerId, {
     name: body.name.trim(),
     tin,
     rdo_code: typeof body.rdoCode === "string" ? body.rdoCode.trim() : "",
@@ -90,7 +99,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Failed to create business.", detail }, { status: 500 });
   }
 
-  await logActivity(user.id, "business_created", `Added business "${business.name}"`);
+  await logActivity(owner.ownerId, "business_created", `Added business "${business.name}"`);
 
   return NextResponse.json({ business });
 }

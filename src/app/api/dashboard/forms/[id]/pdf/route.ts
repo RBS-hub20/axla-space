@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getOrCreateProfile } from "@/lib/dashboard/profile";
 import { resolveBusiness } from "@/lib/dashboard/businesses";
@@ -28,12 +29,16 @@ export async function GET(_req: Request, { params }: RouteParams) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewBirForms) {
+    return NextResponse.json({ error: "You don't have permission to view forms." }, { status: 403 });
+  }
 
   const { data: form, error: formError } = await supabaseAdmin
     .from("bir_forms")
     .select("*")
     .eq("id", params.id)
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .maybeSingle();
 
   if (formError) {
@@ -44,15 +49,19 @@ export async function GET(_req: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 
-  const profile = await getOrCreateProfile(user.id, user.email, user.name ?? user.email.split("@")[0]);
+  const profile = await getOrCreateProfile(
+    owner.ownerId,
+    owner.ownerEmail,
+    owner.isOwner ? user.name ?? owner.ownerEmail.split("@")[0] : owner.ownerEmail.split("@")[0],
+  );
   if (!profile) {
     return NextResponse.json({ error: "Failed to load profile." }, { status: 500 });
   }
 
-  // Resolves to: the form's own business_id if set, else the user's
+  // Resolves to: the form's own business_id if set, else the owner's
   // primary business, else a synthetic business built from profile fields
   // (the explicit fallback the multi-business feature is required to keep).
-  const business = await resolveBusiness(user.id, profile, form.business_id);
+  const business = await resolveBusiness(owner.ownerId, profile, form.business_id);
 
   // `form.data` is a snapshot of the tax_calculations row taken when the
   // form was created — frozen on purpose, so a filing reference doesn't
@@ -84,7 +93,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
   let receiptsQuery = supabaseAdmin
     .from("receipts")
     .select("amount")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .eq("category", "deductible")
     .gte("receipt_date", start)
     .lte("receipt_date", end);
@@ -99,8 +108,8 @@ export async function GET(_req: Request, { params }: RouteParams) {
   const deductibleReceiptsTotal =
     receipts && receipts.length > 0 ? receipts.reduce((sum, r) => sum + (Number(r.amount) || 0), 0) : null;
 
-  const fullName = profile.full_name || user.name || user.email;
-  const plan = await getUserPlan(user.email);
+  const fullName = profile.full_name || (owner.isOwner ? user.name : null) || owner.ownerEmail;
+  const plan = await getUserPlan(owner.ownerEmail);
 
   const pdfBytes = await generateFormPdf({
     formId: form.id,

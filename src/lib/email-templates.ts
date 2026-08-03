@@ -438,19 +438,29 @@ export function promoCountdownEmailTemplate(name: string, daysLeft: number): str
   return emailShell(`${daysLeft} day${daysLeft === 1 ? "" : "s"} left — PRO 50% off`, body);
 }
 
-/** Business-plan team invite notification. Purely informational — accepting doesn't grant login access yet (no multi-user access model exists), so it says so plainly rather than implying a working invite flow. */
-export function teamInviteEmailTemplate(ownerName: string, role: string): string {
+/** Business-plan team invite — links to /team/accept?token=... so the recipient can actually sign in and get access, not just a heads-up. */
+export function teamInviteEmailTemplate(ownerName: string, roleLabel: string, acceptUrl: string): string {
   const body = `
     <p style="margin:0 0 4px; font-size:18px; color:#ffffff; font-weight:700;">You've been invited to Axla</p>
     <p style="margin:0 0 20px; font-size:15px; line-height:1.6; color:${BODY_TEXT};">
-      ${ownerName} added you as a <strong>${role}</strong> on their Axla account.
+      ${ownerName} added you as a <strong>${roleLabel}</strong> on their Axla account. Accept the invite to view
+      and manage their filings, BIR forms, and payroll.
     </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 20px;">
+      <tr>
+        <td style="border-radius:9999px; background-color:${ACCENT};">
+          <a href="${acceptUrl}" style="display:inline-block; padding:12px 28px; font-size:14px; font-weight:700; color:${BUTTON_TEXT}; text-decoration:none;">
+            Accept invitation →
+          </a>
+        </td>
+      </tr>
+    </table>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; margin-bottom:20px;">
       <tr>
         <td style="padding:12px 16px; background-color:${HIGHLIGHT_BG}; border-radius:12px; border-left:3px solid ${ACCENT};">
           <p style="margin:0; font-size:13px; line-height:1.6; color:${BODY_TEXT};">
-            This is a heads-up, not an account yet — shared team access isn't live yet, so there's
-            nothing to log into just yet. ${ownerName} will follow up once it is.
+            This link expires in 7 days. If you don't have an Axla account yet, accepting will let you create one
+            with this email first.
           </p>
         </td>
       </tr>

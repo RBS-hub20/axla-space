@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { hasPayrollAccess } from "@/lib/payroll/plan";
 import {
@@ -26,7 +27,11 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
-  if (!(await hasPayrollAccess(user.email))) {
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canRunPayroll) {
+    return NextResponse.json({ error: "You don't have permission to run payroll." }, { status: 403 });
+  }
+  if (!(await hasPayrollAccess(owner.ownerEmail))) {
     return NextResponse.json({ error: "No active Payroll subscription.", code: "NO_SUBSCRIPTION" }, { status: 403 });
   }
   if (!isSupabaseAdminConfigured) {
@@ -46,11 +51,11 @@ export async function POST(req: Request) {
   const range = getCutOffRange(month, cutOff);
 
   const [{ data: staff, error: staffError }, { data: attendance, error: attError }] = await Promise.all([
-    supabaseAdmin.from("payroll_staff").select("id, name, daily_rate").eq("owner_id", user.id),
+    supabaseAdmin.from("payroll_staff").select("id, name, daily_rate").eq("owner_id", owner.ownerId),
     supabaseAdmin
       .from("payroll_attendance")
       .select("staff_id, date, time_in, time_out, payroll_staff!inner(owner_id)")
-      .eq("payroll_staff.owner_id", user.id)
+      .eq("payroll_staff.owner_id", owner.ownerId)
       .gte("date", range.from)
       .lt("date", range.to),
   ]);
@@ -87,7 +92,7 @@ export async function POST(req: Request) {
   const { data: run, error: insertError } = await supabaseAdmin
     .from("payroll_runs")
     .insert({
-      owner_id: user.id,
+      owner_id: owner.ownerId,
       month,
       cut_off: cutOff,
       total_sahod: totalSahod,

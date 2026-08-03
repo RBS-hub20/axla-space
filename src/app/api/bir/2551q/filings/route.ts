@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logError } from "@/lib/log-error";
 
@@ -11,11 +12,15 @@ export async function GET() {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view filings." }, { status: 403 });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("bir_filings")
     .select("id, quarter, year, gross, tax_due, status, finalized_at")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .order("year", { ascending: false })
     .order("quarter", { ascending: false })
     .limit(10);

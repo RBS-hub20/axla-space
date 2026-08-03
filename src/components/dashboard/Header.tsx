@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { LogOut, Infinity as InfinityIcon, Clock } from "lucide-react";
+import { LogOut, Infinity as InfinityIcon, Clock, ChevronDown, Users, Check } from "lucide-react";
 import type { UsageSummary } from "@/lib/usage";
 import { PROMO } from "@/lib/promo";
+import { useTeamRole } from "@/contexts/TeamContext";
+import { ROLE_LABELS } from "@/lib/team-permissions";
 
 interface HeaderProps {
   userName: string;
@@ -37,6 +39,63 @@ function badgeStyle(daysLeft: number): { classes: string; label: string; pulse: 
   if (daysLeft <= 2) return { classes: "bg-red-500/20 text-red-400 border border-red-500/30", label: `⏰ ${daysLeft}d left`, pulse: true };
   if (daysLeft <= 7) return { classes: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30", label: `⏰ Pro • ${daysLeft}d`, pulse: true };
   return { classes: "bg-[#00FF88]/20 text-[#00FF88] border border-[#00FF88]/30", label: `∞ Pro • ${daysLeft}d`, pulse: false };
+}
+
+/** "My Account" + any accounts shared with the current user, via team_members. Hidden entirely when there's nothing to switch between. */
+function AccountSwitcher({ userName }: { userName: string }) {
+  const { memberships, activeOwnerId, isOwner, role, isLoading, switchAccount } = useTeamRole();
+  const [open, setOpen] = useState(false);
+
+  if (isLoading || memberships.length === 0) return null;
+
+  const active = memberships.find((m) => m.ownerId === activeOwnerId);
+  const label = isOwner ? "My Account" : `${active?.ownerName ?? "Shared"} (${ROLE_LABELS[role]})`;
+
+  return (
+    <div className="relative hidden sm:block" onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs font-medium text-slate-300 hover:border-[#00FF85]/40 hover:text-[#00FF85]"
+      >
+        <Users className="h-3.5 w-3.5" />
+        {label}
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-xl border border-[#1E293B] bg-[#121A22] shadow-2xl">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              switchAccount(null);
+            }}
+            className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
+          >
+            <span>My Account ({userName})</span>
+            {isOwner && <Check className="h-3.5 w-3.5 text-[#00FF85]" />}
+          </button>
+          {memberships.map((m) => (
+            <button
+              key={m.ownerId}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                switchAccount(m.ownerId);
+              }}
+              className="flex w-full items-center justify-between border-t border-white/5 px-4 py-2.5 text-left text-sm text-slate-200 hover:bg-white/5"
+            >
+              <span>
+                {m.ownerName}&apos;s TaxLaya ({ROLE_LABELS[m.role]})
+              </span>
+              {!isOwner && activeOwnerId === m.ownerId && <Check className="h-3.5 w-3.5 text-[#00FF85]" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Header({ userName }: HeaderProps) {
@@ -137,6 +196,8 @@ export function Header({ userName }: HeaderProps) {
             {urgent.remaining}/{urgent.limit} {urgent.label} left
           </Link>
         )}
+
+        <AccountSwitcher userName={userName} />
 
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#00FF85]/15 text-sm font-semibold text-[#00FF85]">

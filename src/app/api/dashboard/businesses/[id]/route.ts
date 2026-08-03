@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { updateBusiness, setPrimaryBusiness, deleteBusiness } from "@/lib/dashboard/businesses";
 import { logActivity } from "@/lib/dashboard/activity";
@@ -28,6 +29,10 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditFilings) {
+    return NextResponse.json({ error: "You don't have permission to edit businesses." }, { status: 403 });
+  }
 
   let body: PatchBody;
   try {
@@ -40,12 +45,12 @@ export async function PATCH(req: Request, { params }: RouteParams) {
   // the hood) — handle it on its own rather than mixing it into a partial
   // field update.
   if (body.isPrimary === true) {
-    const { business, error } = await setPrimaryBusiness(user.id, params.id);
+    const { business, error } = await setPrimaryBusiness(owner.ownerId, params.id);
     if (!business) {
       const detail = error ? `${error.message} [${error.code}]` : undefined;
       return NextResponse.json({ error: "Failed to set primary business.", detail }, { status: 500 });
     }
-    await logActivity(user.id, "business_set_primary", `Set "${business.name}" as primary business`);
+    await logActivity(owner.ownerId, "business_set_primary", `Set "${business.name}" as primary business`);
     return NextResponse.json({ business });
   }
 
@@ -90,13 +95,13 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     updates.address = body.address.trim();
   }
 
-  const { business, error } = await updateBusiness(user.id, params.id, updates);
+  const { business, error } = await updateBusiness(owner.ownerId, params.id, updates);
   if (!business) {
     const detail = error ? `${error.message} [${error.code}]` : undefined;
     return NextResponse.json({ error: "Failed to update business.", detail }, { status: 500 });
   }
 
-  await logActivity(user.id, "business_updated", `Updated business "${business.name}"`);
+  await logActivity(owner.ownerId, "business_updated", `Updated business "${business.name}"`);
 
   return NextResponse.json({ business });
 }
@@ -109,14 +114,18 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canDeleteShop) {
+    return NextResponse.json({ error: "Only the account owner can delete a business." }, { status: 403 });
+  }
 
-  const { success, error } = await deleteBusiness(user.id, params.id);
+  const { success, error } = await deleteBusiness(owner.ownerId, params.id);
   if (!success) {
     const detail = error ? `${error.message} [${error.code}]` : undefined;
     return NextResponse.json({ error: "Failed to delete business.", detail }, { status: 500 });
   }
 
-  await logActivity(user.id, "business_deleted", "Deleted a business");
+  await logActivity(owner.ownerId, "business_deleted", "Deleted a business");
 
   return NextResponse.json({ success: true });
 }

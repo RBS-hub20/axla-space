@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getOrCreateProfile } from "@/lib/dashboard/profile";
 import { generateEBIR2551QXML, generateEBIR2551QDAT, normalizeTin } from "@/lib/bir/ebirforms-2551q";
@@ -34,6 +35,10 @@ export async function GET(req: Request) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canExport) {
+    return NextResponse.json({ error: "You don't have permission to export data." }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const quarterNum = Number(url.searchParams.get("quarter"));
@@ -42,7 +47,11 @@ export async function GET(req: Request) {
     : ((Math.floor(new Date().getMonth() / 3) + 1) as 1 | 2 | 3 | 4);
   const year = Number.isFinite(Number(url.searchParams.get("year"))) ? Number(url.searchParams.get("year")) : new Date().getFullYear();
 
-  const profile = await getOrCreateProfile(user.id, user.email, user.name ?? user.email.split("@")[0]);
+  const profile = await getOrCreateProfile(
+    owner.ownerId,
+    owner.ownerEmail,
+    owner.isOwner ? user.name ?? owner.ownerEmail.split("@")[0] : owner.ownerEmail.split("@")[0],
+  );
   if (!profile) {
     return NextResponse.json({ error: "Failed to load profile." }, { status: 500 });
   }
@@ -50,7 +59,7 @@ export async function GET(req: Request) {
   const { data: txRows, error: txError } = await supabaseAdmin
     .from("transactions")
     .select("amount, type")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .eq("quarter", quarter)
     .eq("year", year);
   if (txError) {
@@ -102,7 +111,7 @@ export async function GET(req: Request) {
   const { data: receiptRows, error: receiptsError } = await supabaseAdmin
     .from("receipts")
     .select("file_path, file_name, vendor, receipt_date")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .gte("receipt_date", start)
     .lte("receipt_date", end);
   if (receiptsError) {

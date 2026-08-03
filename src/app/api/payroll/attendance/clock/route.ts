@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPayrollPlan } from "@/lib/payroll/plan";
 import { FREE_ATTENDANCE_LIMIT, tierOf } from "@/lib/payroll/pricing";
@@ -24,6 +25,10 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditPayroll) {
+    return NextResponse.json({ error: "You don't have permission to edit payroll." }, { status: 403 });
+  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
@@ -46,7 +51,7 @@ export async function POST(req: Request) {
     .from("payroll_staff")
     .select("id")
     .eq("id", staffId)
-    .eq("owner_id", user.id)
+    .eq("owner_id", owner.ownerId)
     .maybeSingle();
   if (staffError) {
     logError("payroll/attendance/clock: staff lookup failed", staffError);
@@ -66,13 +71,13 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (!existing) {
-    const plan = await getPayrollPlan(user.email);
+    const plan = await getPayrollPlan(owner.ownerEmail);
     const limit = tierOf(plan) === "free" ? FREE_ATTENDANCE_LIMIT : null;
     if (limit !== null) {
       const { count, error: countError } = await supabaseAdmin
         .from("payroll_attendance")
         .select("id, payroll_staff!inner(owner_id)", { count: "exact", head: true })
-        .eq("payroll_staff.owner_id", user.id);
+        .eq("payroll_staff.owner_id", owner.ownerId);
       if (countError) {
         logError("payroll/attendance/clock: count check failed", countError);
         return NextResponse.json({ error: "Failed to record attendance." }, { status: 500 });

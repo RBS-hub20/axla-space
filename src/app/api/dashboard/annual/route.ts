@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getUserPlan } from "@/lib/usage";
 import { computeGraduatedAnnualTax } from "@/lib/tax-calculator";
@@ -17,8 +18,12 @@ export async function GET(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view filings." }, { status: 403 });
+  }
 
-  const plan = await getUserPlan(user.email);
+  const plan = await getUserPlan(owner.ownerEmail);
   if (plan !== "business") {
     return NextResponse.json(
       {
@@ -40,7 +45,7 @@ export async function GET(req: Request) {
   const { data, error } = await supabaseAdmin
     .from("tax_calculations")
     .select("quarter, income, expenses, tax_type, tax_due")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .eq("year", year)
     .order("quarter", { ascending: true });
 

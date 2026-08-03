@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPayrollPlan } from "@/lib/payroll/plan";
 import { PAYROLL_STAFF_LIMITS, DEFAULT_DAILY_RATE, tierOf } from "@/lib/payroll/pricing";
@@ -14,16 +15,20 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewPayroll) {
+    return NextResponse.json({ error: "You don't have permission to view payroll." }, { status: 403 });
+  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
-  const plan = await getPayrollPlan(user.email);
+  const plan = await getPayrollPlan(owner.ownerEmail);
   const tier = tierOf(plan);
 
   const { data, error } = await supabaseAdmin
     .from("payroll_staff")
     .select("*")
-    .eq("owner_id", user.id)
+    .eq("owner_id", owner.ownerId)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -45,10 +50,14 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditPayroll) {
+    return NextResponse.json({ error: "You don't have permission to edit payroll." }, { status: 403 });
+  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
-  const plan = await getPayrollPlan(user.email);
+  const plan = await getPayrollPlan(owner.ownerEmail);
   const tier = tierOf(plan);
 
   const limit = PAYROLL_STAFF_LIMITS[tier];
@@ -56,7 +65,7 @@ export async function POST(req: Request) {
     const { count, error: countError } = await supabaseAdmin
       .from("payroll_staff")
       .select("id", { count: "exact", head: true })
-      .eq("owner_id", user.id);
+      .eq("owner_id", owner.ownerId);
     if (countError) {
       logError("payroll/staff POST: count check failed", countError);
       return NextResponse.json({ error: "Failed to check staff limit." }, { status: 500 });
@@ -96,7 +105,7 @@ export async function POST(req: Request) {
     const { data: existingStaff, error: existingError } = await supabaseAdmin
       .from("payroll_staff")
       .select("id, name, gcash")
-      .eq("owner_id", user.id)
+      .eq("owner_id", owner.ownerId)
       .not("gcash", "is", null);
     if (existingError) {
       logError("payroll/staff POST: duplicate check failed", existingError);
@@ -120,7 +129,7 @@ export async function POST(req: Request) {
     const { data, error } = await supabaseAdmin
       .from("payroll_staff")
       .insert({
-        owner_id: user.id,
+        owner_id: owner.ownerId,
         name: body.name.trim().slice(0, 120),
         gcash,
         daily_rate: dailyRate,

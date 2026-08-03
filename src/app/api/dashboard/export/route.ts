@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { generateQuickBooksCsv } from "@/lib/export/quickbooks";
 import { generateXeroCsv } from "@/lib/export/xero";
@@ -18,6 +19,10 @@ export async function GET(req: Request) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canExport) {
+    return NextResponse.json({ error: "You don't have permission to export data." }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const type = url.searchParams.get("type");
@@ -31,7 +36,7 @@ export async function GET(req: Request) {
   let query = supabaseAdmin
     .from("transactions")
     .select("transaction_date, description, amount, type, source, quarter, year")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .order("transaction_date", { ascending: true });
 
   if (quarter && year) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { calculateTax, type TaxType } from "@/lib/tax-calculator";
 import { logActivity } from "@/lib/dashboard/activity";
@@ -23,6 +24,10 @@ export async function POST(req: Request) {
 
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
+  }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditFilings) {
+    return NextResponse.json({ error: "You don't have permission to compute filings." }, { status: 403 });
   }
 
   let body: CalculateBody;
@@ -65,7 +70,7 @@ export async function POST(req: Request) {
   const { data, error } = await supabaseAdmin
     .from("tax_calculations")
     .insert({
-      user_id: user.id,
+      user_id: owner.ownerId,
       income,
       expenses,
       tax_type: taxType,
@@ -85,7 +90,7 @@ export async function POST(req: Request) {
   }
 
   await logActivity(
-    user.id,
+    owner.ownerId,
     "tax_calculated",
     `Computed Q${quarter} ${year} tax (${taxType}): ₱${result.taxDue.toLocaleString(undefined, { maximumFractionDigits: 2 })} due`,
   );
@@ -102,11 +107,15 @@ export async function GET() {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view filings." }, { status: 403 });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("tax_calculations")
     .select("*")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .order("created_at", { ascending: false })
     .limit(20);
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { calculateTax } from "@/lib/tax-calculator";
 
 interface CompareBody {
@@ -20,6 +21,10 @@ export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view filings." }, { status: 403 });
   }
 
   let body: CompareBody;

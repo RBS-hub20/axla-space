@@ -428,26 +428,51 @@ create index if not exists taxlaya_chats_user_id_idx on public.taxlaya_chats (us
 alter table public.taxlaya_chats enable row level security;
 grant select, insert, update, delete on public.taxlaya_chats to service_role;
 
--- Business-plan team invites. This records the invite only — it does NOT
--- grant the invited email a second login into the owner's account data.
--- That would require a real multi-tenant access model (a second Prisma
--- User row scoped to view/edit the owner's businesses/filings), which is a
--- genuine auth-architecture change beyond what a single migration + routes
--- can safely deliver. Treat this table as "who's been invited and whether
--- they've acknowledged it," not as a working shared-login system yet.
+-- Business-plan team invites. token is the unguessable value emailed as
+-- the accept link (?token=...); expires_at gives it a 7-day window. Role
+-- has grown past its original ('member','accountant') pair — see migration
+-- 024 for the widen + the 'member' -> 'va' backfill.
 create table if not exists public.team_invites (
   id uuid primary key default gen_random_uuid(),
   owner_user_id text not null references public.profiles (id) on delete cascade,
   invited_email text not null,
-  role text not null default 'member' check (role in ('member', 'accountant')),
+  role text not null default 'accountant' check (role in ('accountant', 'team_leader', 'va', 'admin')),
   status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked')),
+  token uuid not null default gen_random_uuid(),
+  expires_at timestamptz not null default (now() + interval '7 days'),
   created_at timestamptz not null default now()
 );
 
 create index if not exists team_invites_owner_idx on public.team_invites (owner_user_id, created_at desc);
+create unique index if not exists team_invites_token_idx on public.team_invites (token);
 
 alter table public.team_invites enable row level security;
 grant select, insert, update, delete on public.team_invites to service_role;
+
+-- Accepting an invite writes a row here — this is what actually grants
+-- member_user_id read/write access to owner_user_id's account data. Every
+-- dashboard API route that supports shared access resolves an "effective
+-- owner id" via getEffectiveOwnerId() (src/lib/team.ts), which checks this
+-- table instead of trusting the client-sent id, then filters exactly the
+-- same way it already filters on the owner's own user id — the shared-vs-own
+-- distinction never bypasses the existing app-layer row filtering.
+create table if not exists public.team_members (
+  id uuid primary key default gen_random_uuid(),
+  owner_user_id text not null references public.profiles (id) on delete cascade,
+  member_user_id text not null references public.profiles (id) on delete cascade,
+  invited_email text not null,
+  role text not null check (role in ('accountant', 'team_leader', 'va', 'admin')),
+  status text not null default 'active' check (status in ('active', 'removed')),
+  invite_id uuid references public.team_invites (id) on delete set null,
+  joined_at timestamptz not null default now(),
+  unique (owner_user_id, member_user_id, invite_id)
+);
+
+create index if not exists team_members_owner_idx on public.team_members (owner_user_id, status);
+create index if not exists team_members_member_idx on public.team_members (member_user_id, status);
+
+alter table public.team_members enable row level security;
+grant select, insert, update, delete on public.team_members to service_role;
 
 -- Admin v2: click-tracking for the "Referral Link" feature. ref_email is
 -- nullable since a tampered/garbage ?ref value still gets logged via

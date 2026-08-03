@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPaymentProof, type PaymentProof } from "@/lib/payroll/payment-proof";
 import { validateImageUpload } from "@/lib/payroll/file-validation";
@@ -37,11 +38,15 @@ async function loadRun(runId: string, ownerId: string) {
 export async function POST(req: Request, { params }: { params: { id: string; employeeId: string } }) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canRunPayroll) {
+    return NextResponse.json({ error: "You don't have permission to run payroll." }, { status: 403 });
+  }
   if (!isSupabaseAdminConfigured) return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
 
   let run;
   try {
-    run = await loadRun(params.id, user.id);
+    run = await loadRun(params.id, owner.ownerId);
   } catch (err) {
     logError("payroll/runs/[id]/payment/[employeeId]/override POST: run lookup failed", err);
     return NextResponse.json({ error: "Failed to override payment." }, { status: 500 });
@@ -75,7 +80,7 @@ export async function POST(req: Request, { params }: { params: { id: string; emp
     if (!validation.ok) {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    receiptPath = `${user.id}/${params.id}/${params.employeeId}-override-${Date.now()}.jpg`;
+    receiptPath = `${owner.ownerId}/${params.id}/${params.employeeId}-override-${Date.now()}.jpg`;
     const bytes = new Uint8Array(await receipt.arrayBuffer());
     const { error: uploadError } = await supabaseAdmin.storage.from(BUCKET).upload(receiptPath, bytes, {
       contentType: receipt.type,
@@ -109,7 +114,7 @@ export async function POST(req: Request, { params }: { params: { id: string; emp
   }
 
   await logPaymentProofChange({
-    ownerId: user.id,
+    ownerId: owner.ownerId,
     employeeId: params.employeeId,
     payrollRunId: params.id,
     action: "override",

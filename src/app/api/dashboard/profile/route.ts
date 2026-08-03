@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { getOrCreateProfile, updateProfile, type ProfileUpdate } from "@/lib/dashboard/profile";
 import { isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logActivity } from "@/lib/dashboard/activity";
@@ -22,8 +23,12 @@ export async function GET() {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view this profile." }, { status: 403 });
+  }
 
-  const profile = await getOrCreateProfile(user.id, user.email, user.name ?? user.email.split("@")[0]);
+  const profile = await getOrCreateProfile(owner.ownerId, owner.ownerEmail, owner.ownerEmail.split("@")[0]);
   if (!profile) {
     return NextResponse.json({ error: "Failed to load profile." }, { status: 500 });
   }
@@ -47,6 +52,10 @@ export async function PATCH(req: Request) {
   }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
+  }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditFilings) {
+    return NextResponse.json({ error: "You don't have permission to edit this profile." }, { status: 403 });
   }
 
   let body: PatchBody;
@@ -107,13 +116,13 @@ export async function PATCH(req: Request) {
     updates.rdo_code = body.rdoCode.trim();
   }
 
-  const { profile, error } = await updateProfile(user.id, updates);
+  const { profile, error } = await updateProfile(owner.ownerId, updates);
   if (!profile) {
     const detail = error ? `${error.message}${error.hint ? ` (hint: ${error.hint})` : ""} [${error.code}]` : undefined;
     return NextResponse.json({ error: "Failed to update profile.", detail }, { status: 500 });
   }
 
-  await logActivity(user.id, "profile_updated", "Updated profile settings");
+  await logActivity(owner.ownerId, "profile_updated", "Updated profile settings");
 
   return NextResponse.json({ profile });
 }

@@ -6,12 +6,17 @@ import { getOrCreateProfile } from "@/lib/dashboard/profile";
 import { isResendConfigured, resend, RESEND_FROM_EMAIL } from "@/lib/resend";
 import { teamInviteEmailTemplate } from "@/lib/email-templates";
 import { logError } from "@/lib/log-error";
+import { isInvitableRole, ROLE_LABELS } from "@/lib/team";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function requireBusinessPlan(email: string) {
   const plan = await getUserPlan(email);
   return plan === "business";
+}
+
+function acceptUrl(token: string) {
+  return `https://www.axla.space/team/accept?token=${token}`;
 }
 
 export async function GET() {
@@ -29,18 +34,35 @@ export async function GET() {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
 
-  const { data, error } = await supabaseAdmin
-    .from("team_invites")
-    .select("id, invited_email, role, status, created_at")
-    .eq("owner_user_id", user.id)
-    .order("created_at", { ascending: false });
+  const [invitesResult, membersResult] = await Promise.all([
+    supabaseAdmin
+      .from("team_invites")
+      .select("id, invited_email, role, status, token, expires_at, created_at")
+      .eq("owner_user_id", user.id)
+      .order("created_at", { ascending: false }),
+    supabaseAdmin
+      .from("team_members")
+      .select("id, invited_email, role, status, joined_at")
+      .eq("owner_user_id", user.id)
+      .eq("status", "active")
+      .order("joined_at", { ascending: false }),
+  ]);
 
-  if (error) {
-    logError("dashboard/team GET: query failed", error);
+  if (invitesResult.error) {
+    logError("dashboard/team GET: invites query failed", invitesResult.error);
     return NextResponse.json({ error: "Failed to load invites." }, { status: 500 });
   }
+  if (membersResult.error) {
+    logError("dashboard/team GET: members query failed", membersResult.error);
+    return NextResponse.json({ error: "Failed to load team members." }, { status: 500 });
+  }
 
-  return NextResponse.json({ invites: data ?? [] });
+  const invites = (invitesResult.data ?? []).map((i) => ({
+    ...i,
+    accept_url: i.status === "pending" ? acceptUrl(i.token) : null,
+  }));
+
+  return NextResponse.json({ invites, members: membersResult.data ?? [] });
 }
 
 interface InviteBody {
@@ -74,21 +96,29 @@ export async function POST(req: Request) {
   if (!EMAIL_RE.test(email)) {
     return NextResponse.json({ error: "Enter a valid email." }, { status: 400 });
   }
-  const role = body.role === "accountant" ? "accountant" : "member";
+  if (email === user.email.toLowerCase()) {
+    return NextResponse.json({ error: "You can't invite yourself." }, { status: 400 });
+  }
+  const role = isInvitableRole(body.role) ? body.role : "accountant";
 
-  const { count } = await supabaseAdmin
+  const { count: pendingCount } = await supabaseAdmin
     .from("team_invites")
     .select("id", { count: "exact", head: true })
     .eq("owner_user_id", user.id)
     .eq("status", "pending");
-  if ((count ?? 0) >= 5) {
+  const { count: memberCount } = await supabaseAdmin
+    .from("team_members")
+    .select("id", { count: "exact", head: true })
+    .eq("owner_user_id", user.id)
+    .eq("status", "active");
+  if ((pendingCount ?? 0) + (memberCount ?? 0) >= 5) {
     return NextResponse.json({ error: "Business plan supports up to 5 team members." }, { status: 400 });
   }
 
   const { data: invite, error: insertError } = await supabaseAdmin
     .from("team_invites")
     .insert({ owner_user_id: user.id, invited_email: email, role })
-    .select("id, invited_email, role, status, created_at")
+    .select("id, invited_email, role, status, token, expires_at, created_at")
     .single();
 
   if (insertError) {
@@ -104,7 +134,7 @@ export async function POST(req: Request) {
         from: RESEND_FROM_EMAIL,
         to: email,
         subject: `${ownerName} invited you to Axla TaxLaya`,
-        html: teamInviteEmailTemplate(ownerName, role),
+        html: teamInviteEmailTemplate(ownerName, ROLE_LABELS[role], acceptUrl(invite.token)),
       });
       if (sendError) logError("dashboard/team POST: resend send failed", sendError);
     } catch (err) {
@@ -112,5 +142,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ invite });
+  return NextResponse.json({ invite: { ...invite, accept_url: acceptUrl(invite.token) } });
 }

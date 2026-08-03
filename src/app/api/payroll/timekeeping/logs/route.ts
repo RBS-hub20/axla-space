@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logError } from "@/lib/log-error";
 
@@ -18,6 +19,10 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewPayroll) {
+    return NextResponse.json({ error: "You don't have permission to view payroll." }, { status: 403 });
+  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
@@ -25,7 +30,7 @@ export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("timekeeping_logs")
     .select("*, payroll_staff(name)")
-    .eq("owner_id", user.id)
+    .eq("owner_id", owner.ownerId)
     .order("created_at", { ascending: false })
     .limit(PAGE_LIMIT);
 

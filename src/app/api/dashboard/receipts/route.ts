@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { extractReceiptData } from "@/lib/dashboard/receipt-ocr";
 import { logActivity } from "@/lib/dashboard/activity";
@@ -19,11 +20,15 @@ export async function GET() {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view filings." }, { status: 403 });
+  }
 
   const { data, error } = await supabaseAdmin
     .from("receipts")
     .select("*")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -53,6 +58,10 @@ export async function POST(req: Request) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditFilings) {
+    return NextResponse.json({ error: "You don't have permission to upload receipts." }, { status: 403 });
+  }
 
   let formData: FormData;
   try {
@@ -72,7 +81,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "File is too large (max 8MB)." }, { status: 400 });
   }
 
-  const usage = await checkAndIncrementUsage(user.id, user.email, "scan");
+  const usage = await checkAndIncrementUsage(owner.ownerId, owner.ownerEmail, "scan");
   if (!usage.allowed) {
     return NextResponse.json(
       { code: "LIMIT_REACHED", type: "scan", message: LIMIT_MESSAGES.scan, upgrade_url: "/dashboard/settings" },
@@ -81,7 +90,7 @@ export async function POST(req: Request) {
   }
 
   const extension = file.name.split(".").pop() || "jpg";
-  const filePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
+  const filePath = `${owner.ownerId}/${crypto.randomUUID()}.${extension}`;
 
   const { error: uploadError } = await supabaseAdmin.storage
     .from(RECEIPTS_BUCKET)
@@ -103,7 +112,7 @@ export async function POST(req: Request) {
   const { data, error } = await supabaseAdmin
     .from("receipts")
     .insert({
-      user_id: user.id,
+      user_id: owner.ownerId,
       file_path: filePath,
       amount: ocr.amount,
       vendor: ocr.vendor,
@@ -120,7 +129,7 @@ export async function POST(req: Request) {
   }
 
   await logActivity(
-    user.id,
+    owner.ownerId,
     "receipt_uploaded",
     ocr.vendor ? `Uploaded receipt from ${ocr.vendor}` : "Uploaded a receipt",
   );

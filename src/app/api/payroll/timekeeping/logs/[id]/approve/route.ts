@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logError } from "@/lib/log-error";
 
@@ -12,6 +13,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canApproveTimekeeping) {
+    return NextResponse.json({ error: "You don't have permission to approve timekeeping." }, { status: 403 });
   }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
@@ -34,7 +39,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       approved_at: new Date().toISOString(),
     })
     .eq("id", params.id)
-    .eq("owner_id", user.id)
+    .eq("owner_id", owner.ownerId)
     .select()
     .single();
 

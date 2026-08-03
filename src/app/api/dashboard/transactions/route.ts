@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { parseGcashCsv, parseGcashPdfLines, type ParseResult } from "@/lib/dashboard/gcash-parser";
 import { parseMayaCsv } from "@/lib/parsers/maya";
@@ -47,6 +48,10 @@ export async function GET(req: Request) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewFilings) {
+    return NextResponse.json({ error: "You don't have permission to view filings." }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   const businessId = url.searchParams.get("businessId");
@@ -64,7 +69,7 @@ export async function GET(req: Request) {
     }
 
     const { data, error } = await supabaseAdmin.rpc("sum_quarter_transactions", {
-      p_user_id: user.id,
+      p_user_id: owner.ownerId,
       p_year: year,
       p_quarter: quarter,
       p_status: status,
@@ -79,7 +84,7 @@ export async function GET(req: Request) {
     const { data: filing } = await supabaseAdmin
       .from("bir_filings")
       .select("id, gross, tax_due, finalized_at")
-      .eq("user_id", user.id)
+      .eq("user_id", owner.ownerId)
       .eq("year", year)
       .eq("quarter", quarter)
       .order("finalized_at", { ascending: false })
@@ -99,7 +104,7 @@ export async function GET(req: Request) {
   let query = supabaseAdmin
     .from("transactions")
     .select("id, transaction_date, description, amount, type, business_id, created_at")
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .order("transaction_date", { ascending: false })
     .limit(500);
   if (businessId) query = query.eq("business_id", businessId);
@@ -128,6 +133,10 @@ export async function POST(req: Request) {
   }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
+  }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditFilings) {
+    return NextResponse.json({ error: "You don't have permission to upload transactions." }, { status: 403 });
   }
 
   let parsed: ParseResult;
@@ -215,12 +224,12 @@ export async function POST(req: Request) {
     );
   }
 
-  const plan = await getUserPlan(user.email);
+  const plan = await getUserPlan(owner.ownerEmail);
   if (plan === "free") {
     const { count, error: countError } = await supabaseAdmin
       .from("transactions")
       .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id);
+      .eq("user_id", owner.ownerId);
     if (countError) logError("dashboard/transactions POST: count check failed (non-fatal)", countError);
 
     const existingCount = count ?? 0;
@@ -246,7 +255,7 @@ export async function POST(req: Request) {
     // noon so no host timezone can shift it across a day boundary.
     const { quarter, year } = getCurrentQuarter(new Date(`${t.date}T12:00:00Z`));
     return {
-      user_id: user.id,
+      user_id: owner.ownerId,
       business_id: businessId,
       transaction_date: t.date,
       description: t.description,
@@ -265,7 +274,7 @@ export async function POST(req: Request) {
   }
 
   const sourceLabel = uploadSource === "maya_upload" ? "Maya" : uploadSource === "bank_upload" ? "bank" : "GCash";
-  await logActivity(user.id, "gcash_uploaded", `Uploaded ${rows.length} ${sourceLabel} transactions`);
+  await logActivity(owner.ownerId, "gcash_uploaded", `Uploaded ${rows.length} ${sourceLabel} transactions`);
 
   return NextResponse.json({
     success: true,

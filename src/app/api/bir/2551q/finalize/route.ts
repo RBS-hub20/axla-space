@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logActivity } from "@/lib/dashboard/activity";
 import { logError } from "@/lib/log-error";
@@ -28,6 +29,10 @@ export async function POST(req: Request) {
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditFilings) {
+    return NextResponse.json({ error: "You don't have permission to finalize filings." }, { status: 403 });
+  }
 
   let body: FinalizeBody;
   try {
@@ -43,7 +48,7 @@ export async function POST(req: Request) {
   }
 
   const { data: sumRows, error: sumError } = await supabaseAdmin.rpc("sum_quarter_transactions", {
-    p_user_id: user.id,
+    p_user_id: owner.ownerId,
     p_year: year,
     p_quarter: quarter,
     p_status: "draft",
@@ -64,7 +69,7 @@ export async function POST(req: Request) {
 
   const { data: filing, error: insertError } = await supabaseAdmin
     .from("bir_filings")
-    .insert({ user_id: user.id, quarter, year, gross, tax_due: taxDue })
+    .insert({ user_id: owner.ownerId, quarter, year, gross, tax_due: taxDue })
     .select("id")
     .single();
 
@@ -76,7 +81,7 @@ export async function POST(req: Request) {
   const { error: updateError } = await supabaseAdmin
     .from("transactions")
     .update({ status: "finalized" })
-    .eq("user_id", user.id)
+    .eq("user_id", owner.ownerId)
     .eq("year", year)
     .eq("quarter", quarter)
     .eq("status", "draft");
@@ -90,7 +95,7 @@ export async function POST(req: Request) {
   }
 
   await logActivity(
-    user.id,
+    owner.ownerId,
     "quarter_finalized",
     `Finalized Q${quarter} ${year}: ${count} transactions, ₱${gross.toLocaleString(undefined, { maximumFractionDigits: 2 })} gross`,
   );

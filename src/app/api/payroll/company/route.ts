@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getOrCreateProfile } from "@/lib/dashboard/profile";
 import { getPayrollCompany } from "@/lib/payroll/company";
@@ -12,13 +13,17 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewPayroll) {
+    return NextResponse.json({ error: "You don't have permission to view payroll." }, { status: 403 });
+  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
 
   const [company, profile] = await Promise.all([
-    getPayrollCompany(user.id),
-    getOrCreateProfile(user.id, user.email, user.name ?? user.email.split("@")[0]),
+    getPayrollCompany(owner.ownerId),
+    getOrCreateProfile(owner.ownerId, owner.ownerEmail, user.name ?? owner.ownerEmail.split("@")[0]),
   ]);
 
   return NextResponse.json({
@@ -40,6 +45,10 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canEditPayroll) {
+    return NextResponse.json({ error: "You don't have permission to edit payroll." }, { status: 403 });
+  }
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
@@ -59,7 +68,7 @@ export async function POST(req: Request) {
     .from("payroll_companies")
     .upsert(
       {
-        owner_id: user.id,
+        owner_id: owner.ownerId,
         business_name: body.businessName.trim().slice(0, 160),
         rdo_code: typeof body.rdoCode === "string" && body.rdoCode.trim() ? body.rdoCode.trim().slice(0, 60) : null,
         min_wage: DEFAULT_DAILY_RATE,
