@@ -46,3 +46,32 @@ export async function logPaymentProofChange({
     logError(`payroll audit log insert failed (action=${action})`, error);
   }
 }
+
+interface LogBuddyPunchFlagArgs {
+  ownerId: string;
+  employeeId: string;
+  timekeepingLogId: string;
+  flaggedBy: string;
+  ip?: string | null;
+}
+
+/**
+ * Separate from logPaymentProofChange since a buddy-punching flag isn't
+ * scoped to a payroll run (migration 023 made payroll_run_id nullable
+ * specifically for this) and has no old/new PaymentProof value — the
+ * "new value" here is just a record of the flag itself.
+ */
+export async function logBuddyPunchFlag({ ownerId, employeeId, timekeepingLogId, flaggedBy, ip }: LogBuddyPunchFlagArgs): Promise<void> {
+  const { error } = await supabaseAdmin.from("payroll_audit_logs").insert({
+    owner_id: ownerId,
+    employee_id: employeeId,
+    payroll_run_id: null,
+    action: "buddy_punch_flag",
+    old_value: null,
+    new_value: { timekeepingLogId, flaggedBy },
+    ip: ip ?? null,
+  });
+  if (error) {
+    logError("payroll audit log insert failed (action=buddy_punch_flag)", error);
+  }
+}

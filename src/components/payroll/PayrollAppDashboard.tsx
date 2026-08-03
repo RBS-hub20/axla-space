@@ -96,6 +96,10 @@ interface TimekeepingLog {
   approved: boolean | null;
   selfie_url: string | null;
   created_at: string;
+  /** Comma-joined codes, e.g. "IMPOSSIBLE_TRAVEL,MOCK_LOCATION" — see src/lib/payroll/anti-cheat.ts. Null when no anti-cheat signal fired. */
+  flag: string | null;
+  flag_note: string | null;
+  buddy_punch_flagged: boolean;
 }
 
 interface ShopSettings {
@@ -1117,6 +1121,8 @@ function TimekeepingLogsSection() {
   const [filter, setFilter] = useState<LogFilter>("all");
   const [viewingSelfie, setViewingSelfie] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [comparingLogId, setComparingLogId] = useState<string | null>(null);
+  const [flaggingId, setFlaggingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -1158,11 +1164,41 @@ function TimekeepingLogsSection() {
     }
   }
 
+  async function handleFlagBuddyPunch(id: string) {
+    setFlaggingId(id);
+    try {
+      const res = await fetch(`/api/payroll/timekeeping/logs/${id}/flag-buddy-punch`, { method: "POST" });
+      if (res.ok) {
+        toast("Flagged as buddy punching 🚩");
+        load();
+      } else {
+        toast("Failed to flag — try again.");
+      }
+    } catch {
+      toast("Network error — try again.");
+    } finally {
+      setFlaggingId(null);
+    }
+  }
+
   const filtered = logs.filter((l) => {
     if (filter === "inside") return !l.is_outside;
     if (filter === "needsApproval") return l.needs_approval;
     return true;
   });
+
+  // `logs` is already ordered desc by created_at (see the API route) — the
+  // first entry after this one, for the same staff, is their previous
+  // clock event. Used by "Compare with last selfie" (finding #5's manual
+  // side-by-side mitigation) — no extra fetch needed, everything's already loaded.
+  function findPreviousLog(log: TimekeepingLog): TimekeepingLog | null {
+    const idx = logs.findIndex((l) => l.id === log.id);
+    if (idx === -1) return null;
+    return logs.slice(idx + 1).find((l) => l.staff_id === log.staff_id) ?? null;
+  }
+
+  const comparingLog = comparingLogId ? (logs.find((l) => l.id === comparingLogId) ?? null) : null;
+  const comparingPrevious = comparingLog ? findPreviousLog(comparingLog) : null;
 
   return (
     <Card className={PREMIUM_CARD}>
@@ -1206,6 +1242,7 @@ function TimekeepingLogsSection() {
                   <th className="pb-2 pr-4">Selfie</th>
                   <th className="pb-2 pr-4">Code</th>
                   <th className="pb-2 pr-4">Status</th>
+                  <th className="pb-2 pr-4">Flags</th>
                   <th className="pb-2">Actions</th>
                 </tr>
               </thead>
@@ -1250,29 +1287,69 @@ function TimekeepingLogsSection() {
                         <Badge variant="success">✅ Approved</Badge>
                       )}
                     </td>
-                    <td className="py-3">
-                      {log.needs_approval && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            disabled={actingId === log.id}
-                            onClick={() => handleReview(log.id, true)}
-                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2 text-xs text-[#00FF88] hover:bg-[#00FF88]/10 disabled:opacity-50"
+                    <td className="py-3 pr-4">
+                      <div className="flex flex-col gap-1">
+                        {log.flag?.split(",").filter(Boolean).map((code) => (
+                          <span
+                            key={code}
+                            title={log.flag_note ?? undefined}
+                            className="inline-flex w-fit items-center gap-1 rounded-full border border-red-900/40 bg-red-950/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300"
                           >
-                            <Check className="h-3 w-3" />
-                            Approve
-                          </button>
+                            🚨 {code.replace(/_/g, " ")}
+                          </span>
+                        ))}
+                        {log.buddy_punch_flagged && (
+                          <span className="inline-flex w-fit items-center gap-1 rounded-full border border-red-900/40 bg-red-950/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
+                            🚩 Buddy Punch
+                          </span>
+                        )}
+                        {!log.flag && !log.buddy_punch_flagged && <span className="text-gray-600">—</span>}
+                      </div>
+                    </td>
+                    <td className="py-3">
+                      <div className="flex items-center gap-1">
+                        {log.needs_approval && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={actingId === log.id}
+                              onClick={() => handleReview(log.id, true)}
+                              className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2 text-xs text-[#00FF88] hover:bg-[#00FF88]/10 disabled:opacity-50"
+                            >
+                              <Check className="h-3 w-3" />
+                              Approve
+                            </button>
+                            <button
+                              type="button"
+                              disabled={actingId === log.id}
+                              onClick={() => handleReview(log.id, false)}
+                              className="inline-flex h-7 items-center gap-1 rounded-lg border border-red-900/40 px-2 text-xs text-red-300 hover:bg-red-950/30 disabled:opacity-50"
+                            >
+                              <XCircle className="h-3 w-3" />
+                              Reject
+                            </button>
+                          </>
+                        )}
+                        {findPreviousLog(log)?.selfie_url && (
                           <button
                             type="button"
-                            disabled={actingId === log.id}
-                            onClick={() => handleReview(log.id, false)}
+                            onClick={() => setComparingLogId(log.id)}
+                            className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-gray-300 hover:bg-white/5"
+                          >
+                            Compare
+                          </button>
+                        )}
+                        {!log.buddy_punch_flagged && (
+                          <button
+                            type="button"
+                            disabled={flaggingId === log.id}
+                            onClick={() => handleFlagBuddyPunch(log.id)}
                             className="inline-flex h-7 items-center gap-1 rounded-lg border border-red-900/40 px-2 text-xs text-red-300 hover:bg-red-950/30 disabled:opacity-50"
                           >
-                            <XCircle className="h-3 w-3" />
-                            Reject
+                            🚩 Flag
                           </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1286,6 +1363,62 @@ function TimekeepingLogsSection() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setViewingSelfie(null)}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={viewingSelfie} alt="Selfie full size" className="max-h-[80vh] max-w-full rounded-2xl border border-white/10" />
+        </div>
+      )}
+
+      {/* Security audit finding #5's manual-review mitigation — there's no
+          automated face-match here (that's the documented Phase 2 plan),
+          just the two selfies side by side for the owner to eyeball. */}
+      {comparingLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setComparingLogId(null)}>
+          <div className="w-full max-w-lg rounded-2xl border border-[#1E293B] bg-[#0B121A] p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="mb-3 text-sm font-semibold text-white">Compare selfies — {comparingLog.staff_name}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="mb-1 text-center text-[11px] uppercase tracking-wide text-gray-500">
+                  {comparingPrevious ? new Date(comparingPrevious.created_at).toLocaleString("en-PH") : "—"}
+                </p>
+                {comparingPrevious?.selfie_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={comparingPrevious.selfie_url} alt="Previous selfie" className="aspect-square w-full rounded-xl border border-[#1E293B] object-cover" />
+                ) : (
+                  <div className="flex aspect-square w-full items-center justify-center rounded-xl border border-[#1E293B] text-xs text-gray-600">No prior selfie</div>
+                )}
+              </div>
+              <div>
+                <p className="mb-1 text-center text-[11px] uppercase tracking-wide text-[#00FF88]">
+                  {new Date(comparingLog.created_at).toLocaleString("en-PH")} (this one)
+                </p>
+                {comparingLog.selfie_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={comparingLog.selfie_url} alt="Current selfie" className="aspect-square w-full rounded-xl border border-[#00FF88]/40 object-cover" />
+                ) : (
+                  <div className="flex aspect-square w-full items-center justify-center rounded-xl border border-[#1E293B] text-xs text-gray-600">No selfie</div>
+                )}
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              {!comparingLog.buddy_punch_flagged && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleFlagBuddyPunch(comparingLog.id);
+                    setComparingLogId(null);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-red-900/40 px-3 py-1.5 text-xs text-red-300 hover:bg-red-950/30"
+                >
+                  🚩 Flag as buddy punching
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setComparingLogId(null)}
+                className="rounded-lg border border-[#1E293B] px-3 py-1.5 text-xs text-gray-300 hover:bg-white/5"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </Card>

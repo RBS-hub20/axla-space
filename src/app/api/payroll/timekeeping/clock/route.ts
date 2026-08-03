@@ -3,8 +3,25 @@ import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getOrRotateShopSettings } from "@/lib/payroll/shop-settings";
 import { haversineMeters } from "@/lib/payroll/geo";
 import { validateImageUpload } from "@/lib/payroll/file-validation";
+import { checkSelfieLiveness, MIN_SELFIE_BYTES } from "@/lib/payroll/selfie-liveness";
+import { checkImpossibleTravel, checkMockLocation, checkIpGeoMismatch } from "@/lib/payroll/anti-cheat";
 import { getClientIp } from "@/lib/rate-limit";
 import { logError } from "@/lib/log-error";
+
+/**
+ * Security audit findings #1 (GPS spoofing) and #5 (selfie liveness) —
+ * "low-cost fix without API" scope, deliberately. Every check added here
+ * (impossible-travel velocity, mock-location heuristics, IP/GPS mismatch,
+ * min selfie size, EXIF/screenshot detection) is a heuristic an attacker
+ * with enough effort can still defeat — none of it is real device
+ * attestation or biometric liveness. At P500/mo per shop this is the
+ * right cost/benefit point: real liveness (AWS Rekognition, Smile ID, etc)
+ * charges per check and is deferred to Phase 2 once volume past ~100 shops
+ * justifies it. Until then, every flag here is a SOFT signal — it sets
+ * needs_approval=true and a `flag`/`flag_note` for the owner to manually
+ * review (see the admin Timekeeping tab), never a hard block, same
+ * reasoning as the pre-existing geofence/daily-code checks.
+ */
 
 const RATE_LIMIT_MS = 5 * 60 * 1000;
 const BUCKET = "payroll-selfies";
@@ -47,6 +64,13 @@ export async function POST(req: Request) {
   const lngRaw = formData.get("lng");
   const code = String(formData.get("code") ?? "").trim();
   const selfie = formData.get("selfie");
+  // Optional anti-cheat signals — all sent best-effort by /c/[token]. See
+  // checkMockLocation()'s doc comment for exactly what each one can and
+  // can't prove; none of these being absent blocks a clock-in.
+  const accuracyRaw = formData.get("accuracy");
+  const altitudeRaw = formData.get("altitude");
+  const isMocked = formData.get("isMocked") === "true" || formData.get("mockLocation") === "true";
+  const blinkInstruction = String(formData.get("blinkInstruction") ?? "").trim().slice(0, 80) || null;
 
   if (!token) {
     return NextResponse.json({ error: "Invalid link." }, { status: 400 });
@@ -59,12 +83,19 @@ export async function POST(req: Request) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
     return NextResponse.json({ error: "Location is required — please enable location access and try again.", code: "LOCATION_REQUIRED" }, { status: 400 });
   }
+  const accuracy = accuracyRaw !== null && Number.isFinite(Number(accuracyRaw)) ? Number(accuracyRaw) : null;
+  const altitude = altitudeRaw !== null && Number.isFinite(Number(altitudeRaw)) ? Number(altitudeRaw) : null;
+
   if (!(selfie instanceof File)) {
     return NextResponse.json({ error: "A selfie photo is required.", code: "SELFIE_REQUIRED" }, { status: 400 });
   }
-  const selfieValidation = await validateImageUpload(selfie);
+  const selfieValidation = await validateImageUpload(selfie, MIN_SELFIE_BYTES);
   if (!selfieValidation.ok) {
     return NextResponse.json({ error: selfieValidation.error }, { status: 400 });
+  }
+  const livenessCheck = await checkSelfieLiveness(selfie);
+  if (!livenessCheck.ok) {
+    return NextResponse.json({ error: livenessCheck.error }, { status: 400 });
   }
 
   const { data: staff, error: staffError } = await supabaseAdmin
@@ -82,7 +113,7 @@ export async function POST(req: Request) {
 
   const { data: lastLog, error: lastLogError } = await supabaseAdmin
     .from("timekeeping_logs")
-    .select("created_at")
+    .select("created_at, lat, lng, type")
     .eq("staff_id", staff.id)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -91,7 +122,27 @@ export async function POST(req: Request) {
     logError("payroll/timekeeping/clock: rate limit check failed", lastLogError);
     return NextResponse.json({ error: "Failed to record attendance." }, { status: 500 });
   }
-  if (lastLog) {
+  // Security audit finding #1 — computed before the rate-limit gate below
+  // on purpose. A hard 429 on a suspiciously-fast repeat clock event would
+  // silently hide exactly the activity this check exists to surface: the
+  // attacker just sees "please wait" and tries again more carefully, while
+  // the owner never sees a flagged log at all. So impossible travel (and
+  // only impossible travel — a normal same-spot double-tap still gets
+  // throttled) bypasses the cooldown instead, recorded with needs_approval
+  // and a visible flag for the owner to review. None of these three checks
+  // ever hard-block a clock event; they only add to the same soft
+  // needs_approval flag the geofence/code checks already use, plus a
+  // `flag`/`flag_note` the admin Timekeeping tab surfaces as a warning badge.
+  const travelCheck = checkImpossibleTravel(
+    lastLog ? { lat: lastLog.lat, lng: lastLog.lng, createdAt: lastLog.created_at, type: lastLog.type } : null,
+    lat,
+    lng,
+    new Date(),
+  );
+  const mockLocationCheck = checkMockLocation({ accuracy, altitude, isMocked });
+  const ipGeoCheck = checkIpGeoMismatch(req, lat, lng);
+
+  if (lastLog && !travelCheck.flagged) {
     const elapsedMs = Date.now() - new Date(lastLog.created_at).getTime();
     if (elapsedMs < RATE_LIMIT_MS) {
       const waitMin = Math.ceil((RATE_LIMIT_MS - elapsedMs) / 60_000);
@@ -113,7 +164,23 @@ export async function POST(req: Request) {
   const distance = shop.lat !== null && shop.lng !== null ? haversineMeters(lat, lng, shop.lat, shop.lng) : null;
   const isOutside = distance !== null && distance > shop.radius_meters;
   const dailyCodeMatch = Boolean(shop.daily_code) && code === shop.daily_code;
-  const needsApproval = isOutside || !dailyCodeMatch;
+
+  const flags: string[] = [];
+  const flagNotes: string[] = [];
+  if (travelCheck.flagged) {
+    flags.push("IMPOSSIBLE_TRAVEL");
+    flagNotes.push(travelCheck.note!);
+  }
+  if (mockLocationCheck.flagged) {
+    flags.push("MOCK_LOCATION");
+    flagNotes.push(mockLocationCheck.note!);
+  }
+  if (ipGeoCheck.flagged) {
+    flags.push("IP_MISMATCH");
+    flagNotes.push(ipGeoCheck.note!);
+  }
+
+  const needsApproval = isOutside || !dailyCodeMatch || flags.length > 0;
 
   const today = new Date().toISOString().slice(0, 10);
   const timestamp = Date.now();
@@ -144,6 +211,10 @@ export async function POST(req: Request) {
     needs_approval: needsApproval,
     selfie_path: selfiePath,
     ip,
+    flag: flags.length > 0 ? flags.join(",") : null,
+    flag_note: flagNotes.length > 0 ? flagNotes.join(" | ") : null,
+    gps_accuracy: accuracy,
+    blink_instruction: blinkInstruction,
   });
   if (insertLogError) {
     logError("payroll/timekeeping/clock: log insert failed", insertLogError);
@@ -172,6 +243,7 @@ export async function POST(req: Request) {
     success: true,
     distance,
     needs_approval: needsApproval,
+    flags,
     timestamp: nowIso,
     last_log_type: type,
   });

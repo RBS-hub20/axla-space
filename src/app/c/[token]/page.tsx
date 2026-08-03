@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Camera, CheckCircle2, Clock, Loader2, MapPin, AlertTriangle, Navigation, RotateCcw, Wallet } from "lucide-react";
+import { Camera, CheckCircle2, Clock, Loader2, MapPin, AlertTriangle, Navigation, RotateCcw, Wallet, Eye } from "lucide-react";
 import { CUTOFF_LABELS, type CutOff } from "@/lib/payroll/sahod";
 import type { PaymentProof } from "@/lib/payroll/payment-proof";
+import { pickBlinkChallenge } from "@/lib/payroll/blink-challenge";
 
 interface EmployeeInfo {
   name: string;
@@ -35,6 +36,9 @@ interface Coords {
   lat: number;
   lng: number;
   demo: boolean;
+  /** From position.coords — null in Demo Mode (no real GPS fix exists to read them from). Sent to the server for the mock-location heuristic; see checkMockLocation()'s doc comment for what these can and can't prove. */
+  accuracy: number | null;
+  altitude: number | null;
 }
 
 const GEO_TIMEOUT_MS = 15000;
@@ -222,6 +226,9 @@ export default function ClockPage({ params }: { params: { token: string } }) {
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [result, setResult] = useState<{ needsApproval: boolean; distance: number | null; type: "in" | "out" } | null>(null);
+  // Picked fresh each time the selfie step is reached — see blink-challenge.ts
+  // for exactly what this can and can't prove (finding #5, manual-review aid).
+  const [blinkInstruction, setBlinkInstruction] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -316,7 +323,14 @@ export default function ClockPage({ params }: { params: { token: string } }) {
         if (geoSettledRef.current) return;
         geoSettledRef.current = true;
         clearTimeout(slowTimer);
-        setCoords({ lat: position.coords.latitude, lng: position.coords.longitude, demo: false });
+        setCoords({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          demo: false,
+          accuracy: position.coords.accuracy,
+          altitude: position.coords.altitude,
+        });
+        setBlinkInstruction(pickBlinkChallenge());
         setStep("selfie_prompt");
       },
       (err) => {
@@ -341,7 +355,8 @@ export default function ClockPage({ params }: { params: { token: string } }) {
       setStep("location_error");
       return;
     }
-    setCoords({ lat: info.shop_lat, lng: info.shop_lng, demo: true });
+    setCoords({ lat: info.shop_lat, lng: info.shop_lng, demo: true, accuracy: null, altitude: null });
+    setBlinkInstruction(pickBlinkChallenge());
     setStep("selfie_prompt");
   }
 
@@ -408,6 +423,9 @@ export default function ClockPage({ params }: { params: { token: string } }) {
       formData.append("lng", String(coords.lng));
       formData.append("code", code.trim());
       formData.append("selfie", selfieFile);
+      if (coords.accuracy !== null) formData.append("accuracy", String(coords.accuracy));
+      if (coords.altitude !== null) formData.append("altitude", String(coords.altitude));
+      if (blinkInstruction) formData.append("blinkInstruction", blinkInstruction);
 
       const res = await fetch("/api/payroll/timekeeping/clock", { method: "POST", body: formData });
       const data = await res.json();
@@ -569,6 +587,12 @@ export default function ClockPage({ params }: { params: { token: string } }) {
                     Demo Mode — using the shop&apos;s location instead of your exact GPS.
                   </p>
                 )}
+                {blinkInstruction && (
+                  <p className="flex items-center justify-center gap-1.5 rounded-lg border border-[#00FF88]/30 bg-[#00FF88]/[0.06] px-3 py-2 text-center text-xs font-medium text-[#00FF88]">
+                    <Eye className="h-3.5 w-3.5 shrink-0" />
+                    {blinkInstruction}
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={handleSelfieButtonClick}
@@ -585,6 +609,12 @@ export default function ClockPage({ params }: { params: { token: string } }) {
 
             {step === "camera_live" && (
               <div className="space-y-3">
+                {blinkInstruction && (
+                  <p className="flex items-center justify-center gap-1.5 rounded-lg border border-[#00FF88]/30 bg-[#00FF88]/[0.06] px-3 py-2 text-center text-xs font-medium text-[#00FF88]">
+                    <Eye className="h-3.5 w-3.5 shrink-0" />
+                    {blinkInstruction}
+                  </p>
+                )}
                 <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
                   {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
                   <video ref={videoRef} playsInline muted autoPlay className="aspect-square w-full scale-x-[-1] object-cover" />

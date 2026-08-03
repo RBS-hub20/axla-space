@@ -16,8 +16,15 @@ export interface ImageValidationResult {
  * request isn't built through a real browser file picker. This sniffs the
  * actual file header/magic bytes instead, so a mislabeled .exe/.js/etc.
  * gets rejected regardless of what Content-Type it claims.
+ *
+ * `minBytes` defaults to 0 (no floor) — receipts legitimately vary in size.
+ * Selfie call sites pass MIN_SELFIE_BYTES (see selfie-liveness.ts, finding
+ * #5) since a real camera photo is essentially never a few-KB placeholder.
  */
-export async function validateImageUpload(file: File): Promise<ImageValidationResult> {
+export async function validateImageUpload(file: File, minBytes = 0): Promise<ImageValidationResult> {
+  if (file.size < minBytes) {
+    return { ok: false, error: "That image is too small to be a real photo." };
+  }
   if (file.size > MAX_IMAGE_BYTES) {
     return { ok: false, error: "Image must be under 5MB." };
   }
