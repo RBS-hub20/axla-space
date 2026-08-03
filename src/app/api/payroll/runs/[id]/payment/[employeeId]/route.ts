@@ -2,17 +2,27 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPaymentProof, type PaymentProof } from "@/lib/payroll/payment-proof";
+import { validateImageUpload } from "@/lib/payroll/file-validation";
+import { logPaymentProofChange } from "@/lib/payroll/audit-log";
+import { getClientIp } from "@/lib/payroll/rate-limit";
 import { logError } from "@/lib/log-error";
 
 const BUCKET = "payroll-receipts";
 const SIGNED_URL_TTL_SECONDS = 3600;
-const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
-const ALLOWED_RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+// Cents-level tolerance for float rounding — not a loophole, just avoids
+// rejecting e.g. 6227 vs 6227.0000000001 from JS number math.
+const AMOUNT_TOLERANCE = 0.01;
+
+interface RunBreakdownEntry {
+  staffId: string;
+  basicPay: number;
+}
 
 async function loadRun(runId: string, ownerId: string) {
   const { data, error } = await supabaseAdmin
     .from("payroll_runs")
-    .select("id, owner_id, payment_proofs")
+    .select("id, owner_id, breakdown, payment_proofs")
     .eq("id", runId)
     .eq("owner_id", ownerId)
     .maybeSingle();
@@ -72,6 +82,20 @@ export async function POST(req: Request, { params }: { params: { id: string; emp
   }
   if (!run) return NextResponse.json({ error: "Payroll run not found." }, { status: 404 });
 
+  // Security audit finding #2: never let an already-employee-confirmed
+  // proof be silently rewritten by a plain "mark as paid" call — that path
+  // would erase the confirmation (and the confirmation selfie reference)
+  // with no trace. An owner who genuinely needs to correct a confirmed
+  // record must go through /override, which requires a reason and is
+  // audit-logged as a distinct action.
+  const currentProof = getPaymentProof(run.payment_proofs, params.employeeId);
+  if (currentProof.status === "confirmed") {
+    return NextResponse.json(
+      { error: "Already confirmed by the employee — use override to change it.", code: "ALREADY_CONFIRMED" },
+      { status: 400 },
+    );
+  }
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -83,23 +107,44 @@ export async function POST(req: Request, { params }: { params: { id: string; emp
   if (!Number.isFinite(amount) || amount <= 0) {
     return NextResponse.json({ error: "Enter a valid amount." }, { status: 400 });
   }
+
+  // Security audit finding #2: cross-validate against the run's own
+  // computed breakdown — that snapshot (taken when the run was computed
+  // from real attendance/rate data) is the actual source of truth for what
+  // this employee is owed, not whatever the owner's client happens to send.
+  const breakdown = (run.breakdown ?? []) as RunBreakdownEntry[];
+  const entry = breakdown.find((b) => b.staffId === params.employeeId);
+  if (entry && Math.abs(amount - entry.basicPay) > AMOUNT_TOLERANCE) {
+    return NextResponse.json(
+      {
+        error: `Amount mismatch — expected ₱${entry.basicPay.toLocaleString()}, got ₱${amount.toLocaleString()}.`,
+        code: "AMOUNT_MISMATCH",
+        expected: entry.basicPay,
+        received: amount,
+      },
+      { status: 400 },
+    );
+  }
+
   const gcashRef = String(formData.get("gcashRef") ?? "").trim().slice(0, 60) || null;
   const noteRaw = String(formData.get("note") ?? "").trim().slice(0, 120);
   const receipt = formData.get("receipt");
 
   let receiptPath: string | null = null;
   if (receipt instanceof File) {
-    if (!ALLOWED_RECEIPT_TYPES.includes(receipt.type)) {
-      return NextResponse.json({ error: "Receipt must be a JPEG, PNG, or WebP image." }, { status: 400 });
+    const validation = await validateImageUpload(receipt);
+    if (!validation.ok) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
-    if (receipt.size > MAX_RECEIPT_BYTES) {
-      return NextResponse.json({ error: "Receipt must be under 5MB." }, { status: 400 });
-    }
-    receiptPath = `${user.id}/${params.id}/${params.employeeId}.jpg`;
+    // Timestamped, not a fixed owner/run/employee path (security audit
+    // finding #7) — a re-upload no longer destroys the previous receipt;
+    // both stay in storage and the proof record + audit log always know
+    // which path was current at the time.
+    receiptPath = `${user.id}/${params.id}/${params.employeeId}-${Date.now()}.jpg`;
     const bytes = new Uint8Array(await receipt.arrayBuffer());
     const { error: uploadError } = await supabaseAdmin.storage.from(BUCKET).upload(receiptPath, bytes, {
       contentType: receipt.type,
-      upsert: true,
+      upsert: false,
     });
     if (uploadError) {
       logError("payroll/runs/[id]/payment/[employeeId] POST: receipt upload failed", uploadError);
@@ -126,6 +171,16 @@ export async function POST(req: Request, { params }: { params: { id: string; emp
     logError("payroll/runs/[id]/payment/[employeeId] POST: update failed", updateError);
     return NextResponse.json({ error: "Failed to record payment." }, { status: 500 });
   }
+
+  await logPaymentProofChange({
+    ownerId: user.id,
+    employeeId: params.employeeId,
+    payrollRunId: params.id,
+    action: "mark_paid",
+    oldValue: currentProof.status === "unpaid" ? null : currentProof,
+    newValue: updatedProof,
+    ip: getClientIp(req),
+  });
 
   return NextResponse.json({ proof: updatedProof });
 }

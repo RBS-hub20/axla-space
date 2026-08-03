@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPaymentProof } from "@/lib/payroll/payment-proof";
+import { checkPayrollTokenRateLimit, getClientIp } from "@/lib/payroll/rate-limit";
 import { logError } from "@/lib/log-error";
 
 // Public, no auth (token-only) — same reasoning as employee/by-token/route.ts
@@ -16,7 +17,16 @@ export const revalidate = 0;
  * single breakdown entry (and payment proof) that matches this token's
  * staff row, never anyone else's numbers.
  */
-export async function GET(_req: Request, { params }: { params: { token: string } }) {
+export async function GET(req: Request, { params }: { params: { token: string } }) {
+  const ip = getClientIp(req);
+  const { allowed, retryAfterSeconds } = checkPayrollTokenRateLimit(ip, "employee/by-token/payroll");
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again shortly." },
+      { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+    );
+  }
+
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }

@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getOrRotateShopSettings } from "@/lib/payroll/shop-settings";
 import { haversineMeters } from "@/lib/payroll/geo";
+import { validateImageUpload } from "@/lib/payroll/file-validation";
 import { getClientIp } from "@/lib/rate-limit";
 import { logError } from "@/lib/log-error";
 
 const RATE_LIMIT_MS = 5 * 60 * 1000;
-const MAX_SELFIE_BYTES = 5 * 1024 * 1024; // 5MB
-const ALLOWED_SELFIE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const BUCKET = "payroll-selfies";
 
 // POST handlers are already excluded from Next's Full Route Cache, but the
@@ -63,11 +62,9 @@ export async function POST(req: Request) {
   if (!(selfie instanceof File)) {
     return NextResponse.json({ error: "A selfie photo is required.", code: "SELFIE_REQUIRED" }, { status: 400 });
   }
-  if (!ALLOWED_SELFIE_TYPES.includes(selfie.type)) {
-    return NextResponse.json({ error: "Selfie must be a JPEG, PNG, or WebP photo." }, { status: 400 });
-  }
-  if (selfie.size > MAX_SELFIE_BYTES) {
-    return NextResponse.json({ error: "Selfie must be under 5MB." }, { status: 400 });
+  const selfieValidation = await validateImageUpload(selfie);
+  if (!selfieValidation.ok) {
+    return NextResponse.json({ error: selfieValidation.error }, { status: 400 });
   }
 
   const { data: staff, error: staffError } = await supabaseAdmin

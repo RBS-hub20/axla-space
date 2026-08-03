@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { checkPayrollTokenRateLimit, getClientIp } from "@/lib/payroll/rate-limit";
 import { logError } from "@/lib/log-error";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,16 @@ export const revalidate = 0;
  * row from the run — the run itself covers every staff member, so this is
  * the one place that access boundary actually matters.
  */
-export async function GET(_req: Request, { params }: { params: { token: string; runId: string } }) {
+export async function GET(req: Request, { params }: { params: { token: string; runId: string } }) {
+  const ip = getClientIp(req);
+  const { allowed, retryAfterSeconds } = checkPayrollTokenRateLimit(ip, "employee/by-token/payslip");
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again shortly." },
+      { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+    );
+  }
+
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }

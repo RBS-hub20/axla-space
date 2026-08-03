@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPaymentProof, type PaymentProof } from "@/lib/payroll/payment-proof";
+import { validateImageUpload } from "@/lib/payroll/file-validation";
+import { logPaymentProofChange } from "@/lib/payroll/audit-log";
+import { getClientIp } from "@/lib/payroll/rate-limit";
 import { logError } from "@/lib/log-error";
 
 export const dynamic = "force-dynamic";
@@ -8,8 +11,6 @@ export const fetchCache = "force-no-store";
 export const revalidate = 0;
 
 const BUCKET = "payroll-receipts";
-const MAX_SELFIE_BYTES = 5 * 1024 * 1024;
-const ALLOWED_SELFIE_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 /**
  * Public, token-authenticated — the staff member's own "I actually
@@ -40,11 +41,9 @@ export async function POST(req: Request) {
   if (!(selfie instanceof File)) {
     return NextResponse.json({ error: "A selfie is required to confirm.", code: "SELFIE_REQUIRED" }, { status: 400 });
   }
-  if (!ALLOWED_SELFIE_TYPES.includes(selfie.type)) {
-    return NextResponse.json({ error: "Selfie must be a JPEG, PNG, or WebP photo." }, { status: 400 });
-  }
-  if (selfie.size > MAX_SELFIE_BYTES) {
-    return NextResponse.json({ error: "Selfie must be under 5MB." }, { status: 400 });
+  const selfieValidation = await validateImageUpload(selfie);
+  if (!selfieValidation.ok) {
+    return NextResponse.json({ error: selfieValidation.error }, { status: 400 });
   }
 
   const { data: staff, error: staffError } = await supabaseAdmin
@@ -81,11 +80,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ proof: currentProof });
   }
 
-  const selfiePath = `${staff.owner_id}/${runId}/${staff.id}_confirm.jpg`;
+  // Timestamped, not a fixed owner/run/staff path (security audit finding
+  // #7) — consistent with the owner's receipt path, so a re-confirm never
+  // overwrites the previous confirmation selfie.
+  const selfiePath = `${staff.owner_id}/${runId}/${staff.id}-confirm-${Date.now()}.jpg`;
   const selfieBytes = new Uint8Array(await selfie.arrayBuffer());
   const { error: uploadError } = await supabaseAdmin.storage.from(BUCKET).upload(selfiePath, selfieBytes, {
     contentType: selfie.type,
-    upsert: true,
+    upsert: false,
   });
   if (uploadError) {
     logError("confirm-payment: selfie upload failed", uploadError);
@@ -104,6 +106,16 @@ export async function POST(req: Request) {
     logError("confirm-payment: update failed", updateError);
     return NextResponse.json({ error: "Failed to confirm payment." }, { status: 500 });
   }
+
+  await logPaymentProofChange({
+    ownerId: staff.owner_id,
+    employeeId: staff.id,
+    payrollRunId: runId,
+    action: "confirm",
+    oldValue: currentProof,
+    newValue: updatedProof,
+    ip: getClientIp(req),
+  });
 
   return NextResponse.json({ proof: updatedProof });
 }

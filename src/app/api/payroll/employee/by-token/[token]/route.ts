@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
+import { checkPayrollTokenRateLimit, getClientIp } from "@/lib/payroll/rate-limit";
 import { logError } from "@/lib/log-error";
 
 // This route has no auth check (public, token-only) — nothing here calls a
@@ -26,7 +27,16 @@ export const revalidate = 0;
  * (not the staff row's own uuid) is the only credential; see the comment
  * on payroll_staff.clock_token in migration 020 for why they're separate.
  */
-export async function GET(_req: Request, { params }: { params: { token: string } }) {
+export async function GET(req: Request, { params }: { params: { token: string } }) {
+  const ip = getClientIp(req);
+  const { allowed, retryAfterSeconds } = checkPayrollTokenRateLimit(ip, "employee/by-token");
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again shortly." },
+      { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } },
+    );
+  }
+
   if (!isSupabaseAdminConfigured) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
