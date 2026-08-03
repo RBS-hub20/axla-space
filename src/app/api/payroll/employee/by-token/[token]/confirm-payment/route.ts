@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPaymentProof, type PaymentProof } from "@/lib/payroll/payment-proof";
-import { validateImageUpload } from "@/lib/payroll/file-validation";
-import { checkSelfieLiveness, MIN_SELFIE_BYTES } from "@/lib/payroll/selfie-liveness";
+import { checkSelfieLiveness } from "@/lib/payroll/selfie-liveness";
 import { logPaymentProofChange } from "@/lib/payroll/audit-log";
 import { getClientIp } from "@/lib/payroll/rate-limit";
 import { logError } from "@/lib/log-error";
@@ -41,10 +40,6 @@ export async function POST(req: Request) {
   }
   if (!(selfie instanceof File)) {
     return NextResponse.json({ error: "A selfie is required to confirm.", code: "SELFIE_REQUIRED" }, { status: 400 });
-  }
-  const selfieValidation = await validateImageUpload(selfie, MIN_SELFIE_BYTES);
-  if (!selfieValidation.ok) {
-    return NextResponse.json({ error: selfieValidation.error }, { status: 400 });
   }
   const livenessCheck = await checkSelfieLiveness(selfie);
   if (!livenessCheck.ok) {

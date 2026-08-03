@@ -1,35 +1,25 @@
 import "server-only";
 import { fileTypeFromBuffer } from "file-type";
 import imageSize from "image-size";
-import exifr from "exifr";
 
 /**
- * Security audit finding #5, "low-cost fix without API": these are
- * heuristics, not real liveness detection. A determined attacker can still
- * defeat every check here (strip/fake EXIF, print a photo at the right
- * resolution, etc.) — this exists to raise the bar for casual buddy-
- * punching and to catch the laziest cases (submitting a saved screenshot
- * outright), not to replace a real liveness API. See the code comment in
- * the clock route for the documented Phase 2 plan (AWS Rekognition / Smile
- * ID) once volume justifies the per-check cost.
+ * Hotfix (post security-audit finding #5): the original version of this
+ * check also rejected images with no EXIF data, or whose dimensions
+ * matched a common phone screen resolution, as "looks like a screenshot."
+ * That heuristic was too aggressive in production — real iPhone Safari
+ * front-camera selfies got rejected (iOS strips EXIF on some capture
+ * paths), blocking real employees from clocking in. Removed entirely
+ * rather than tuned, since there's no reliable EXIF-presence signal to
+ * tune it against — real liveness verification is still the documented
+ * Phase 2 plan (AWS Rekognition/Smile ID-class API) once volume justifies
+ * it; this file now only does cheap, low-false-positive sanity checks:
+ * a real image via magic bytes, a size range, and a minimum resolution.
  */
-export const MIN_SELFIE_BYTES = 20 * 1024; // 20KB — rejects near-blank/placeholder images
+export const MIN_SELFIE_BYTES = 10 * 1024; // 10KB — rejects near-blank/placeholder images
+export const MAX_SELFIE_BYTES = 10 * 1024 * 1024; // 10MB
+const MIN_SELFIE_DIMENSION = 200; // px, both width and height
 
-// Common phone screen resolutions (both orientations) — a real front-camera
-// selfie almost never matches these exactly (camera sensors use their own,
-// much higher/different resolutions), while a screenshot of a photo/video
-// call frequently does.
-const SCREEN_RESOLUTIONS: Array<[number, number]> = [
-  [1170, 2532], [2532, 1170], // iPhone 12/13/14
-  [1179, 2556], [2556, 1179], // iPhone 15/16
-  [1080, 2400], [2400, 1080], // common Android FHD+
-  [1080, 1920], [1920, 1080], // common Android FHD
-  [828, 1792], [1792, 828],   // iPhone 11/XR
-  [1242, 2688], [2688, 1242], // iPhone 11 Pro Max/XS Max
-  [750, 1334], [1334, 750],   // iPhone SE/6/7/8
-  [1125, 2436], [2436, 1125], // iPhone X/XS/11 Pro
-  [1284, 2778], [2778, 1284], // iPhone 12/13 Pro Max
-];
+const ALLOWED_SELFIE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 
 export interface LivenessCheckResult {
   ok: boolean;
@@ -37,48 +27,37 @@ export interface LivenessCheckResult {
 }
 
 /**
- * Runs after the existing validateImageUpload() (real MIME check, 5MB
- * max) — this adds the selfie-specific liveness heuristics on top: a
- * minimum size floor, and a screenshot detector combining format/EXIF/
- * dimensions. Deliberately NOT applied to receipt uploads (a GCash
- * screenshot is expected to be an actual screenshot — penalizing that
- * would break the receipt flow for no security benefit).
+ * Self-contained selfie check — magic-byte type check (security audit
+ * finding #4: rejects a mislabeled .exe/.js/etc regardless of claimed
+ * Content-Type) plus a size range and minimum resolution. HEIC/HEIF is
+ * allowed since iPhone camera captures sometimes produce it directly.
+ * Deliberately NOT applied to receipt uploads (those go through the
+ * separate, unmodified validateImageUpload — a GCash screenshot is
+ * supposed to be a screenshot).
  */
 export async function checkSelfieLiveness(file: File): Promise<LivenessCheckResult> {
   if (file.size < MIN_SELFIE_BYTES) {
-    return { ok: false, error: "That image is too small to be a real photo — please retake your selfie." };
+    return { ok: false, error: "Photo too small — move closer and try again." };
+  }
+  if (file.size > MAX_SELFIE_BYTES) {
+    return { ok: false, error: "Photo too large — try again." };
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const detected = await fileTypeFromBuffer(bytes);
 
-  let noExif = true;
-  if (detected?.mime === "image/jpeg") {
-    try {
-      const exif = await exifr.parse(Buffer.from(bytes), { pick: ["Make", "Model", "DateTimeOriginal"] });
-      noExif = !exif || Object.keys(exif).length === 0;
-    } catch {
-      noExif = true;
-    }
-  } else {
-    // PNG/WebP rarely carry EXIF even from a real camera — don't penalize
-    // format alone, only the dimension check below applies to these.
-    noExif = false;
+  if (!detected || !ALLOWED_SELFIE_TYPES.includes(detected.mime)) {
+    return { ok: false, error: "That doesn't look like a valid photo — please try again." };
   }
 
-  let isScreenResolution = false;
   try {
     const dims = imageSize(Buffer.from(bytes));
-    if (dims.width && dims.height) {
-      isScreenResolution = SCREEN_RESOLUTIONS.some(([w, h]) => dims.width === w && dims.height === h);
+    if (dims.width && dims.height && (dims.width < MIN_SELFIE_DIMENSION || dims.height < MIN_SELFIE_DIMENSION)) {
+      return { ok: false, error: "Photo resolution is too low — please retake." };
     }
   } catch {
-    // Unreadable dimensions — fall through without flagging on this signal alone.
-  }
-
-  const looksLikeScreenshot = (detected?.mime === "image/jpeg" && noExif) || isScreenResolution;
-  if (looksLikeScreenshot) {
-    return { ok: false, error: "That looks like a screenshot or saved image — please take a new selfie with your camera." };
+    // Unreadable dimensions (can happen for HEIC depending on encoder) —
+    // don't block on this alone, the magic-byte + size checks already ran.
   }
 
   return { ok: true };

@@ -2,25 +2,30 @@ import { NextResponse } from "next/server";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getOrRotateShopSettings } from "@/lib/payroll/shop-settings";
 import { haversineMeters } from "@/lib/payroll/geo";
-import { validateImageUpload } from "@/lib/payroll/file-validation";
-import { checkSelfieLiveness, MIN_SELFIE_BYTES } from "@/lib/payroll/selfie-liveness";
+import { checkSelfieLiveness } from "@/lib/payroll/selfie-liveness";
 import { checkImpossibleTravel, checkMockLocation, checkIpGeoMismatch } from "@/lib/payroll/anti-cheat";
 import { getClientIp } from "@/lib/rate-limit";
 import { logError } from "@/lib/log-error";
 
 /**
  * Security audit findings #1 (GPS spoofing) and #5 (selfie liveness) —
- * "low-cost fix without API" scope, deliberately. Every check added here
- * (impossible-travel velocity, mock-location heuristics, IP/GPS mismatch,
- * min selfie size, EXIF/screenshot detection) is a heuristic an attacker
- * with enough effort can still defeat — none of it is real device
- * attestation or biometric liveness. At P500/mo per shop this is the
- * right cost/benefit point: real liveness (AWS Rekognition, Smile ID, etc)
- * charges per check and is deferred to Phase 2 once volume past ~100 shops
- * justifies it. Until then, every flag here is a SOFT signal — it sets
- * needs_approval=true and a `flag`/`flag_note` for the owner to manually
- * review (see the admin Timekeeping tab), never a hard block, same
- * reasoning as the pre-existing geofence/daily-code checks.
+ * "low-cost fix without API" scope, deliberately. The location checks
+ * added here (impossible-travel velocity, mock-location heuristics, IP/GPS
+ * mismatch) are heuristics an attacker with enough effort can still
+ * defeat — none of it is real device attestation. At P500/mo per shop this
+ * is the right cost/benefit point: real liveness (AWS Rekognition, Smile
+ * ID, etc) charges per check and is deferred to Phase 2 once volume past
+ * ~100 shops justifies it. Until then, every location flag here is a SOFT
+ * signal — it sets needs_approval=true and a `flag`/`flag_note` for the
+ * owner to manually review (see the admin Timekeeping tab), never a hard
+ * block, same reasoning as the pre-existing geofence/daily-code checks.
+ *
+ * Selfie validation (checkSelfieLiveness, in src/lib/payroll/selfie-
+ * liveness.ts) originally also tried to detect screenshots via EXIF
+ * presence and screen-resolution matching — removed in a hotfix after it
+ * rejected real iPhone Safari selfies in production (iOS strips EXIF on
+ * some capture paths). It now only does real-photo sanity checks: magic-
+ * byte type, size range, minimum resolution.
  */
 
 const RATE_LIMIT_MS = 5 * 60 * 1000;
@@ -88,10 +93,6 @@ export async function POST(req: Request) {
 
   if (!(selfie instanceof File)) {
     return NextResponse.json({ error: "A selfie photo is required.", code: "SELFIE_REQUIRED" }, { status: 400 });
-  }
-  const selfieValidation = await validateImageUpload(selfie, MIN_SELFIE_BYTES);
-  if (!selfieValidation.ok) {
-    return NextResponse.json({ error: selfieValidation.error }, { status: 400 });
   }
   const livenessCheck = await checkSelfieLiveness(selfie);
   if (!livenessCheck.ok) {
