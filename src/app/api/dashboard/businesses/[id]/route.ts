@@ -30,7 +30,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
   const owner = await getEffectiveOwner(user);
-  if (!owner.permissions.canEditFilings) {
+  if (!owner.permissions.canEditSettings) {
     return NextResponse.json({ error: "You don't have permission to edit businesses." }, { status: 403 });
   }
 

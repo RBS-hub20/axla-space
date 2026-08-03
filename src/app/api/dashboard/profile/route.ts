@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
-import { getEffectiveOwner } from "@/lib/team";
+import { getEffectiveOwner, maskTin } from "@/lib/team";
 import { getOrCreateProfile, updateProfile, type ProfileUpdate } from "@/lib/dashboard/profile";
 import { isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { logActivity } from "@/lib/dashboard/activity";
@@ -33,7 +33,13 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to load profile." }, { status: 500 });
   }
 
-  return NextResponse.json({ profile });
+  // TIN is masked here, not just hidden client-side, so it never actually
+  // reaches a shared accountant/VA/team_leader session's network tab.
+  const visibleProfile = owner.permissions.canEditSettings
+    ? profile
+    : { ...profile, tin_number: profile.tin_number ? maskTin(profile.tin_number) : profile.tin_number };
+
+  return NextResponse.json({ profile: visibleProfile });
 }
 
 interface PatchBody {
@@ -54,7 +60,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
   const owner = await getEffectiveOwner(user);
-  if (!owner.permissions.canEditFilings) {
+  if (!owner.permissions.canEditSettings) {
     return NextResponse.json({ error: "You don't have permission to edit this profile." }, { status: 403 });
   }
 

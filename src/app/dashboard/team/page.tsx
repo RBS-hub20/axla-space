@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { INVITABLE_ROLES, ROLE_LABELS, type InvitableRole, type TeamRole } from "@/lib/team-permissions";
+import { useTeamRole } from "@/contexts/TeamContext";
 
 interface Invite {
   id: string;
@@ -54,6 +55,8 @@ function CopyLinkButton({ url }: { url: string }) {
 }
 
 export default function TeamPage() {
+  const { permissions } = useTeamRole();
+  const canManageTeam = permissions.canManageTeam;
   const [invites, setInvites] = useState<Invite[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -198,39 +201,48 @@ export default function TeamPage() {
         </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Invite someone</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleInvite} className="flex flex-col gap-3 sm:flex-row">
-            <Input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="accountant@email.com"
-              className="flex-1"
-            />
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as InvitableRole)}
-              className="h-10 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100"
-            >
-              {INVITABLE_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {ROLE_LABELS[r]}
-                </option>
-              ))}
-            </select>
-            <Button type="submit" disabled={isSending}>
-              {isSending ? "Sending..." : "Invite"}
-            </Button>
-          </form>
-          {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
-          {notice && <p className="mt-2 text-sm text-[#00FF85]">{notice}</p>}
-        </CardContent>
-      </Card>
+      {!canManageTeam && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>Viewing team members — only the account owner can invite or remove people.</p>
+        </div>
+      )}
+
+      {canManageTeam && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Invite someone</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleInvite} className="flex flex-col gap-3 sm:flex-row">
+              <Input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="accountant@email.com"
+                className="flex-1"
+              />
+              <select
+                value={role}
+                onChange={(e) => setRole(e.target.value as InvitableRole)}
+                className="h-10 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100"
+              >
+                {INVITABLE_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+              <Button type="submit" disabled={isSending}>
+                {isSending ? "Sending..." : "Invite"}
+              </Button>
+            </form>
+            {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
+            {notice && <p className="mt-2 text-sm text-[#00FF85]">{notice}</p>}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -264,16 +276,18 @@ export default function TeamPage() {
                       {new Date(m.joined_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}
                     </TableCell>
                     <TableCell>
-                      <button
-                        type="button"
-                        onClick={() => handleRemove(m.id)}
-                        disabled={busyId === m.id}
-                        aria-label={`Remove ${m.invited_email}`}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                        Remove
-                      </button>
+                      {canManageTeam && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemove(m.id)}
+                          disabled={busyId === m.id}
+                          aria-label={`Remove ${m.invited_email}`}
+                          className="inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-red-500/40 hover:text-red-300 disabled:opacity-50"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Remove
+                        </button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
@@ -319,7 +333,7 @@ export default function TeamPage() {
                       {new Date(i.created_at).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}
                     </TableCell>
                     <TableCell>
-                      {i.status === "pending" && i.accept_url && (
+                      {canManageTeam && i.status === "pending" && i.accept_url && (
                         <div className="flex flex-wrap items-center gap-1.5">
                           <CopyLinkButton url={i.accept_url} />
                           <button

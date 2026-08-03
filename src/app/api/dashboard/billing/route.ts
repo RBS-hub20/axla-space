@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { getEffectiveOwner } from "@/lib/team";
 import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { OWNER_EMAIL } from "@/lib/plans";
 import { logError } from "@/lib/log-error";
@@ -9,9 +10,13 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+  const owner = await getEffectiveOwner(user);
+  if (!owner.permissions.canViewBilling) {
+    return NextResponse.json({ error: "You don't have permission to view billing." }, { status: 403 });
+  }
 
   // Lifetime owner override, no DB round-trip — same bypass as getActivePaidPlan (src/lib/usage.ts).
-  if (user.email.toLowerCase() === OWNER_EMAIL) {
+  if (owner.ownerEmail.toLowerCase() === OWNER_EMAIL) {
     return NextResponse.json({ plan: "business", status: "active", billingCycle: null, currentPeriodEnd: null, isLifetime: true });
   }
 
@@ -22,7 +27,7 @@ export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("subscriptions")
     .select("plan, status, billing_cycle, current_period_end")
-    .eq("email", user.email.toLowerCase())
+    .eq("email", owner.ownerEmail.toLowerCase())
     .maybeSingle();
 
   // No row (never subscribed) and "relation does not exist" (migration not

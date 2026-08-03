@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckCircle2, Star, Pencil, Trash2, Plus, Loader2 } from "lucide-react";
+import { CheckCircle2, Star, Pencil, Trash2, Plus, Loader2, Lock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,8 @@ import { UsageMeter } from "@/components/dashboard/UsageMeter";
 import { ConfettiBurst } from "@/components/dashboard/ConfettiBurst";
 import { UpgradeWallModal, type UpgradeWallType } from "@/components/dashboard/UpgradeWallModal";
 import type { UsageSummary } from "@/lib/usage";
+import { useTeamRole } from "@/contexts/TeamContext";
+import { ROLE_LABELS } from "@/lib/team-permissions";
 
 const UPGRADE_PENDING_KEY = "axla_upgrade_pending";
 
@@ -196,7 +198,7 @@ function BusinessDialog({
   );
 }
 
-function BusinessesSection() {
+function BusinessesSection({ canEdit }: { canEdit: boolean }) {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [upgradeWall, setUpgradeWall] = useState<{ type: UpgradeWallType; message: string } | null>(null);
@@ -271,10 +273,12 @@ function BusinessesSection() {
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <CardTitle>My Businesses</CardTitle>
-        <Button type="button" size="sm" onClick={openAdd}>
-          <Plus className="h-4 w-4" />
-          Add
-        </Button>
+        {canEdit && (
+          <Button type="button" size="sm" onClick={openAdd}>
+            <Plus className="h-4 w-4" />
+            Add
+          </Button>
+        )}
       </CardHeader>
       <CardContent className="space-y-3">
         {error && (
@@ -303,36 +307,38 @@ function BusinessesSection() {
                   TIN: {formatTin(b.tin)} · Branch {b.branch_code} · {b.rdo_code ? `RDO ${b.rdo_code.split(" - ")[0]}` : "RDO not set"}
                 </p>
               </div>
-              <div className="flex gap-2">
-                {!b.is_primary && (
+              {canEdit && (
+                <div className="flex gap-2">
+                  {!b.is_primary && (
+                    <button
+                      type="button"
+                      onClick={() => handleSetPrimary(b.id)}
+                      disabled={busyId === b.id}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                      <Star className="h-3.5 w-3.5" />
+                      Set Primary
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => handleSetPrimary(b.id)}
-                    disabled={busyId === b.id}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-xs font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                    onClick={() => openEdit(b)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
                   >
-                    <Star className="h-3.5 w-3.5" />
-                    Set Primary
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => openEdit(b)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDelete(b.id)}
-                  disabled={busyId === b.id}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-900/50 px-2.5 text-xs font-medium text-red-300 hover:bg-red-950/50 disabled:opacity-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Delete
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(b.id)}
+                    disabled={busyId === b.id}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-900/50 px-2.5 text-xs font-medium text-red-300 hover:bg-red-950/50 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete
+                  </button>
+                </div>
+              )}
             </div>
           ))
         )}
@@ -559,6 +565,8 @@ function BillingSection() {
 
 export default function SettingsPage() {
   const router = useRouter();
+  const { role, permissions } = useTeamRole();
+  const canEdit = permissions.canEditSettings;
   const [profile, setProfile] = useState<Profile | null>(null);
   const [fullName, setFullName] = useState("");
   const [businessName, setBusinessName] = useState("");
@@ -643,7 +651,16 @@ export default function SettingsPage() {
     <div className="mx-auto max-w-2xl space-y-6">
       <h1 className="text-2xl font-bold text-white">Settings</h1>
 
-      <BusinessesSection />
+      {!canEdit && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            Viewing as {ROLE_LABELS[role]} — read-only for sensitive settings. Contact the owner to make changes.
+          </p>
+        </div>
+      )}
+
+      <BusinessesSection canEdit={canEdit} />
 
       <Card>
         <CardHeader>
@@ -664,6 +681,8 @@ export default function SettingsPage() {
                 onChange={(e) => setFullName(e.target.value)}
                 placeholder="e.g. Juan Dela Cruz"
                 required
+                readOnly={!canEdit}
+                disabled={!canEdit}
               />
             </div>
 
@@ -675,6 +694,8 @@ export default function SettingsPage() {
                 value={businessName}
                 onChange={(e) => setBusinessName(e.target.value)}
                 placeholder="e.g. Juan Dela Cruz Freelance Design Services"
+                readOnly={!canEdit}
+                disabled={!canEdit}
               />
             </div>
 
@@ -686,6 +707,8 @@ export default function SettingsPage() {
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder="e.g. 123 Rizal St., Brgy. San Isidro, Quezon City"
+                readOnly={!canEdit}
+                disabled={!canEdit}
               />
             </div>
 
@@ -697,15 +720,19 @@ export default function SettingsPage() {
                 value={tinNumber}
                 onChange={(e) => setTinNumber(e.target.value)}
                 placeholder="e.g. 123-456-789-000"
+                readOnly={!canEdit}
+                disabled={!canEdit}
               />
-              <p className="mt-1 text-xs text-slate-500">9-13 digits, dashes optional.</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {canEdit ? "9-13 digits, dashes optional." : "Masked — only the owner or an admin can view/edit the full TIN."}
+              </p>
             </div>
 
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-300">
                 RDO Code <span className="text-slate-500">(fallback)</span>
               </label>
-              <RdoPicker value={rdoCode} onChange={setRdoCode} />
+              <RdoPicker value={rdoCode} onChange={setRdoCode} disabled={!canEdit} />
             </div>
 
             <div>
@@ -714,9 +741,9 @@ export default function SettingsPage() {
                 {(Object.keys(TAX_TYPE_INFO) as TaxType[]).map((type) => (
                   <label
                     key={type}
-                    className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition ${
-                      taxType === type ? "border-[#00FF85] bg-[#00FF85]/5" : "border-slate-700 hover:bg-slate-800"
-                    }`}
+                    className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 transition ${
+                      canEdit ? "cursor-pointer" : "cursor-not-allowed opacity-60"
+                    } ${taxType === type ? "border-[#00FF85] bg-[#00FF85]/5" : "border-slate-700 hover:bg-slate-800"}`}
                   >
                     <input
                       type="radio"
@@ -724,6 +751,7 @@ export default function SettingsPage() {
                       value={type}
                       checked={taxType === type}
                       onChange={() => setTaxType(type)}
+                      disabled={!canEdit}
                       className="mt-1"
                     />
                     <div>
@@ -744,16 +772,18 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <Button type="submit" disabled={isSaving}>
-              {isSaving ? "Saving..." : "Save changes"}
-            </Button>
+            {canEdit && (
+              <Button type="submit" disabled={isSaving}>
+                {isSaving ? "Saving..." : "Save changes"}
+              </Button>
+            )}
           </form>
         </CardContent>
       </Card>
 
       <UsageSection />
 
-      <BillingSection />
+      {permissions.canViewBilling && <BillingSection />}
 
       <Card>
         <CardHeader>

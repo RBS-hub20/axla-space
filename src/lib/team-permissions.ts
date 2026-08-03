@@ -36,6 +36,8 @@ export interface TeamPermissions {
   canManageTeam: boolean;
   canViewBilling: boolean;
   canDeleteShop: boolean;
+  /** Business profile identity fields (name, TIN, address, RDO, tax type) and the My Businesses list — distinct from canEditFilings, which covers tax calculations/receipts/transactions. Owner + admin only. */
+  canEditSettings: boolean;
 }
 
 export const OWNER_PERMISSIONS: TeamPermissions = {
@@ -51,24 +53,24 @@ export const OWNER_PERMISSIONS: TeamPermissions = {
   canManageTeam: true,
   canViewBilling: true,
   canDeleteShop: true,
+  canEditSettings: true,
 };
 
 /**
- * Per-role grants for everyone who isn't the account owner. Deliberately
- * conservative: canManageTeam/canViewBilling/canDeleteShop are false for
- * every invited role, including 'admin' — a trusted deputy still can't
- * invite/remove teammates, see billing, or delete the shop, so an
- * accountant account can never escalate itself to owner-equivalent access
- * by being re-invited at a higher role. Only the real owner (the switcher
- * pointing at yourself, or nothing invited/accepted yet) gets
- * OWNER_PERMISSIONS.
+ * Per-role grants for everyone who isn't the account owner.
+ *
+ * 'admin' is a trusted deputy with every operational permission the owner
+ * has (settings, businesses, billing visibility, deleting a business)
+ * EXCEPT canManageTeam — inviting/removing teammates stays strictly
+ * owner-only, so an admin can never grant themselves (or anyone else)
+ * owner-equivalent account access. Every other invited role
+ * (accountant/team_leader/va) is scoped much narrower and never touches
+ * settings/billing/business management at all.
  */
 const ROLE_PERMISSIONS: Record<Exclude<TeamRole, "owner">, TeamPermissions> = {
   admin: {
     ...OWNER_PERMISSIONS,
     canManageTeam: false,
-    canViewBilling: false,
-    canDeleteShop: false,
   },
   team_leader: {
     canViewFilings: true,
@@ -83,6 +85,7 @@ const ROLE_PERMISSIONS: Record<Exclude<TeamRole, "owner">, TeamPermissions> = {
     canManageTeam: false,
     canViewBilling: false,
     canDeleteShop: false,
+    canEditSettings: false,
   },
   accountant: {
     canViewFilings: true,
@@ -97,6 +100,7 @@ const ROLE_PERMISSIONS: Record<Exclude<TeamRole, "owner">, TeamPermissions> = {
     canManageTeam: false,
     canViewBilling: false,
     canDeleteShop: false,
+    canEditSettings: false,
   },
   va: {
     canViewFilings: true,
@@ -111,9 +115,28 @@ const ROLE_PERMISSIONS: Record<Exclude<TeamRole, "owner">, TeamPermissions> = {
     canManageTeam: false,
     canViewBilling: false,
     canDeleteShop: false,
+    canEditSettings: false,
   },
 };
 
 export function permissionsForRole(role: TeamRole): TeamPermissions {
   return role === "owner" ? OWNER_PERMISSIONS : ROLE_PERMISSIONS[role];
+}
+
+/**
+ * Masks all but the first 3 and last 3 digits of a TIN, preserving
+ * whatever separators (dashes/spaces) the value already has — used
+ * whenever a profile/business record is returned to a viewer without
+ * canEditSettings, so the raw TIN never actually leaves the server for a
+ * shared accountant/VA/team_leader session in the first place (not just
+ * hidden in the UI, which devtools/network tab would still expose).
+ */
+export function maskTin(tin: string): string {
+  const digits = tin.replace(/\D/g, "");
+  if (digits.length <= 6) return tin.replace(/\d/g, "*");
+  let seen = 0;
+  return tin.replace(/\d/g, () => {
+    const i = seen++;
+    return i < 3 || i >= digits.length - 3 ? digits[i] : "*";
+  });
 }

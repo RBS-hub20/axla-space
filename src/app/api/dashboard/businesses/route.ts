@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
-import { getEffectiveOwner } from "@/lib/team";
+import { getEffectiveOwner, maskTin } from "@/lib/team";
 import { isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getBusinesses, createBusiness } from "@/lib/dashboard/businesses";
 import { logActivity } from "@/lib/dashboard/activity";
@@ -31,7 +31,10 @@ export async function GET() {
   }
 
   const businesses = await getBusinesses(owner.ownerId);
-  return NextResponse.json({ businesses });
+  const visibleBusinesses = owner.permissions.canEditSettings
+    ? businesses
+    : businesses.map((b) => ({ ...b, tin: b.tin ? maskTin(b.tin) : b.tin }));
+  return NextResponse.json({ businesses: visibleBusinesses });
 }
 
 export async function POST(req: Request) {
@@ -43,7 +46,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Supabase isn't configured yet." }, { status: 503 });
   }
   const owner = await getEffectiveOwner(user);
-  if (!owner.permissions.canEditFilings) {
+  if (!owner.permissions.canEditSettings) {
     return NextResponse.json({ error: "You don't have permission to add businesses." }, { status: 403 });
   }
 
