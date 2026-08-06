@@ -127,7 +127,7 @@ export default function PricingPage() {
                 </li>
               </ul>
               <Link
-                href="/login"
+                href="/signup"
                 className="mt-8 rounded-full border border-navy px-6 py-3 text-center text-sm font-semibold text-navy transition hover:bg-navy hover:text-white"
               >
                 Get started free

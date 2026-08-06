@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { signSessionToken } from "@/lib/jwt";
 import { SESSION_COOKIE } from "@/lib/session-cookie";
+import { provisionNewSignup } from "@/lib/auth/provision-signup";
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,6 +25,7 @@ export async function POST(req: NextRequest) {
     }
 
     let user = await prisma.user.findUnique({ where: { email } });
+    const isNewUser = !user;
     if (!user) {
       user = await prisma.user.create({
         data: { email, name: email.split('@')[0], verified: true }
@@ -39,6 +41,15 @@ export async function POST(req: NextRequest) {
       where: { id: otpRecord.id },
       data: { used: true }
     }).catch(() => {});
+
+    // Free signup launch: auto-creates a default free-tier business (zero
+    // empty state on first dashboard visit) and grants a 30-day Pro trial
+    // if this email was on the waitlist. Only for a brand-new account —
+    // never re-runs on a returning login. Never throws (see its own
+    // internal error handling) and never blocks login on failure.
+    if (isNewUser) {
+      await provisionNewSignup(user.id, user.email, user.name ?? email.split('@')[0]);
+    }
 
     const token = signSessionToken({ userId: user.id, email: user.email });
 

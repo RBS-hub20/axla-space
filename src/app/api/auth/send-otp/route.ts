@@ -3,18 +3,21 @@ import { isResendConfigured, resend, RESEND_FROM_EMAIL } from "@/lib/resend";
 import { otpEmailTemplate } from "@/lib/email-templates";
 import { generateOtp, storeOtp } from "@/lib/otp-store";
 import { logError } from "@/lib/log-error";
-import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ADMIN_EMAIL = "renzsom2022@gmail.com";
-const WAITLIST_MESSAGE =
-  "You're on the waitlist! You're not approved yet. We'll email you when a slot opens. Current wait: 2-3 days.";
 
 interface SendOtpBody {
   email?: unknown;
 }
 
 /**
+ * Free signup launch: the waitlist-approval gate that used to sit here has
+ * been removed — any valid email can request a code now. The waitlist
+ * table itself is untouched (still written to by the landing page's
+ * waitlist form, still readable by the admin dashboard); it's just no
+ * longer a login requirement. See verify-otp/route.ts for the 30-day Pro
+ * trial grant this now feeds into for anyone who WAS on that list.
+ *
  * Always responds `{ success: true }` regardless of whether the email is
  * well-formed, whether an account exists for it, or whether the send
  * actually succeeded — the response can't be used to probe which emails are
@@ -35,40 +38,6 @@ export async function POST(req: Request) {
 
   const trimmedEmail = email.trim();
   const friendlyName = trimmedEmail.split("@")[0];
-  const isAdminEmail = trimmedEmail.toLowerCase() === ADMIN_EMAIL;
-
-  // Waitlist gate: everyone except the admin must have an 'approved' row in
-  // public.waitlist before they can request a login code. Fails closed (403,
-  // not a thrown 500) on any lookup error or misconfiguration — the admin
-  // never touches this branch at all, so a Supabase hiccup can never lock
-  // the admin out, only tighten the gate for everyone else.
-  if (!isAdminEmail) {
-    if (!isSupabaseAdminConfigured) {
-      console.error("send-otp: Supabase admin not configured, blocking non-admin login");
-      return NextResponse.json({ error: WAITLIST_MESSAGE }, { status: 403 });
-    }
-
-    try {
-      const { data: waitlistEntry, error: waitlistError } = await supabaseAdmin
-        .from("waitlist")
-        .select("status")
-        .eq("email", trimmedEmail)
-        .maybeSingle();
-
-      if (waitlistError) {
-        logError("send-otp: waitlist check failed", waitlistError);
-        return NextResponse.json({ error: WAITLIST_MESSAGE }, { status: 403 });
-      }
-
-      if (!waitlistEntry || waitlistEntry.status !== "approved") {
-        return NextResponse.json({ error: WAITLIST_MESSAGE }, { status: 403 });
-      }
-    } catch (err) {
-      logError("send-otp: waitlist check threw", err);
-      return NextResponse.json({ error: WAITLIST_MESSAGE }, { status: 403 });
-    }
-  }
-
   const code = generateOtp();
 
   try {

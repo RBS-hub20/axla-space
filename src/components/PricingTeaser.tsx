@@ -34,6 +34,12 @@ export function PricingTeaser() {
                   </li>
                 ))}
               </ul>
+              <Link
+                href="/signup"
+                className="mt-6 rounded-full border border-white/15 px-6 py-3 text-center text-sm font-semibold text-white transition hover:border-white/30 hover:bg-white/5"
+              >
+                Start Free →
+              </Link>
             </div>
           </Reveal>
 
