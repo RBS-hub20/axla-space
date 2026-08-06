@@ -81,6 +81,24 @@ const JARVIS_EASTER_EGGS = [
 
 const FRIDAY_EASTER_EGGS = ["Got it, Sir!", "On it!", "You got it!"];
 
+/**
+ * Free-signup launch (Aug 6, 2026) — fixed positioning facts, not live DB
+ * queries. EARLY_ACCESS_CLAIM is the same public marketing figure used on
+ * the landing page (Hero/SocialProof) and is deliberately kept separate
+ * from stats.totalWaitlist below, which is the real, much smaller DB count
+ * of legacy waitlist rows — those are no longer a signup gate, just the
+ * source list for the 30-day Pro trial grant on signup.
+ */
+const LAUNCH = {
+  status: "LIVE — free signup era",
+  signupUrl: "axla.space/signup",
+  heroHeadline: "Tax Laya Starts Here. File BIR in 10 seconds, not 10 hours.",
+  earlyAccessClaim: "1,200+ early access joined",
+  promo: "Pro 50% OFF — P249/mo (from P499), 45-day countdown live",
+  freeTier: "1 business, 1 filing per quarter, 5 scans/month, no credit card required",
+  waitlistRole: "historical now — legacy waitlist emails get a 30-day Pro trial on signup instead of a gate",
+};
+
 function maybeEasterEgg(persona: Persona): string {
   // 10% chance, real Math.random() — this runs in a normal Next.js API
   // route, not a workflow script, so there's no determinism constraint here.
@@ -136,7 +154,7 @@ function buildBirVoiceSummary(deadlines: BirDeadline[]): string {
   return `Quick BIR check — you have ${urgent.length} deadline${urgent.length === 1 ? "" : "s"} this week: ${parts.join(", and ")}. No overdue. All good, Sir.`;
 }
 
-type Intent = "wake-up" | "greeting" | "intro" | "managed" | null;
+type Intent = "wake-up" | "greeting" | "intro" | "managed" | "status" | null;
 
 /** Which of these fixed phrasings the query matches, checked before the generic data-lookup keywords (bir/invoice/dti/hate/revenue/etc). */
 function detectIntent(query: string): Intent {
@@ -144,6 +162,7 @@ function detectIntent(query: string): Intent {
   if (/good\s*(morning|afternoon|evening)/.test(query)) return "greeting";
   if (/introduce yourself|who are you|what are you\b|sino ka|ano ka|what do you do/.test(query)) return "intro";
   if (/what do you manage|what are you managing|anong hawak mo/.test(query)) return "managed";
+  if (/current status|our status|status update|are we live|launch status|still (on the )?waitlist|waitlist era/.test(query)) return "status";
   return null;
 }
 
@@ -177,7 +196,7 @@ function managedSystemsBullets(stats: JarvisStats, deadlines: BirDeadline[]): st
       : "No DTI kits registered yet";
 
   return [
-    `${stats.totalUsers} active users and ${stats.totalWaitlist} waitlisted — average frustration ${stats.avgHateLevel} out of 10`,
+    `${stats.totalUsers} signed-up users — we're LIVE, free signup at ${LAUNCH.signupUrl}, plus ${stats.totalWaitlist} legacy waitlist leads on the 30-day trial list — average frustration ${stats.avgHateLevel} out of 10`,
     `PHP ${stats.mrr.toLocaleString()} MRR — revenue tracking`,
     `${stats.invoicesTotal} invoice${stats.invoicesTotal === 1 ? "" : "s"} — toolkit monitoring`,
     `${stats.totalTransactions} transaction${stats.totalTransactions === 1 ? "" : "s"} synced across ${stats.parsersActive} parsers (GCash, Maya, bank) — ${stats.exportsAvailable} export formats ready (QuickBooks, Xero, Sheets)`,
@@ -217,7 +236,7 @@ function buildIntroAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting
 function buildManagedAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
   const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
   const summary =
-    `Users ${stats.totalUsers}, Waitlist ${stats.totalWaitlist}, Revenue PHP ${stats.mrr.toLocaleString()} MRR, ` +
+    `Users ${stats.totalUsers} (free signup live), Legacy waitlist ${stats.totalWaitlist} (30-day trial pool), Revenue PHP ${stats.mrr.toLocaleString()} MRR, ` +
     `Invoices ${stats.invoicesTotal}, DTI ${stats.dtiCount}${stats.axlaDtiName ? " passed" : ""}, ` +
     `BIR deadlines with countdown${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, system health 100%`;
   return persona === "friday"
@@ -229,7 +248,7 @@ function buildManagedAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeti
 function buildWakeUpAnswer(stats: JarvisStats, deadlines: BirDeadline[], greeting: string, persona: Persona): string {
   const urgentCount = deadlines.filter((d) => d.status !== "OK").length;
   const managing =
-    `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist, PHP ${stats.mrr.toLocaleString()} MRR, ` +
+    `${stats.totalUsers} users (free signup live), ${stats.totalWaitlist} legacy waitlist on trial, PHP ${stats.mrr.toLocaleString()} MRR, ` +
     `BIR deadlines${urgentCount > 0 ? ` (${urgentCount} urgent)` : ""}, DTI kits`;
   return persona === "friday"
     ? `${greeting}, Sir! FRIDAY online. Managing ${managing} — all operational.`
@@ -248,11 +267,32 @@ function buildGreetingAnswer(
     ? ` You said good ${saidWord}, but it's actually ${manila.greeting.toLowerCase().replace("good ", "")} here in Manila — no worries, I've got you.`
     : "";
   const dtiBit = stats.axlaDtiName ? `1 DTI passed` : `${stats.dtiCount} DTI on file`;
-  const summary = `${stats.totalUsers} users, ${stats.totalWaitlist} waitlist at ${stats.avgHateLevel} hate, ${stats.mrr.toLocaleString()} MRR, ${dtiBit}, BIR deadlines tracked`;
+  const summary = `${stats.totalUsers} users (free signup live), ${stats.totalWaitlist} legacy waitlist on trial at ${stats.avgHateLevel} hate, ${stats.mrr.toLocaleString()} MRR, ${dtiBit}, BIR deadlines tracked`;
 
   return persona === "friday"
     ? `${manila.greeting}, Sir! ${manila.vibe} FRIDAY here, online and managing your Axla empire — ${summary}.${mismatch} All green!`
     : `${manila.greeting}, Sir! ${manila.vibe} Jarvis here, online and managing your Axla empire — ${summary}.${mismatch} All green!`;
+}
+
+/**
+ * "What's our current status" — explicit LIVE/free-signup framing per the
+ * Aug 6 2026 launch, so this never again answers with pre-launch/waitlist
+ * language. Exactly one "Sir", right after the greeting, same as the other
+ * fixed-intent answers above.
+ */
+function buildStatusAnswer(stats: JarvisStats, greeting: string, persona: Persona, forVoice: boolean): string {
+  const bullets = [
+    `signups are open now at ${LAUNCH.signupUrl}, no waitlist gate`,
+    `Hero reads "${LAUNCH.heroHeadline}"`,
+    `Social proof: ${LAUNCH.earlyAccessClaim}`,
+    `Launch promo: ${LAUNCH.promo}`,
+    `Free tier: ${LAUNCH.freeTier}`,
+    `The waitlist table is ${LAUNCH.waitlistRole}`,
+    `Real numbers right now — ${stats.totalUsers} signed-up users, ${stats.totalWaitlist} legacy waitlist leads on the trial list`,
+  ];
+  const bulletText = forVoice ? bullets.join("; ") : bullets.map((b) => `• ${b}`).join("\n");
+  const body = `We are ${LAUNCH.status}. ${bulletText}.`;
+  return persona === "friday" ? `${greeting}, Sir! ${body}` : `${greeting}, Sir. ${body}`;
 }
 
 /**
@@ -464,6 +504,7 @@ function buildAnswer(
   if (intent === "greeting") return buildGreetingAnswer(stats, deadlines, manila, detectSaidGreetingWord(query), persona);
   if (intent === "intro") return buildIntroAnswer(stats, deadlines, manila.greeting, persona, false);
   if (intent === "managed") return buildManagedAnswer(stats, deadlines, manila.greeting, persona);
+  if (intent === "status") return buildStatusAnswer(stats, manila.greeting, persona, false);
 
   if (query.includes("bir") || query.includes("deadline")) {
     const lines = deadlines
@@ -488,7 +529,7 @@ function buildAnswer(
   }
 
   if (query.includes("hate")) {
-    return `🔥 Average BIR hate level: ${stats.avgHateLevel}/10 across ${stats.totalWaitlist} signups, Sir.`;
+    return `🔥 Average BIR hate level: ${stats.avgHateLevel}/10 across ${stats.totalWaitlist} legacy waitlist signups, Sir.`;
   }
 
   if (query.includes("churn") || query.includes("expiring")) {
@@ -557,14 +598,14 @@ function buildAnswer(
       `Total Revenue PHP ${stats.paymongoRevenue.toLocaleString()}${breakdown ? ` (${breakdown})` : ""}.${latestLine ? ` ${latestLine}.` : ""} ` +
       `Today — Signups: ${stats.signupsToday}, Messages: ${stats.messagesToday}, Invoices: ${stats.invoicesToday}, ` +
       `Visitors: ${stats.visitorsToday} (${stats.liveVisitorsNow} live). ` +
-      `Totals — Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, DTI kits: ${stats.dtiCount}.${expiringLine ? ` ${expiringLine}.` : ""}`
+      `Totals — Users: ${stats.totalUsers} (free signup live), Legacy waitlist: ${stats.totalWaitlist}, Avg hate: ${stats.avgHateLevel}/10, DTI kits: ${stats.dtiCount}.${expiringLine ? ` ${expiringLine}.` : ""}`
     );
   }
 
   return (
-    `👋 Users: ${stats.totalUsers}, Waitlist: ${stats.totalWaitlist} (avg hate ${stats.avgHateLevel}/10), ` +
-    `Invoices: ${stats.invoicesTotal}, DTI/SEC/Mayor's kits: ${stats.dtiCount + stats.secCount + stats.mayorsCount}, Sir. ` +
-    `Try "report today", "invoice report", or "how many DTI?"`
+    `👋 We're LIVE — free signup era, Sir. Users: ${stats.totalUsers}, Legacy waitlist: ${stats.totalWaitlist} (avg hate ${stats.avgHateLevel}/10), ` +
+    `Invoices: ${stats.invoicesTotal}, DTI/SEC/Mayor's kits: ${stats.dtiCount + stats.secCount + stats.mayorsCount}. ` +
+    `Try "status", "report today", "invoice report", or "how many DTI?"`
   );
 }
 
@@ -600,6 +641,7 @@ function buildVoiceAnswer(
   if (intent === "greeting") return buildGreetingAnswer(stats, deadlines, manila, detectSaidGreetingWord(query), persona);
   if (intent === "intro") return buildIntroAnswer(stats, deadlines, greeting, persona, true);
   if (intent === "managed") return buildManagedAnswer(stats, deadlines, greeting, persona);
+  if (intent === "status") return `${buildStatusAnswer(stats, greeting, persona, true)}${egg}`;
 
   if (query.includes("bir") || query.includes("deadline")) {
     return `${buildBirVoiceSummary(deadlines)}${egg}`;
@@ -619,7 +661,7 @@ function buildVoiceAnswer(
   }
 
   if (query.includes("hate")) {
-    return `The average frustration level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} signups, Sir.${egg}`;
+    return `The average frustration level is ${stats.avgHateLevel} out of 10, across ${stats.totalWaitlist} legacy waitlist signups, Sir.${egg}`;
   }
 
   if (query.includes("churn") || query.includes("expiring")) {
@@ -699,10 +741,10 @@ function buildVoiceAnswer(
     const visitorsMention = ` ${stats.visitorsToday} visitors today, ${stats.liveVisitorsNow} live now.`;
 
     return isFriday
-      ? `${greeting}! We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
+      ? `${greeting}! We're live, free signup era. ${stats.totalUsers} users, ${stats.totalWaitlist} legacy waitlist averaging ${stats.avgHateLevel} hate, ` +
           `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
           `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention}${visitorsMention} All systems operational!${egg}`
-      : `${greeting}. We have ${stats.totalUsers} users, ${stats.totalWaitlist} waitlist averaging ${stats.avgHateLevel} hate, ` +
+      : `${greeting}. We're live, free signup era. ${stats.totalUsers} users, ${stats.totalWaitlist} legacy waitlist averaging ${stats.avgHateLevel} hate, ` +
           `${recentSubscribers.length} active paid user${recentSubscribers.length === 1 ? "" : "s"}, Total Revenue ${stats.paymongoRevenue.toLocaleString()} pesos, ` +
           `${stats.invoicesTotal} invoices, ${dtiPassedBit}, Sir.${deadlineMention}${latestMention}${expiringMention}${visitorsMention} All systems operational.${egg}`;
   }
@@ -715,12 +757,12 @@ function buildVoiceAnswer(
       : "";
 
   return isFriday
-    ? `${greeting}! We have ${stats.totalUsers} users and ${stats.totalWaitlist} waitlist, average hate ${stats.avgHateLevel}, Sir. ` +
+    ? `${greeting}! We're live, free signup era, Sir. ${stats.totalUsers} users and ${stats.totalWaitlist} legacy waitlist, average hate ${stats.avgHateLevel}. ` +
         `${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} toolkit kit${kitTotal === 1 ? "" : "s"} total.${deadlineMention} ` +
-        `Ask me for a report today, an invoice report, or how many D T I.${egg}`
-    : `${greeting}. We currently have ${stats.totalUsers} users and ${stats.totalWaitlist} on the waitlist, average frustration ` +
-        `level ${stats.avgHateLevel} out of 10, Sir. ${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"} in total.${deadlineMention} ` +
-        `You may ask for a report today, an invoice report, or how many D T I.${egg}`;
+        `Ask me for our status, a report today, an invoice report, or how many D T I.${egg}`
+    : `${greeting}. We're live, free signup era, Sir. ${stats.totalUsers} users and ${stats.totalWaitlist} legacy waitlist, average frustration ` +
+        `level ${stats.avgHateLevel} out of 10. ${dtiLine}${stats.invoicesTotal} invoices, ${kitTotal} business toolkit kit${kitTotal === 1 ? "" : "s"} in total.${deadlineMention} ` +
+        `You may ask for our status, a report today, an invoice report, or how many D T I.${egg}`;
 }
 
 export async function GET(req: Request) {

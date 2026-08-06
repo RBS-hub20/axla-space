@@ -19,6 +19,13 @@ const NEW_FEATURES_ANNOUNCED_KEY = "axla-admin-jarvis-new-features-announced-v2"
 const CYAN = "#00D4FF";
 const GREEN = "#00FF88";
 
+// Free-signup launch (Aug 6, 2026): fixed marketing figure shown on the
+// landing page (Hero/SocialProof) — deliberately kept separate from the
+// live `stats.totalWaitlist` DB count below, which is the real, much
+// smaller legacy-waitlist row count (now just the 30-day-trial source
+// list, not a signup gate).
+const EARLY_ACCESS_CLAIM = "1,200+ early access joined";
+
 interface JarvisStats {
   totalUsers: number;
   totalWaitlist: number;
@@ -290,9 +297,9 @@ export function JarvisHUD({ active }: { active: boolean }) {
         }
         if (newStats.totalWaitlist > prev.totalWaitlist) {
           const who = latestWaitlist[0]?.email ? ` (${latestWaitlist[0].email})` : "";
-          const line = `New waitlist signup${who} — ${newStats.totalWaitlist} total, hate level ${newStats.avgHateLevel}.`;
+          const line = `Legacy waitlist lead added${who} — ${newStats.totalWaitlist} total, hate level ${newStats.avgHateLevel}.`;
           events.push(line);
-          spokenLine = spokenLine ?? `New waitlist signup — ${newStats.totalWaitlist} total, hate level ${newStats.avgHateLevel}, Sir.`;
+          spokenLine = spokenLine ?? `Legacy waitlist lead added — ${newStats.totalWaitlist} total, hate level ${newStats.avgHateLevel}, Sir.`;
         }
         if (newStats.invoicesTotal > prev.invoicesTotal) {
           const line = `New invoice — ${newStats.invoicesTotal} total now.`;
@@ -781,8 +788,10 @@ export function JarvisHUD({ active }: { active: boolean }) {
         }
       >
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/70">System Vitals</p>
+        <VitalRow label="Status" value="LIVE — Free Signup" valueClassName="text-[#00FF88]" />
         <VitalRow label="Users" value={vitals ? String(vitals.users) : "—"} />
-        <VitalBar label="Waitlist" value={vitals ? `${vitals.waitlist} (${vitals.hateLevel}/10 hate)` : "—"} pct={vitals?.hatePct ?? 0} color="#FF3B5C" />
+        <VitalRow label="Early Access" value={EARLY_ACCESS_CLAIM} />
+        <VitalBar label="Legacy Waitlist" value={vitals ? `${vitals.waitlist} (${vitals.hateLevel}/10 hate)` : "—"} pct={vitals?.hatePct ?? 0} color="#FF3B5C" />
         <VitalBar label="Revenue" value={vitals ? `PHP ${vitals.mrr.toLocaleString()} MRR` : "—"} pct={vitals?.mrrPct ?? 0} color={CYAN} />
         <VitalBar label="Invoices" value={vitals ? String(vitals.invoices) : "—"} pct={vitals ? Math.min(100, vitals.invoices * 10) : 0} color={GREEN} />
         <VitalRow
