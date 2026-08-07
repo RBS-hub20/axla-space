@@ -6,9 +6,11 @@ import {
   generateCloseLetter,
   generateCloseChecklist,
   generateCloseGuide,
+  generateAuthorizationLetter,
   type CloseKitData,
+  type AuthorizedRepData,
 } from "@/lib/pdf/generate-toolkit-pdf";
-import { bundleAsZip } from "@/lib/pdf/zip-bundle";
+import { bundleAsZip, type ZipFile } from "@/lib/pdf/zip-bundle";
 import { saveBusinessRegistration } from "@/lib/dashboard/business-registrations";
 import { logError } from "@/lib/log-error";
 
@@ -21,6 +23,11 @@ interface CloseKitBody {
   businessType?: unknown;
   closureReason?: unknown;
   lastFilingDate?: unknown;
+  authorizeRepresentative?: unknown;
+  repFullName?: unknown;
+  repRelationship?: unknown;
+  repValidId?: unknown;
+  repContactNo?: unknown;
 }
 
 /**
@@ -55,6 +62,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Address is required." }, { status: 400 });
   }
 
+  let authorizedRep: AuthorizedRepData | null = null;
+  if (body.authorizeRepresentative === true) {
+    if (typeof body.repFullName !== "string" || !body.repFullName.trim()) {
+      return NextResponse.json({ error: "Authorized representative's full name is required." }, { status: 400 });
+    }
+    if (typeof body.repValidId !== "string" || !body.repValidId.trim()) {
+      return NextResponse.json({ error: "Authorized representative's valid ID is required." }, { status: 400 });
+    }
+    authorizedRep = {
+      fullName: body.repFullName.trim(),
+      relationship: typeof body.repRelationship === "string" && body.repRelationship.trim() ? body.repRelationship.trim() : "Other",
+      validId: body.repValidId.trim(),
+      contactNo: typeof body.repContactNo === "string" ? body.repContactNo.trim() : "",
+    };
+  }
+
   const data: CloseKitData = {
     fullName: body.fullName.trim(),
     tin: typeof body.tin === "string" && body.tin.trim() ? body.tin.trim() : null,
@@ -64,22 +87,23 @@ export async function POST(req: Request) {
     businessType: body.businessType === "sole-prop" ? "sole-prop" : "freelance",
     closureReason: typeof body.closureReason === "string" ? body.closureReason.trim() : "",
     lastFilingDate: typeof body.lastFilingDate === "string" && body.lastFilingDate ? body.lastFilingDate : null,
+    authorizedRep,
   };
 
   try {
-    const [f1905, letter, checklist, guide] = await Promise.all([
-      generateClose1905Reference(data),
-      generateCloseLetter(data),
-      generateCloseChecklist(data),
-      generateCloseGuide(data),
-    ]);
+    const docPromises: Array<Promise<ZipFile>> = [
+      generateClose1905Reference(data).then((bytes) => ({ name: "1905-closure-reference.pdf", bytes })),
+      generateCloseLetter(data).then((bytes) => ({ name: "letter-of-intent-to-close.pdf", bytes })),
+      generateCloseChecklist(data).then((bytes) => ({ name: "close-checklist.pdf", bytes })),
+      generateCloseGuide(data).then((bytes) => ({ name: "rdo-guide.pdf", bytes })),
+    ];
+    if (data.authorizedRep) {
+      docPromises.push(
+        generateAuthorizationLetter(data).then((bytes) => ({ name: "authorization-letter-closure.pdf", bytes })),
+      );
+    }
 
-    const zip = await bundleAsZip([
-      { name: "1905-closure-reference.pdf", bytes: f1905 },
-      { name: "letter-of-intent-to-close.pdf", bytes: letter },
-      { name: "close-checklist.pdf", bytes: checklist },
-      { name: "rdo-guide.pdf", bytes: guide },
-    ]);
+    const zip = await bundleAsZip(await Promise.all(docPromises));
 
     await saveBusinessRegistration(user.id, "CLOSE", { ...data });
 

@@ -127,9 +127,17 @@ export async function generateOpenScript(data: OpenKitData): Promise<Uint8Array>
   return finish(doc);
 }
 
+export interface AuthorizedRepData {
+  fullName: string;
+  relationship: string;
+  validId: string;
+  contactNo: string;
+}
+
 export interface CloseKitData extends OpenKitData {
   closureReason: string;
   lastFilingDate: string | null;
+  authorizedRep: AuthorizedRepData | null;
 }
 
 export async function generateClose1905Reference(data: CloseKitData): Promise<Uint8Array> {
@@ -224,6 +232,9 @@ export async function generateCloseChecklist(data: CloseKitData): Promise<Uint8A
   checklistItem(doc, "Books of accounts, presented for terminal stamping");
   checklistItem(doc, "Inventory list of unused official receipts/invoices, for cancellation");
   checklistItem(doc, "Valid government ID");
+  if (data.authorizedRep) {
+    checklistItem(doc, "Authorization Letter + Rep's valid ID + photocopy of owner ID");
+  }
   checklistItem(doc, "If using a Special Power of Attorney (SPA) — original + photocopy, notarized");
 
   drawDisclaimerFooter(doc, REFERENCE_DISCLAIMER);
@@ -248,6 +259,74 @@ export async function generateCloseGuide(data: CloseKitData): Promise<Uint8Array
   paragraph(doc, "Hihingi ka ng acknowledgment/confirmation na na-receive ang application. Itanong: \"Ilang araw po bago ma-confirm yung closure, at may tax clearance po ba akong kukunin?\"");
 
   drawDisclaimerFooter(doc, REFERENCE_DISCLAIMER);
+  return finish(doc);
+}
+
+/**
+ * Simple non-notarized authorization letter for closure — distinct from the
+ * SPA template below (generateSpaDocument), which is a heavier, notarized
+ * instrument for OFWs/full remote representation. This is for the common
+ * "my employee/relative will just drop off the papers at the RDO" case.
+ * Only called when the caller has confirmed data.authorizedRep is set.
+ */
+export async function generateAuthorizationLetter(data: CloseKitData): Promise<Uint8Array> {
+  const rep = data.authorizedRep;
+  const doc = await startDoc("BUSINESS TOOLKIT — AUTHORIZATION LETTER");
+  heading(doc, "Authorization Letter", 15);
+  spacer(doc, 6);
+  paragraph(
+    doc,
+    `Date: ${data.lastFilingDate || new Date().toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}`,
+    9.5,
+    DARK,
+    14,
+  );
+  spacer(doc, 10);
+  paragraph(doc, "To: The Revenue District Officer", 9.5, DARK, 14);
+  paragraph(doc, `BIR RDO ${data.rdoCode || "____"}`, 9.5, DARK, 14);
+  spacer(doc, 14);
+  paragraph(
+    doc,
+    `I, ${data.fullName}, Filipino, of legal age, with TIN ${data.tin || "____________"}, owner of "${data.businessName || data.fullName}", ` +
+      `located at ${data.address}, do hereby authorize:`,
+    9.5,
+    DARK,
+    15,
+  );
+  spacer(doc, 8);
+  paragraph(
+    doc,
+    `${rep?.fullName || "____________"}, ${rep?.relationship || "____________"}, with ID ${rep?.validId || "____________"}` +
+      `${rep?.contactNo ? `, contact ${rep.contactNo}` : ""}`,
+    9.5,
+    DARK,
+    15,
+  );
+  spacer(doc, 8);
+  paragraph(
+    doc,
+    `To process, file, and claim documents related to the closure/cessation of my business registration at BIR RDO ${data.rdoCode || "____"}.`,
+    9.5,
+    DARK,
+    15,
+  );
+  spacer(doc, 8);
+  paragraph(doc, "This authorization includes submitting BIR Form 1905, Letter of Intent, and other related documents.", 9.5, DARK, 15);
+  spacer(doc, 8);
+  paragraph(doc, "Attached: Photocopy of my valid ID and representative's valid ID.", 9.5, DARK, 15);
+  spacer(doc, 30);
+
+  const colWidth = 250;
+  doc.page.drawLine({ start: { x: 40, y: doc.y }, end: { x: 40 + colWidth, y: doc.y }, thickness: 0.8, color: DARK });
+  doc.page.drawLine({ start: { x: 40 + colWidth + 20, y: doc.y }, end: { x: 40 + colWidth * 2 + 20, y: doc.y }, thickness: 0.8, color: DARK });
+  doc.y -= 14;
+  doc.page.drawText(data.fullName, { x: 40, y: doc.y, size: 9, font: doc.bold, color: DARK });
+  doc.page.drawText(rep?.fullName || "", { x: 40 + colWidth + 20, y: doc.y, size: 9, font: doc.bold, color: DARK });
+  doc.y -= 12;
+  doc.page.drawText("Owner Signature", { x: 40, y: doc.y, size: 8, font: doc.font, color: DARK });
+  doc.page.drawText("Authorized Rep Signature", { x: 40 + colWidth + 20, y: doc.y, size: 8, font: doc.font, color: DARK });
+
+  drawDisclaimerFooter(doc, LEGAL_DISCLAIMER);
   return finish(doc);
 }
 

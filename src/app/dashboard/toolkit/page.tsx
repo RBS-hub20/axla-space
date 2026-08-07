@@ -14,6 +14,8 @@ const PESO = (n: number) => `₱${n.toLocaleString(undefined, { maximumFractionD
 
 type Tab = "open" | "close" | "spa" | "registration";
 
+const REP_RELATIONSHIPS = ["Employee", "Family Member", "Friend", "Other"];
+
 interface ProfilePrefill {
   fullName: string;
   tin: string;
@@ -328,6 +330,11 @@ function CloseTab({
   const [address, setAddress] = useState(prefill.address);
   const [closureReason, setClosureReason] = useState("");
   const [lastFilingDate, setLastFilingDate] = useState("");
+  const [authorizeRep, setAuthorizeRep] = useState(false);
+  const [repFullName, setRepFullName] = useState("");
+  const [repRelationship, setRepRelationship] = useState(REP_RELATIONSHIPS[0]);
+  const [repValidId, setRepValidId] = useState("");
+  const [repContactNo, setRepContactNo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -344,11 +351,29 @@ function CloseTab({
       setError("Full name and address are required.");
       return;
     }
+    if (authorizeRep && (!repFullName.trim() || !repValidId.trim())) {
+      setError("Authorized representative's full name and valid ID are required.");
+      return;
+    }
     setError(null);
     setLoading(true);
     const result = await downloadZip(
       "/api/toolkit/close",
-      { fullName, tin, rdoCode, businessName, address, businessType: "freelance", closureReason, lastFilingDate },
+      {
+        fullName,
+        tin,
+        rdoCode,
+        businessName,
+        address,
+        businessType: "freelance",
+        closureReason,
+        lastFilingDate,
+        authorizeRepresentative: authorizeRep,
+        repFullName,
+        repRelationship,
+        repValidId,
+        repContactNo,
+      },
       "axla-close-business-kit.zip",
     );
     setLoading(false);
@@ -394,6 +419,30 @@ function CloseTab({
             <Input type="date" value={lastFilingDate} onChange={(e) => setLastFilingDate(e.target.value)} className="bg-[#0B1218] border-[#1E293B] text-white" />
           </div>
         </FieldGrid>
+
+        <div className="space-y-3 rounded-xl border border-[#1E293B] bg-white/5 p-3.5">
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={authorizeRep}
+              onChange={(e) => setAuthorizeRep(e.target.checked)}
+              className="h-4 w-4 rounded border-[#1E293B] bg-[#0B1218] accent-[#22c55e]"
+            />
+            I will authorize someone else to process my closure
+          </label>
+
+          {authorizeRep && (
+            <div className="space-y-3 border-t border-[#1E293B] pt-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">👤 Authorized Representative Details</p>
+              <FieldGrid>
+                <Field label="Full Name" value={repFullName} onChange={setRepFullName} placeholder="Juan Dela Cruz" />
+                <SelectField label="Relationship" value={repRelationship} onChange={setRepRelationship} options={REP_RELATIONSHIPS} />
+                <Field label="Valid ID Presented" value={repValidId} onChange={setRepValidId} placeholder="e.g. UMID 1234-5678901-1" />
+                <Field label="Contact No." value={repContactNo} onChange={setRepContactNo} placeholder="09XXXXXXXXX" />
+              </FieldGrid>
+            </div>
+          )}
+        </div>
 
         {error && <p className="text-sm text-red-400">{error}</p>}
 
