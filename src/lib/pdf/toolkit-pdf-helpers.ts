@@ -1,7 +1,7 @@
 import "server-only";
 import fs from "fs";
 import path from "path";
-import { PDFDocument, PDFName, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, PDFName, PDFDict, PDFArray, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import QRCode from "qrcode";
 
@@ -215,10 +215,12 @@ export async function drawQrCode(doc: ToolkitDoc, data: string, size = 70): Prom
  * intent, which needs a verified, correctly-formed RGB ICC profile we don't
  * have a trustworthy source for in this build. Treat this as "PDF/A-
  * oriented", not validator-certified; a strict PDF/A checker (e.g. veraPDF)
- * would still flag the missing OutputIntent.
+ * would still flag the missing OutputIntent. Exported so the e-Notary
+ * upload-conversion route (which loads an arbitrary, already-existing PDF
+ * rather than building one from a ToolkitDoc) can reuse the exact same
+ * metadata logic instead of duplicating it.
  */
-function attachPdfAMetadata(doc: ToolkitDoc): void {
-  const { pdfDoc, title } = doc;
+export function attachPdfAIdentification(pdfDoc: PDFDocument, title: string): void {
   const now = new Date();
   pdfDoc.setTitle(title);
   pdfDoc.setCreator("Axla TaxLaya");
@@ -266,6 +268,70 @@ function attachPdfAMetadata(doc: ToolkitDoc): void {
 }
 
 export async function finish(doc: ToolkitDoc): Promise<Uint8Array> {
-  attachPdfAMetadata(doc);
+  attachPdfAIdentification(doc.pdfDoc, doc.title);
   return doc.pdfDoc.save();
+}
+
+/**
+ * Inspects every font actually used across every page and reports whether
+ * all of them are embedded font programs (FontFile/FontFile2/FontFile3 on
+ * the FontDescriptor, resolving through DescendantFonts for Type0/composite
+ * fonts). This is the real test for the PDF/A embedded-fonts requirement —
+ * unlike our own generated docs (which we know embed Liberation Sans), an
+ * arbitrary uploaded PDF might already have fully embedded fonts, might use
+ * the non-embeddable standard 14, or might mix both. A PDF with zero fonts
+ * (e.g. scanned-image-only pages) reports true — there's nothing to embed.
+ */
+export function checkAllFontsEmbedded(pdfDoc: PDFDocument): boolean {
+  for (const page of pdfDoc.getPages()) {
+    const resources = page.node.Resources();
+    if (!resources) continue;
+    const fontDict = resources.lookupMaybe(PDFName.of("Font"), PDFDict);
+    if (!fontDict) continue;
+    for (const [, fontRef] of fontDict.entries()) {
+      const fontObj = pdfDoc.context.lookup(fontRef, PDFDict);
+      if (!fontObj) return false;
+      const subtype = fontObj.lookupMaybe(PDFName.of("Subtype"), PDFName);
+      let descriptor: PDFDict | undefined;
+      if (subtype?.decodeText() === "Type0") {
+        const descendants = fontObj.lookupMaybe(PDFName.of("DescendantFonts"), PDFArray);
+        const descendantRef = descendants?.asArray()[0];
+        const descendantDict = descendantRef ? pdfDoc.context.lookup(descendantRef, PDFDict) : undefined;
+        descriptor = descendantDict?.lookupMaybe(PDFName.of("FontDescriptor"), PDFDict);
+      } else {
+        descriptor = fontObj.lookupMaybe(PDFName.of("FontDescriptor"), PDFDict);
+      }
+      if (!descriptor) return false;
+      const embedded =
+        descriptor.has(PDFName.of("FontFile")) || descriptor.has(PDFName.of("FontFile2")) || descriptor.has(PDFName.of("FontFile3"));
+      if (!embedded) return false;
+    }
+  }
+  return true;
+}
+
+export interface PdfAConversionResult {
+  bytes: Uint8Array;
+  /** Whether every font in the SOURCE file was already embedded — we only add PDF/A identification metadata, we never re-embed fonts into someone else's PDF. */
+  fontsAlreadyEmbedded: boolean;
+}
+
+/**
+ * "Convert to PDF/A" for an arbitrary uploaded PDF — loads it, checks
+ * whether its fonts are already embedded, and if so attaches the same
+ * PDF/A-1B identification metadata used for our own generated documents.
+ * Deliberately does NOT attempt to embed fonts into someone else's PDF
+ * (that would mean re-rendering their content stream against a different
+ * font program, which risks silently reflowing/corrupting their layout) —
+ * if fontsAlreadyEmbedded is false, the caller should tell the user this
+ * specific file can't be auto-converted rather than mislabel a
+ * non-compliant file as PDF/A. Throws if the upload isn't a loadable PDF.
+ */
+export async function convertToPdfA(bytes: Uint8Array, title: string): Promise<PdfAConversionResult> {
+  const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: false });
+  const fontsAlreadyEmbedded = checkAllFontsEmbedded(pdfDoc);
+  if (fontsAlreadyEmbedded) {
+    attachPdfAIdentification(pdfDoc, title);
+  }
+  return { bytes: await pdfDoc.save(), fontsAlreadyEmbedded };
 }

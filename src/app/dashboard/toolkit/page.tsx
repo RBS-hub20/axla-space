@@ -1,19 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Briefcase, Rocket, Skull, Plane, Landmark, Lock, Loader2, AlertTriangle, Send, Download, Plus, Trash2, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Briefcase,
+  Rocket,
+  Skull,
+  Plane,
+  Landmark,
+  Lock,
+  Loader2,
+  AlertTriangle,
+  Send,
+  Download,
+  Plus,
+  Trash2,
+  Sparkles,
+  FileCheck,
+  Upload,
+  ExternalLink,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PLAN_PRICING } from "@/lib/plans";
 
 const PREMIUM_CARD =
   "rounded-2xl border-[#1E293B] bg-[#121A22] shadow-sm transition hover:border-[#22c55e]/30 hover:shadow-lg hover:shadow-green-500/10";
 const PESO = (n: number) => `₱${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
-type Tab = "open" | "close" | "spa" | "registration";
+type Tab = "open" | "close" | "spa" | "registration" | "e-notary";
 
 const REP_RELATIONSHIPS = ["Employee", "Family Member", "Friend", "Other"];
 
@@ -24,16 +40,55 @@ const REP_RELATIONSHIPS = ["Employee", "Family Member", "Friend", "Other"];
 // generated PDFs now target (embedded fonts + PDF/A identification
 // metadata). We don't claim ISO 19005-1 validator-certified conformance
 // here (that also needs an ICC output intent we don't have a verified
-// profile for) — see toolkit-pdf-helpers.ts's attachPdfAMetadata().
-const E_NOTARY_STEPS = [
-  { title: "Prepare your PDF/A", desc: "Done automatically — every kit document below is generated with embedded fonts and PDF/A metadata, no extra step needed." },
-  { title: "Create an account at an accredited e-Notarization Facility (ENF)", desc: "e.g. NotarioPH, NotarizeIT — accreditation is still rolling out, so check the Supreme Court's official directory (linked below) for who's currently accredited before you pick one." },
-  { title: "Video call with an e-Notary Public", desc: "Remote Electronic Notarization (REN) — the e-Notary verifies your ID and witnesses your signature over video, no office visit needed." },
-  { title: "Receive your notarized document", desc: "You get back a notarized PDF with a digital seal, ready to submit." },
-];
+// profile for) — see toolkit-pdf-helpers.ts's attachPdfAIdentification().
 const SC_ENOTARY_URL = "https://sc.judiciary.gov.ph/enotary-services/";
 
-function ENotaryReadyBanner({ docs }: { docs: string[] }) {
+/**
+ * Real, SC-accredited Electronic Notarization Facility providers, verified
+ * by research rather than guessed — the Supreme Court's accreditation list
+ * currently has three: QLegal (Quanby, consumer brand "NotarioPH"), UNAWA
+ * (NotarizeIT), and Twala. We only link the two the user asked for by name
+ * plus the official directory; ?ref=axla is added to the two commercial
+ * links (a normal referral-tracking practice) but NOT to the .gov.ph
+ * directory link, since that's not a referral relationship.
+ */
+const E_NOTARY_PROVIDERS = [
+  { name: "NotarioPH", by: "by Quanby Legal — SC-accredited ENF", url: "https://quanbylegal.com/?ref=axla" },
+  { name: "NotarizeIT", by: "by UNAWA — SC-accredited ENF", url: "https://notarizeit.ph/?ref=axla" },
+  { name: "SC eNotary Directory", by: "Official — full current provider list", url: SC_ENOTARY_URL },
+];
+
+const E_NOTARY_STEPS = [
+  { title: "Generate your PDF/A", time: "~60 seconds", desc: "Every Axla toolkit document, or your own upload above, comes out with embedded fonts and PDF/A identification metadata." },
+  { title: "Video call with an e-Notary", time: "~10 minutes", desc: "Book a session with any SC-accredited provider below — a Remote Electronic Notarization (REN) call verifies your ID and witnesses your signature." },
+  { title: "Receive your notarized document", time: "Same session", desc: "You get back a notarized PDF with a digital seal — no printing, no office visit." },
+];
+
+const E_NOTARY_FAQ = [
+  {
+    q: "Is online notarization actually legal in the Philippines?",
+    a: "Yes — since March 2025, under the Supreme Court's Rules on Electronic Notarization (A.M. No. 24-10-14-SC). A Remote Electronic Notarization (REN) session with an accredited e-Notary Public carries the same legal weight as an in-person notarization.",
+  },
+  {
+    q: "Do I need to print anything?",
+    a: "No. The whole process — ID verification, witnessing, and signing — happens on your device during the video call.",
+  },
+  {
+    q: "What if my uploaded file isn't PDF/A yet?",
+    a: "Use the converter above. If your file's fonts aren't already embedded, we can't safely auto-fix that (it risks reflowing your layout) — try \"Print to PDF\" from the original document first, or use one of Axla's generated documents, which are already PDF/A-ready.",
+  },
+  {
+    q: "How much does e-Notarization cost?",
+    a: "Pricing is set by each accredited provider, not by Axla — check their site for current rates before booking.",
+  },
+  {
+    q: "Which documents actually need notarization?",
+    a: "For the Business Toolkit specifically: the SPA (Special Power of Attorney) does. The Authorization Letter, Letter of Intent, and reference sheets generally don't — but some RDOs may still ask, so it doesn't hurt that they're PDF/A-ready too.",
+  },
+];
+
+/** Shown after a successful download on the Close/SPA tabs — the full "how it works" content now lives on the dedicated E-Notary tab, so this just confirms readiness and links there instead of duplicating a modal. */
+function ENotaryReadyBanner({ docs, onLearnMore }: { docs: string[]; onLearnMore: () => void }) {
   return (
     <div className="space-y-3 rounded-xl border border-[#22c55e]/30 bg-[#22c55e]/[0.06] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -47,42 +102,9 @@ function ENotaryReadyBanner({ docs }: { docs: string[] }) {
             </p>
           </div>
         </div>
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button variant="outline" size="sm" className="shrink-0 gap-1.5 border-[#22c55e]/40 text-[#22c55e] hover:bg-[#22c55e]/10">
-              How to e-Notary Online?
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg border-[#1E293B] bg-[#0B1218]">
-            <DialogHeader>
-              <DialogTitle>How to e-Notarize Online</DialogTitle>
-              <DialogDescription>
-                Remote Electronic Notarization under the Supreme Court&apos;s 2025 Rules (A.M. No. 24-10-14-SC) — no in-person notary visit
-                needed.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              {E_NOTARY_STEPS.map((s, i) => (
-                <div key={s.title} className="flex gap-3">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-xs font-bold text-black">
-                    {i + 1}
-                  </span>
-                  <div>
-                    <p className="text-sm font-semibold text-white">{s.title}</p>
-                    <p className="text-xs text-gray-400">{s.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="mt-4 text-xs text-gray-500">
-              Accreditation is still rolling out and can change — check the Supreme Court&apos;s official{" "}
-              <a href={SC_ENOTARY_URL} target="_blank" rel="noopener noreferrer" className="text-[#22c55e] underline">
-                eNotary Services directory
-              </a>{" "}
-              for the current list of accredited providers.
-            </p>
-          </DialogContent>
-        </Dialog>
+        <Button onClick={onLearnMore} variant="outline" size="sm" className="shrink-0 gap-1.5 border-[#22c55e]/40 text-[#22c55e] hover:bg-[#22c55e]/10">
+          How to e-Notary Online?
+        </Button>
       </div>
       {docs.length > 0 && (
         <div className="space-y-1.5">
@@ -94,6 +116,22 @@ function ENotaryReadyBanner({ docs }: { docs: string[] }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Site-wide top banner shown across all Business Toolkit tabs. */
+function ENotaryTopBanner({ onHowClick }: { onHowClick: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#22c55e]/30 bg-[#22c55e]/[0.08] px-4 py-3">
+      <p className="text-sm text-gray-200">
+        <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-[#22c55e] align-middle" />
+        <span className="font-bold text-[#22c55e]">NEW:</span> All docs are E-Notary Ready! PDF/A-1B oriented, ready for online
+        notarization via video call. SC Rule 2025.
+      </p>
+      <button onClick={onHowClick} className="shrink-0 text-sm font-semibold text-[#22c55e] hover:underline">
+        How? →
+      </button>
     </div>
   );
 }
@@ -216,6 +254,8 @@ export default function BusinessToolkitPage() {
           </span>
         </div>
 
+        <ENotaryTopBanner onHowClick={() => setTab("e-notary")} />
+
         <div className="flex gap-2 overflow-x-auto rounded-2xl border border-[#1E293B] bg-[#121A22] p-1.5">
           <TabButton active={tab === "open"} onClick={() => setTab("open")} icon={<Rocket className="h-4 w-4" />} label="Open Business" />
           <TabButton active={tab === "close"} onClick={() => setTab("close")} icon={<Skull className="h-4 w-4" />} label="Close Business" />
@@ -226,12 +266,22 @@ export default function BusinessToolkitPage() {
             icon={<Landmark className="h-4 w-4" />}
             label="DTI / SEC / Mayor's"
           />
+          <TabButton
+            active={tab === "e-notary"}
+            onClick={() => setTab("e-notary")}
+            icon={<FileCheck className="h-4 w-4" />}
+            label="E-Notary"
+            badge="NEW"
+          />
         </div>
 
         {tab === "open" && <OpenTab prefill={prefill} isPro={isPro} planLoaded={planLoaded} />}
-        {tab === "close" && <CloseTab prefill={prefill} isPro={isPro} planLoaded={planLoaded} warning={openCasesWarning} />}
-        {tab === "spa" && <SpaTab prefill={prefill} isPro={isPro} planLoaded={planLoaded} />}
+        {tab === "close" && (
+          <CloseTab prefill={prefill} isPro={isPro} planLoaded={planLoaded} warning={openCasesWarning} onGoToENotary={() => setTab("e-notary")} />
+        )}
+        {tab === "spa" && <SpaTab prefill={prefill} isPro={isPro} planLoaded={planLoaded} onGoToENotary={() => setTab("e-notary")} />}
         {tab === "registration" && <RegistrationTab prefill={prefill} isPro={isPro} isBusiness={isBusiness} planLoaded={planLoaded} />}
+        {tab === "e-notary" && <ENotaryTab isPro={isPro} planLoaded={planLoaded} />}
 
         <p className="text-xs text-gray-500">
           Template only — generated documents are AXLA reference sheets, not official government forms (BIR, DTI, or SEC), and are not
@@ -243,16 +293,38 @@ export default function BusinessToolkitPage() {
   );
 }
 
-function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+function TabButton({
+  active,
+  onClick,
+  icon,
+  label,
+  badge,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  badge?: string;
+}) {
   return (
     <button
       onClick={onClick}
-      className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
+      // shrink-0 + whitespace-nowrap (not flex-1) at every breakpoint so 5
+      // tabs keep their natural width and the row actually scrolls
+      // horizontally on mobile instead of every button just getting
+      // narrower and narrower to fit.
+      className={`relative flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
         active ? "bg-[#22c55e] text-[#001A0D]" : "text-gray-400 hover:bg-white/5 hover:text-white"
       }`}
     >
       {icon}
       {label}
+      {badge && (
+        <span className="absolute -right-1.5 -top-1.5 flex h-4 items-center rounded-full bg-red-500 px-1.5 text-[9px] font-bold uppercase tracking-wide text-white">
+          {badge}
+          <span className="absolute inset-0 -z-10 animate-ping rounded-full bg-red-400 opacity-75" />
+        </span>
+      )}
     </button>
   );
 }
@@ -399,11 +471,13 @@ function CloseTab({
   isPro,
   planLoaded,
   warning,
+  onGoToENotary,
 }: {
   prefill: ProfilePrefill;
   isPro: boolean;
   planLoaded: boolean;
   warning: { count: number; penalty: number } | null;
+  onGoToENotary: () => void;
 }) {
   const [fullName, setFullName] = useState(prefill.fullName);
   const [tin, setTin] = useState(prefill.tin);
@@ -546,13 +620,23 @@ function CloseTab({
           {planLoaded && !isPro && <ProLockOverlay price="₱249/mo" />}
         </div>
 
-        {downloaded && <ENotaryReadyBanner docs={closeDocs} />}
+        {downloaded && <ENotaryReadyBanner docs={closeDocs} onLearnMore={onGoToENotary} />}
       </CardContent>
     </Card>
   );
 }
 
-function SpaTab({ prefill, isPro, planLoaded }: { prefill: ProfilePrefill; isPro: boolean; planLoaded: boolean }) {
+function SpaTab({
+  prefill,
+  isPro,
+  planLoaded,
+  onGoToENotary,
+}: {
+  prefill: ProfilePrefill;
+  isPro: boolean;
+  planLoaded: boolean;
+  onGoToENotary: () => void;
+}) {
   const [principalName, setPrincipalName] = useState(prefill.fullName);
   const [principalTin, setPrincipalTin] = useState(prefill.tin);
   const [principalAddress, setPrincipalAddress] = useState(prefill.address);
@@ -706,7 +790,7 @@ function SpaTab({ prefill, isPro, planLoaded }: { prefill: ProfilePrefill; isPro
           regular Philippine notary — see the included notary guide.
         </p>
 
-        {downloaded && <ENotaryReadyBanner docs={spaDocs} />}
+        {downloaded && <ENotaryReadyBanner docs={spaDocs} onLearnMore={onGoToENotary} />}
       </CardContent>
     </Card>
   );
@@ -1123,6 +1207,190 @@ function MayorsSubTab({
         </Button>
         {planLoaded && !isBusiness && <BusinessLockOverlay />}
       </div>
+    </div>
+  );
+}
+
+function ENotaryTab({ isPro, planLoaded }: { isPro: boolean; planLoaded: boolean }) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [convertError, setConvertError] = useState<string | null>(null);
+  const [convertSuccess, setConvertSuccess] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function convertFile(file: File) {
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      setConvertError("Please upload a PDF file.");
+      return;
+    }
+    setConvertError(null);
+    setConvertSuccess(null);
+    setConverting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/toolkit/e-notary/convert", { method: "POST", body: formData });
+
+      if (!res.ok) {
+        let message = "Something went wrong.";
+        try {
+          const data = await res.json();
+          message = data.error || message;
+        } catch {
+          // non-JSON error body — fall through to generic message
+        }
+        setConvertError(message);
+        return;
+      }
+
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = file.name.replace(/\.pdf$/i, "") + "-pdfa.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+      setConvertSuccess(`${file.name} converted and downloaded ✅`);
+      toast("PDF/A converted ✅");
+    } catch {
+      setConvertError("Network error. Please try again.");
+    } finally {
+      setConverting(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card className={PREMIUM_CARD}>
+        <CardContent className="space-y-2 p-6">
+          <h2 className="text-lg font-bold text-white">🟢 Online Notarization Now Legal in PH!</h2>
+          <p className="text-sm text-gray-400">Supreme Court A.M. No. 24-10-14-SC (Rules on Electronic Notarization) — effective March 2025.</p>
+        </CardContent>
+      </Card>
+
+      {/* Section A — upload & convert */}
+      <Card className={PREMIUM_CARD}>
+        <CardContent className="space-y-4 p-6">
+          <div>
+            <h3 className="text-base font-bold text-white">Convert your own PDF to PDF/A</h3>
+            <p className="text-sm text-gray-400">
+              Upload any PDF — we check that its fonts are already embedded and, if so, tag it with PDF/A identification metadata.
+            </p>
+          </div>
+
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) convertFile(file);
+            }}
+            className={`relative flex flex-col items-center justify-center gap-3 rounded-2xl border-2 border-dashed p-10 text-center transition ${
+              isDragging ? "border-[#22c55e] bg-[#22c55e]/5" : "border-[#1E293B]"
+            }`}
+          >
+            <Upload className="h-8 w-8 text-gray-500" />
+            <p className="text-sm text-gray-300">Drag &amp; drop a PDF here, or</p>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={converting || !planLoaded || !isPro}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#22c55e] px-4 py-2 text-sm font-semibold text-[#001A29] transition hover:bg-[#1fb854] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {converting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {converting ? "Converting..." : "Choose PDF"}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,application/pdf"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) convertFile(file);
+                e.target.value = "";
+              }}
+            />
+            <p className="text-xs text-gray-500">PDF only, up to 15MB.</p>
+            {planLoaded && !isPro && <ProLockOverlay price="₱249/mo" />}
+          </div>
+
+          {convertError && <p className="text-sm text-red-400">{convertError}</p>}
+          {convertSuccess && <p className="text-sm text-[#22c55e]">{convertSuccess}</p>}
+        </CardContent>
+      </Card>
+
+      {/* Section B — accredited providers */}
+      <Card className={PREMIUM_CARD}>
+        <CardContent className="space-y-4 p-6">
+          <h3 className="text-base font-bold text-white">Where to get notarized online</h3>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {E_NOTARY_PROVIDERS.map((p) => (
+              <div key={p.name} className="flex flex-col justify-between rounded-xl border border-[#1E293B] bg-white/5 p-4">
+                <div>
+                  <p className="text-sm font-bold text-white">{p.name}</p>
+                  <p className="mt-1 text-xs text-gray-400">{p.by}</p>
+                </div>
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-4 inline-flex items-center justify-center gap-1.5 rounded-full border border-[#22c55e]/40 px-4 py-2 text-xs font-semibold text-[#22c55e] transition hover:bg-[#22c55e]/10"
+                >
+                  Pa-Notaryo <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500">
+            These are independent, Supreme Court–accredited e-Notarization Facilities — not Axla partners. Pricing, availability, and
+            onboarding status are set by each provider; the official directory above always has the current full list.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Section C — how it works */}
+      <Card className={PREMIUM_CARD}>
+        <CardContent className="space-y-4 p-6">
+          <h3 className="text-base font-bold text-white">How it works</h3>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {E_NOTARY_STEPS.map((s, i) => (
+              <div key={s.title} className="rounded-xl border border-[#1E293B] bg-white/5 p-4">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-xs font-bold text-black">
+                    {i + 1}
+                  </span>
+                  <span className="text-xs font-bold uppercase tracking-wide text-[#22c55e]">{s.time}</span>
+                </div>
+                <p className="mt-2 text-sm font-semibold text-white">{s.title}</p>
+                <p className="mt-1 text-xs text-gray-400">{s.desc}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Section D — FAQ */}
+      <Card className={PREMIUM_CARD}>
+        <CardContent className="space-y-4 p-6">
+          <h3 className="text-base font-bold text-white">FAQ</h3>
+          <div className="space-y-4">
+            {E_NOTARY_FAQ.map((item) => (
+              <div key={item.q}>
+                <p className="text-sm font-semibold text-white">{item.q}</p>
+                <p className="mt-1 text-sm text-gray-400">{item.a}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
