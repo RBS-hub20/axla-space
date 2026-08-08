@@ -15,7 +15,6 @@ import {
   BarChart3,
   Settings,
   Shield,
-  ShieldCheck,
   Briefcase,
   Menu,
   X,
@@ -53,15 +52,11 @@ const BUSINESS_PLAN_ITEMS: NavItem[] = [
 function NavLinks({
   pathname,
   onNavigate,
-  isAdmin,
-  pendingCount,
   isBusinessPlan,
   outstandingInvoices,
 }: {
   pathname: string;
   onNavigate?: () => void;
-  isAdmin?: boolean;
-  pendingCount?: number;
   isBusinessPlan?: boolean;
   outstandingInvoices?: number;
 }) {
@@ -101,47 +96,15 @@ function NavLinks({
           </Link>
         );
       })}
-
-      {isAdmin && (
-        <Link
-          href="/admin/waitlist"
-          onClick={onNavigate}
-          className={cn(
-            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-            pathname.startsWith("/admin/waitlist")
-              ? "bg-[#00FF85]/10 text-[#00FF85]"
-              : "text-slate-400 hover:bg-white/5 hover:text-slate-100",
-          )}
-        >
-          <ShieldCheck className="h-4 w-4 shrink-0" strokeWidth={pathname.startsWith("/admin/waitlist") ? 2.5 : 2} />
-          Admin Waitlist
-          {Boolean(pendingCount) && (
-            <span className="ml-auto rounded-full bg-[#00FF85] px-2 py-0.5 text-xs font-bold text-[#001A29]">
-              {pendingCount}
-            </span>
-          )}
-        </Link>
-      )}
     </nav>
   );
 }
 
-export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
+export function Sidebar() {
   const pathname = usePathname();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
   const [isBusinessPlan, setIsBusinessPlan] = useState(false);
   const [outstandingInvoices, setOutstandingInvoices] = useState(0);
-
-  useEffect(() => {
-    if (!isAdmin) return;
-    fetch("/api/admin/waitlist/list", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.counts?.pending !== undefined) setPendingCount(data.counts.pending);
-      })
-      .catch(() => {});
-  }, [isAdmin]);
 
   useEffect(() => {
     fetch("/api/dashboard/billing", { cache: "no-store" })
@@ -198,8 +161,6 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
             <NavLinks
               pathname={pathname}
               onNavigate={() => setIsMobileOpen(false)}
-              isAdmin={isAdmin}
-              pendingCount={pendingCount}
               isBusinessPlan={isBusinessPlan}
               outstandingInvoices={outstandingInvoices}
             />
@@ -209,13 +170,7 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
 
       {/* Desktop sidebar */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-white/10 bg-[#001A29] pt-6 md:flex">
-        <NavLinks
-          pathname={pathname}
-          isAdmin={isAdmin}
-          pendingCount={pendingCount}
-          isBusinessPlan={isBusinessPlan}
-          outstandingInvoices={outstandingInvoices}
-        />
+        <NavLinks pathname={pathname} isBusinessPlan={isBusinessPlan} outstandingInvoices={outstandingInvoices} />
       </aside>
     </>
   );

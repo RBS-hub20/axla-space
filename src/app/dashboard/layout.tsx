@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
-import { isAdmin } from "@/lib/admin";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Header } from "@/components/dashboard/Header";
 import { NewFeaturesModal } from "@/components/dashboard/NewFeaturesModal";
@@ -11,12 +10,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
-  const showAdminNav = await isAdmin();
-
   return (
     <TeamProvider>
       <div className="flex min-h-screen bg-[#001A29]">
-        <Sidebar isAdmin={showAdminNav} />
+        <Sidebar />
         <div className="flex min-h-screen flex-1 flex-col">
           <NewFeaturesBanner />
           <Header userName={user.name ?? user.email} />
