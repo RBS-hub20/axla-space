@@ -36,6 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { PayrollCheckoutModal } from "@/app/payroll/app/components/PayrollCheckoutModal";
 import { CompanyHero } from "@/components/payroll/CompanyHero";
+import { PayrollSidebar } from "@/components/payroll/PayrollSidebar";
 import {
   PAYROLL_PLAN_LABELS,
   PAYROLL_STAFF_LIMITS,
@@ -145,7 +146,7 @@ export interface Company {
   logo_signed_url?: string | null;
 }
 
-type Tab = "staff" | "timekeeping" | "run" | "payslip" | "reports" | "settings";
+export type Tab = "dashboard" | "staff" | "timekeeping" | "run" | "payslip" | "reports" | "compliance" | "settings";
 
 function toast(message: string) {
   const el = document.createElement("div");
@@ -178,25 +179,32 @@ function daysUntilBirDue(now = new Date()): number {
 
 const TOUR_SEEN_KEY = "axla_payroll_tour_seen";
 
+// The guided tour only walks the 5 core workflow steps — Dashboard and Tax
+// & Compliance are landing/reference views, not something a first-time
+// owner needs pushed through in order.
 const TAB_ORDER: Tab[] = ["staff", "timekeeping", "run", "payslip", "reports"];
 const TAB_LABELS: Record<Tab, string> = {
+  dashboard: "Dashboard",
   staff: "Staff",
   timekeeping: "Timekeeping",
   run: "Payroll Run",
   payslip: "Payslip & BIR",
   reports: "Reports",
+  compliance: "Tax & Compliance",
   settings: "Settings",
 };
 
 /** Same copy is reused as the tour modal step body, the per-tab "?" tooltip, and (for Staff/Timekeeping) the data-driven empty-state message — one source of truth instead of three copies drifting apart. */
 function tabGuide(ownerId: string): Record<Tab, string> {
   return {
+    dashboard: "Your overview — recent payroll runs at a glance. Start with Staff below to add your team.",
     staff: "Step 1: Add your staff here. Name, GCash number, Daily rate (₱479 Batangas min). This is base for salary. DOLE Guard will warn if below minimum.",
     timekeeping:
       "Step 2: Where days come from. Each staff gets their own AI Selfie clock link (copy it from the Staff tab) — share it, they tap Time In/Out with a selfie + location, and you approve anything outside the shop. No attendance = no days = ₱0 payroll — add at least 1 entry!",
     run: "Step 3: One-click compute. Click Compute Sahod → Select cut-off Aug 1-15 → Preview Gross = Daily Rate × Days Present → Net → Finalize. This saves to history and updates This Month Payroll KPI.",
     payslip: "Step 4: After finalizing, view PDF payslip per staff, 1-click send to GCash number, BIR 1601C + 2316 auto-generated from your runs — NO FILLUP from company profile.",
     reports: "Step 5: Monitor. Monthly history, 13th month = total/12, SIL 5 days tracker, DOLE alerts. When you have 1 run, see Explore TaxLaya upsell banner for BIR filing.",
+    compliance: "DOLE minimum wage compliance and your BIR 1601C due date, in one place.",
     settings: "Set your shop's location and geofence radius so AI Selfie clock-ins can tell if staff are actually on-site.",
   };
 }
@@ -309,7 +317,7 @@ export function PayrollAppDashboard({
   const [runs, setRuns] = useState<PayrollRun[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [tab, setTab] = useState<Tab>("staff");
+  const [tab, setTab] = useState<Tab>("dashboard");
   const [showTour, setShowTour] = useState(false);
   const [tourHighlightTab, setTourHighlightTab] = useState<Tab | null>(null);
 
@@ -443,184 +451,178 @@ export function PayrollAppDashboard({
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
-        <CompanyHero
+      <div className="flex">
+        <PayrollSidebar
+          tab={tab}
+          onTabChange={setTab}
+          tourHighlightTab={tourHighlightTab}
           company={company}
-          staffCount={staff.length}
-          ownerFirstName={ownerFirstName}
           planLabel={isFree ? "Free" : PAYROLL_PLAN_LABELS[currentPlan!]}
           isFreePlan={isFree}
-          onEditCompany={() => setShowCompanySetup(true)}
-          onLogoUploaded={(signedUrl) => setCompany((prev) => (prev ? { ...prev, logo_signed_url: signedUrl } : prev))}
-          onToast={toast}
+          onUpgrade={() => openCheckout()}
         />
-      </div>
 
-      {daysLeftPromo > 0 && (
-        <div className="mt-4 bg-[#00FF88] px-3 py-2 text-center text-xs font-bold text-black sm:text-sm">
-          🎉 50% OFF — {daysLeftPromo}d left until Aug 31, 2026
-        </div>
-      )}
+        <main className="min-w-0 flex-1">
+          <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
+            <CompanyHero
+              company={company}
+              staffCount={staff.length}
+              ownerFirstName={ownerFirstName}
+              planLabel={isFree ? "Free" : PAYROLL_PLAN_LABELS[currentPlan!]}
+              isFreePlan={isFree}
+              onEditCompany={() => setShowCompanySetup(true)}
+              onLogoUploaded={(signedUrl) => setCompany((prev) => (prev ? { ...prev, logo_signed_url: signedUrl } : prev))}
+              onToast={toast}
+            />
+          </div>
 
-      <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6">
-        {/* AI Command Bar — mock */}
-        <div className="relative">
-          <Sparkles className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#00FF88]" />
-          <input
-            type="text"
-            placeholder="Ask Axla to run payroll, add staff..."
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                toast("Coming soon! 🤖 AI commands are in development.");
-              }
-            }}
-            className="h-12 w-full rounded-2xl border border-[#00FF88]/40 bg-[#0B121A] pl-11 pr-11 text-sm text-white placeholder-slate-500 shadow-[0_0_24px_rgba(0,255,136,0.15)] transition focus:border-[#00FF88] focus:shadow-[0_0_28px_rgba(0,255,136,0.25)] focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={() => toast("Coming soon - AI Agent will auto run payroll for you!")}
-            aria-label="AI voice command"
-            className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-white/5 hover:text-[#00FF88]"
-          >
-            <Mic className="h-4 w-4" />
-          </button>
-        </div>
+          {daysLeftPromo > 0 && (
+            <div className="mt-4 bg-[#00FF88] px-3 py-2 text-center text-xs font-bold text-black sm:text-sm">
+              🎉 50% OFF — {daysLeftPromo}d left until Aug 31, 2026
+            </div>
+          )}
 
-        {/* Overview KPIs */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          <div className={`${PREMIUM_CARD} p-5`}>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-400">Total Active Staff</p>
-              <Users className="h-4 w-4 text-[#00FF88]" />
-            </div>
-            <p className="mt-2 text-2xl font-bold text-white">{isLoading ? "—" : staff.length}</p>
+        <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6">
+          {/* AI Command Bar — mock */}
+          <div className="relative">
+            <Sparkles className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#00FF88]" />
+            <input
+              type="text"
+              placeholder="Ask Axla to run payroll, add staff..."
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  toast("Coming soon! 🤖 AI commands are in development.");
+                }
+              }}
+              className="h-12 w-full rounded-2xl border border-[#00FF88]/40 bg-[#0B121A] pl-11 pr-11 text-sm text-white placeholder-slate-500 shadow-[0_0_24px_rgba(0,255,136,0.15)] transition focus:border-[#00FF88] focus:shadow-[0_0_28px_rgba(0,255,136,0.25)] focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => toast("Coming soon - AI Agent will auto run payroll for you!")}
+              aria-label="AI voice command"
+              className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 hover:bg-white/5 hover:text-[#00FF88]"
+            >
+              <Mic className="h-4 w-4" />
+            </button>
           </div>
-          <div className={`${PREMIUM_CARD} p-5`}>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-400">This Month Payroll</p>
-              <Wallet className="h-4 w-4 text-[#00FF88]" />
-            </div>
-            <p className="mt-2 text-2xl font-bold text-white">
-              <BlurValue locked={isFree}>{isLoading ? "—" : PESO(thisMonthTotal)}</BlurValue>
-            </p>
-          </div>
-          <div className={`${PREMIUM_CARD} p-5`}>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-400">Next Payday</p>
-              <CalendarClock className="h-4 w-4 text-[#00FF88]" />
-            </div>
-            <p className="mt-2 text-lg font-bold text-white">
-              <BlurValue locked={isFree}>{nextPayday().toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</BlurValue>
-            </p>
-          </div>
-          <div className={`${PREMIUM_CARD} p-5`}>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-400">DOLE Compliance</p>
-              <ShieldCheck className="h-4 w-4 text-[#00FF88]" />
-            </div>
-            <p className="mt-2 text-lg font-bold text-white">
-              <BlurValue locked={isFree}>{doleWarnings.length === 0 ? "Compliant" : `${doleWarnings.length} Below Wage`}</BlurValue>
-            </p>
-          </div>
-          <div className={`${PREMIUM_CARD} p-5`}>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-gray-400">BIR 1601C Due</p>
-              <FileText className="h-4 w-4 text-[#00FF88]" />
-            </div>
-            <p className="mt-2 text-lg font-bold text-white">
-              <BlurValue locked={isFree}>{daysUntilBirDue()}d</BlurValue>
-            </p>
-          </div>
-        </div>
 
-        {doleWarnings.length > 0 && (
-          <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
-              <p className="text-sm font-semibold text-red-300">
-                DOLE Warning: {doleWarnings.length} staff below minimum wage ₱{minWage} — {doleWarnings.map((s) => s.name).join(", ")}.
+          {/* Overview KPIs */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className={`${PREMIUM_CARD} p-5`}>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-400">Total Active Staff</p>
+                <Users className="h-4 w-4 text-[#00FF88]" />
+              </div>
+              <p className="mt-2 text-2xl font-bold text-white">{isLoading ? "—" : staff.length}</p>
+            </div>
+            <div className={`${PREMIUM_CARD} p-5`}>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-400">This Month Payroll</p>
+                <Wallet className="h-4 w-4 text-[#00FF88]" />
+              </div>
+              <p className="mt-2 text-2xl font-bold text-white">
+                <BlurValue locked={isFree}>{isLoading ? "—" : PESO(thisMonthTotal)}</BlurValue>
+              </p>
+            </div>
+            <div className={`${PREMIUM_CARD} p-5`}>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-400">Next Payday</p>
+                <CalendarClock className="h-4 w-4 text-[#00FF88]" />
+              </div>
+              <p className="mt-2 text-lg font-bold text-white">
+                <BlurValue locked={isFree}>{nextPayday().toLocaleDateString("en-PH", { month: "short", day: "numeric" })}</BlurValue>
+              </p>
+            </div>
+            <div className={`${PREMIUM_CARD} p-5`}>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-400">DOLE Compliance</p>
+                <ShieldCheck className="h-4 w-4 text-[#00FF88]" />
+              </div>
+              <p className="mt-2 text-lg font-bold text-white">
+                <BlurValue locked={isFree}>{doleWarnings.length === 0 ? "Compliant" : `${doleWarnings.length} Below Wage`}</BlurValue>
+              </p>
+            </div>
+            <div className={`${PREMIUM_CARD} p-5`}>
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-400">BIR 1601C Due</p>
+                <FileText className="h-4 w-4 text-[#00FF88]" />
+              </div>
+              <p className="mt-2 text-lg font-bold text-white">
+                <BlurValue locked={isFree}>{daysUntilBirDue()}d</BlurValue>
               </p>
             </div>
           </div>
-        )}
 
-        {/* Tabs */}
-        <div className="flex gap-1 overflow-x-auto rounded-2xl border border-[#1E293B] bg-[#121A22] p-1.5">
-          {(
-            [
-              { id: "staff", label: "Staff" },
-              { id: "timekeeping", label: "Timekeeping" },
-              { id: "run", label: "Payroll Run" },
-              { id: "payslip", label: "Payslip & BIR" },
-              { id: "reports", label: "Reports" },
-              { id: "settings", label: "Settings" },
-            ] as { id: Tab; label: string }[]
-          ).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`flex-1 whitespace-nowrap rounded-xl px-3 py-2.5 text-sm font-semibold transition ${
-                tab === t.id ? "bg-[#00FF88] text-black" : "text-gray-400 hover:bg-white/5 hover:text-white"
-              } ${tourHighlightTab === t.id ? "ring-2 ring-[#00FF88] ring-offset-2 ring-offset-[#121A22]" : ""}`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+          {doleWarnings.length > 0 && (
+            <div className="rounded-2xl border border-red-500/40 bg-red-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+                <p className="text-sm font-semibold text-red-300">
+                  DOLE Warning: {doleWarnings.length} staff below minimum wage ₱{minWage} — {doleWarnings.map((s) => s.name).join(", ")}.
+                </p>
+              </div>
+            </div>
+          )}
 
-        {tab === "staff" && (
-          <StaffTab
-            staff={staff}
-            isLoading={isLoading}
-            tier={tier}
-            guide={tabGuide(ownerId).staff}
-            onChanged={loadData}
-            onUpgrade={openCheckout}
-          />
-        )}
-        {tab === "timekeeping" && (
-          <TimekeepingTab
-            staff={staff}
-            attendance={attendance}
-            isLoading={isLoading}
-            tier={tier}
-            guide={tabGuide(ownerId).timekeeping}
-            onChanged={loadData}
-            onUpgrade={openCheckout}
-            onGoToSettings={() => setTab("settings")}
-          />
-        )}
-        {tab === "run" && (
-          <PayrollRunTab
-            staff={staff}
-            attendance={attendance}
-            runs={runs}
-            isLoading={isLoading}
-            tier={tier}
-            guide={tabGuide(ownerId).run}
-            onChanged={loadData}
-            onUpgrade={openCheckout}
-            onGoToTimekeeping={() => setTab("timekeeping")}
-          />
-        )}
-        {tab === "payslip" && (
-          <PayslipBirTab
-            company={company}
-            staff={staff}
-            latestRun={latestRun}
-            tier={tier}
-            isBusinessPlus={isBusinessPlus}
-            guide={tabGuide(ownerId).payslip}
-            onUpgrade={openCheckout}
-            onChanged={loadData}
-          />
-        )}
-        {tab === "reports" && (
-          <ReportsTab staff={staff} runs={runs} tier={tier} guide={tabGuide(ownerId).reports} onUpgrade={openCheckout} />
-        )}
-        {tab === "settings" && <SettingsTab guide={tabGuide(ownerId).settings} />}
+          {tab === "dashboard" && <DashboardTab runs={runs} isLoading={isLoading} guide={tabGuide(ownerId).dashboard} />}
+
+          {tab === "staff" && (
+            <StaffTab
+              staff={staff}
+              isLoading={isLoading}
+              tier={tier}
+              guide={tabGuide(ownerId).staff}
+              onChanged={loadData}
+              onUpgrade={openCheckout}
+            />
+          )}
+          {tab === "timekeeping" && (
+            <TimekeepingTab
+              staff={staff}
+              attendance={attendance}
+              isLoading={isLoading}
+              tier={tier}
+              guide={tabGuide(ownerId).timekeeping}
+              onChanged={loadData}
+              onUpgrade={openCheckout}
+              onGoToSettings={() => setTab("settings")}
+            />
+          )}
+          {tab === "run" && (
+            <PayrollRunTab
+              staff={staff}
+              attendance={attendance}
+              runs={runs}
+              isLoading={isLoading}
+              tier={tier}
+              guide={tabGuide(ownerId).run}
+              onChanged={loadData}
+              onUpgrade={openCheckout}
+              onGoToTimekeeping={() => setTab("timekeeping")}
+            />
+          )}
+          {tab === "payslip" && (
+            <PayslipBirTab
+              company={company}
+              staff={staff}
+              latestRun={latestRun}
+              tier={tier}
+              isBusinessPlus={isBusinessPlus}
+              guide={tabGuide(ownerId).payslip}
+              onUpgrade={openCheckout}
+              onChanged={loadData}
+            />
+          )}
+          {tab === "reports" && (
+            <ReportsTab staff={staff} runs={runs} tier={tier} guide={tabGuide(ownerId).reports} onUpgrade={openCheckout} />
+          )}
+          {tab === "compliance" && (
+            <ComplianceTab minWage={minWage} doleWarnings={doleWarnings} guide={tabGuide(ownerId).compliance} />
+          )}
+          {tab === "settings" && <SettingsTab guide={tabGuide(ownerId).settings} />}
+          </div>
+        </main>
       </div>
 
       {showCompanySetup && (
@@ -747,6 +749,56 @@ function CompanySetupModal({
         </form>
       </div>
     </div>
+  );
+}
+
+function DashboardTab({ runs, isLoading, guide }: { runs: PayrollRun[]; isLoading: boolean; guide: string }) {
+  const recentRuns = runs.slice(0, 5);
+  return (
+    <Card className={PREMIUM_CARD}>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-sm font-semibold text-white">Recent Payroll Runs</CardTitle>
+          <GuideTooltip text={guide} />
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-[#00FF88]" />
+          </div>
+        ) : recentRuns.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
+            <Wallet className="h-10 w-10 text-[#00FF88]" />
+            <p className="text-sm text-gray-400">No payroll runs yet — head to Payroll Run to compute your first one.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {recentRuns.map((run) => (
+              <div key={run.id} className="flex items-center justify-between rounded-xl border border-[#1E293B] bg-white/5 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-white">
+                    {run.month}
+                    {run.cut_off ? ` — ${CUTOFF_LABELS[run.cut_off]}` : ""}
+                  </p>
+                  <p className="text-xs text-gray-500">{run.breakdown?.length ?? 0} staff</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold text-white">{PESO(run.total_sahod)}</p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                      run.status === "finalized" ? "bg-[#00FF88]/15 text-[#00FF88]" : "bg-white/10 text-gray-400"
+                    }`}
+                  >
+                    {run.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2652,6 +2704,53 @@ function ShopLocationMap({
   }, [radius]);
 
   return <div ref={containerRef} className="h-64 w-full rounded-xl border border-[#1E293B]" />;
+}
+
+function ComplianceTab({ minWage, doleWarnings, guide }: { minWage: number; doleWarnings: Staff[]; guide: string }) {
+  return (
+    <Card className={PREMIUM_CARD}>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <CardTitle className="text-sm font-semibold text-white">Tax & Compliance</CardTitle>
+          <GuideTooltip text={guide} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="rounded-xl border border-[#1E293B] bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-white">DOLE Minimum Wage</p>
+            <ShieldCheck className="h-4 w-4 text-[#00FF88]" />
+          </div>
+          <p className="mt-1 text-xs text-gray-500">Current minimum: ₱{minWage}/day</p>
+          {doleWarnings.length === 0 ? (
+            <p className="mt-3 text-sm font-medium text-[#00FF88]">✓ All staff compliant</p>
+          ) : (
+            <div className="mt-3 space-y-1">
+              <p className="text-sm font-semibold text-red-300">{doleWarnings.length} staff below minimum wage:</p>
+              <ul className="list-disc space-y-0.5 pl-5 text-sm text-red-300">
+                {doleWarnings.map((s) => (
+                  <li key={s.id}>
+                    {s.name} — ₱{s.daily_rate}/day
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-[#1E293B] bg-white/5 p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-white">BIR 1601C — Withholding Tax on Compensation</p>
+            <FileText className="h-4 w-4 text-[#00FF88]" />
+          </div>
+          <p className="mt-1 text-xs text-gray-500">Due the 10th of the month following the compensation month.</p>
+          <p className="mt-3 text-2xl font-bold text-white">
+            {daysUntilBirDue()}d <span className="text-sm font-normal text-gray-400">left</span>
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function SettingsTab({ guide }: { guide: string }) {
