@@ -35,12 +35,16 @@ export default async function PayrollAppPage({ searchParams }: { searchParams: {
   const plan = await getPayrollPlan(user.email);
   const profile = await getOrCreateProfile(user.id, user.email, user.name ?? user.email.split("@")[0]);
   const businessName = profile?.business_name?.trim() || profile?.full_name?.trim() || "";
+  // "Welcome back, {name}!" on the Company Hero — the current viewer's own
+  // first name (works for team members too, not just the owner).
+  const ownerFirstName = (user.name?.trim() || user.email.split("@")[0]).split(/\s+/)[0];
 
   return (
     <PayrollAppDashboard
       businessName={businessName}
       plan={plan}
       ownerId={user.id}
+      ownerFirstName={ownerFirstName}
       autoOpenCheckoutPlan={isPayrollPlan(searchParams.plan) ? searchParams.plan : undefined}
     />
   );

@@ -35,6 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { PayrollCheckoutModal } from "@/app/payroll/app/components/PayrollCheckoutModal";
+import { CompanyHero } from "@/components/payroll/CompanyHero";
 import {
   PAYROLL_PLAN_LABELS,
   PAYROLL_STAFF_LIMITS,
@@ -132,13 +133,16 @@ interface PayrollRun {
   created_at: string;
 }
 
-interface Company {
+export interface Company {
   owner_id: string;
   business_name: string;
   rdo_code: string | null;
   min_wage: number;
   tin: string | null;
   created_at: string;
+  logo_url: string | null;
+  /** Resolved fresh on every GET /api/payroll/company — not a real column, so absent from the raw row the POST/save endpoint returns; merge it back in from prior state after a save (see CompanySetupModal's onSaved). */
+  logo_signed_url?: string | null;
 }
 
 type Tab = "staff" | "timekeeping" | "run" | "payslip" | "reports" | "settings";
@@ -281,11 +285,13 @@ export function PayrollAppDashboard({
   businessName,
   plan,
   ownerId,
+  ownerFirstName,
   autoOpenCheckoutPlan,
 }: {
   businessName: string;
   plan: PayrollPlan | null;
   ownerId: string;
+  ownerFirstName: string;
   autoOpenCheckoutPlan?: PayrollPlan;
 }) {
   const router = useRouter();
@@ -437,8 +443,21 @@ export function PayrollAppDashboard({
         </div>
       </header>
 
+      <div className="mx-auto max-w-6xl px-4 pt-6 sm:px-6">
+        <CompanyHero
+          company={company}
+          staffCount={staff.length}
+          ownerFirstName={ownerFirstName}
+          planLabel={isFree ? "Free" : PAYROLL_PLAN_LABELS[currentPlan!]}
+          isFreePlan={isFree}
+          onEditCompany={() => setShowCompanySetup(true)}
+          onLogoUploaded={(signedUrl) => setCompany((prev) => (prev ? { ...prev, logo_signed_url: signedUrl } : prev))}
+          onToast={toast}
+        />
+      </div>
+
       {daysLeftPromo > 0 && (
-        <div className="bg-[#00FF88] px-3 py-2 text-center text-xs font-bold text-black sm:text-sm">
+        <div className="mt-4 bg-[#00FF88] px-3 py-2 text-center text-xs font-bold text-black sm:text-sm">
           🎉 50% OFF — {daysLeftPromo}d left until Aug 31, 2026
         </div>
       )}
@@ -449,14 +468,14 @@ export function PayrollAppDashboard({
           <Sparkles className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#00FF88]" />
           <input
             type="text"
-            placeholder="Axla, run payroll for June..."
+            placeholder="Ask Axla to run payroll, add staff..."
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
                 toast("Coming soon! 🤖 AI commands are in development.");
               }
             }}
-            className="h-12 w-full rounded-2xl border border-[#00FF88]/20 bg-[#0B121A] pl-11 pr-11 text-sm text-white placeholder-slate-500 focus:border-[#00FF88] focus:outline-none"
+            className="h-12 w-full rounded-2xl border border-[#00FF88]/40 bg-[#0B121A] pl-11 pr-11 text-sm text-white placeholder-slate-500 shadow-[0_0_24px_rgba(0,255,136,0.15)] transition focus:border-[#00FF88] focus:shadow-[0_0_28px_rgba(0,255,136,0.25)] focus:outline-none"
           />
           <button
             type="button"
@@ -606,12 +625,16 @@ export function PayrollAppDashboard({
 
       {showCompanySetup && (
         <CompanySetupModal
+          company={company}
           prefillName={companyPrefillName}
           onClose={() => setShowCompanySetup(false)}
           onSaved={(c) => {
-            setCompany(c);
+            // logo_signed_url isn't part of the POST response (it's a GET-only
+            // resolved field, see the Company interface) — carry over whatever
+            // was already showing so editing name/RDO/TIN doesn't blank the logo.
+            setCompany((prev) => ({ ...c, logo_signed_url: prev?.logo_signed_url ?? null }));
             setShowCompanySetup(false);
-            toast("Company setup complete ✅");
+            toast(company ? "Company updated ✅" : "Company setup complete ✅");
           }}
         />
       )}
@@ -640,21 +663,29 @@ export function PayrollAppDashboard({
 }
 
 function CompanySetupModal({
+  company,
   prefillName,
   onClose,
   onSaved,
 }: {
+  /** Present when editing an already-set-up company (Hero's "Edit Company" button) — prefills from the real saved values instead of the profile-derived name/defaults used for first-time setup. */
+  company: Company | null;
   prefillName: string;
   onClose: () => void;
   onSaved: (company: Company) => void;
 }) {
-  const [businessName, setBusinessName] = useState(prefillName);
-  const [rdoCode, setRdoCode] = useState("Batangas ₱479");
-  const [tin, setTin] = useState("");
+  const [businessName, setBusinessName] = useState(company?.business_name ?? prefillName);
+  const [rdoCode, setRdoCode] = useState(company?.rdo_code ?? "Batangas ₱479");
+  const [tin, setTin] = useState(company?.tin ?? "");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => setBusinessName(prefillName), [prefillName]);
+  // Only auto-follow the profile-derived prefill for first-time setup — once
+  // a company exists we're editing its real saved values, which this effect
+  // must never silently overwrite.
+  useEffect(() => {
+    if (!company) setBusinessName(prefillName);
+  }, [prefillName, company]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -687,12 +718,14 @@ function CompanySetupModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="w-full max-w-sm rounded-2xl border border-[#00FF88]/30 bg-[#121A22] p-6 shadow-2xl">
         <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold text-white">Setup your company — 1 click!</h2>
-          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Skip for now">
+          <h2 className="text-base font-bold text-white">{company ? "Edit your company" : "Setup your company — 1 click!"}</h2>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label={company ? "Close" : "Skip for now"}>
             <X className="h-4 w-4" />
           </button>
         </div>
-        <p className="mt-1 text-xs text-gray-500">Free — takes 10 seconds. You can edit this anytime.</p>
+        <p className="mt-1 text-xs text-gray-500">
+          {company ? "Update your business details anytime." : "Free — takes 10 seconds. You can edit this anytime."}
+        </p>
         <form onSubmit={handleSave} className="mt-4 space-y-3">
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-300">Business Name</label>
@@ -709,7 +742,7 @@ function CompanySetupModal({
           {error && <div className="rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</div>}
           <Button type="submit" disabled={isSaving} className="w-full">
             {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {isSaving ? "Saving..." : "Save & Continue — Free"}
+            {isSaving ? "Saving..." : company ? "Save Changes" : "Save & Continue — Free"}
           </Button>
         </form>
       </div>

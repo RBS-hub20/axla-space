@@ -7,6 +7,9 @@ import { getPayrollCompany } from "@/lib/payroll/company";
 import { DEFAULT_DAILY_RATE } from "@/lib/payroll/pricing";
 import { logError } from "@/lib/log-error";
 
+const LOGO_BUCKET = "payroll-logos";
+const SIGNED_URL_TTL_SECONDS = 3600; // re-signed fresh on every load, so logo_url only ever stores the raw storage path.
+
 /** Company setup is free for every logged-in user, no plan check — it's the one-time onboarding step before anything else in the dashboard is usable. */
 export async function GET() {
   const user = await getCurrentUser();
@@ -26,8 +29,14 @@ export async function GET() {
     getOrCreateProfile(owner.ownerId, owner.ownerEmail, user.name ?? owner.ownerEmail.split("@")[0]),
   ]);
 
+  let logoSignedUrl: string | null = null;
+  if (company?.logo_url) {
+    const { data: signed } = await supabaseAdmin.storage.from(LOGO_BUCKET).createSignedUrl(company.logo_url, SIGNED_URL_TTL_SECONDS);
+    logoSignedUrl = signed?.signedUrl ?? null;
+  }
+
   return NextResponse.json({
-    company,
+    company: company ? { ...company, logo_signed_url: logoSignedUrl } : null,
     prefill: {
       businessName: profile?.business_name?.trim() || profile?.full_name?.trim() || "",
     },
