@@ -6,7 +6,7 @@ import { HowItWorks } from "@/components/HowItWorks";
 import { IntegrationsGrid } from "@/components/IntegrationsGrid";
 import { WhyAxla } from "@/components/WhyAxla";
 import { PricingTeaser } from "@/components/PricingTeaser";
-import { WaitlistSection } from "@/components/WaitlistSection";
+import { FinalCta } from "@/components/FinalCta";
 import { Footer } from "@/components/Footer";
 import { ReferralTracker } from "@/components/ReferralTracker";
 import { PromoCountdown } from "@/components/PromoCountdown";
@@ -29,7 +29,7 @@ export default function Home() {
       <IntegrationsGrid />
       <WhyAxla />
       <PricingTeaser />
-      <WaitlistSection />
+      <FinalCta />
       <Footer />
     </main>
   );
