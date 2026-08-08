@@ -1,5 +1,8 @@
 import "server-only";
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import fs from "fs";
+import path from "path";
+import { PDFDocument, PDFName, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import fontkit from "@pdf-lib/fontkit";
 import QRCode from "qrcode";
 
 export const PAGE_WIDTH = 595;
@@ -21,6 +24,27 @@ export interface ToolkitDoc {
   font: PDFFont;
   bold: PDFFont;
   y: number;
+  /** Set once in startDoc() from `kicker`, reused by finish() for the Info dict + XMP title. */
+  title: string;
+}
+
+/**
+ * Liberation Sans (SIL OFL 1.1, public/fonts/LICENSE_LIBERATION.txt) —
+ * metrically compatible with Helvetica but, unlike pdf-lib's StandardFonts,
+ * gets genuinely embedded via fontkit. That's the single biggest gap
+ * between the old output and PDF/A: PDF/A-1b requires every font to be
+ * embedded, and the 14 "standard" PDF fonts are by definition NOT embedded
+ * font programs. Read once per cold start, not per document.
+ */
+let regularFontBytes: Buffer | null = null;
+let boldFontBytes: Buffer | null = null;
+
+function loadFontBytes(): { regular: Buffer; bold: Buffer } {
+  if (!regularFontBytes || !boldFontBytes) {
+    regularFontBytes = fs.readFileSync(path.join(process.cwd(), "public", "fonts", "LiberationSans-Regular.ttf"));
+    boldFontBytes = fs.readFileSync(path.join(process.cwd(), "public", "fonts", "LiberationSans-Bold.ttf"));
+  }
+  return { regular: regularFontBytes, bold: boldFontBytes };
 }
 
 /** Greedy word-wrap so long fields (address, notes) don't run off the page. */
@@ -63,11 +87,13 @@ function drawHeader(page: PDFPage, font: PDFFont, bold: PDFFont, kicker: string)
  */
 export async function startDoc(kicker: string): Promise<ToolkitDoc> {
   const pdfDoc = await PDFDocument.create();
+  pdfDoc.registerFontkit(fontkit);
+  const { regular, bold: boldBytes } = loadFontBytes();
   const page = pdfDoc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const font = await pdfDoc.embedFont(regular, { subset: true });
+  const bold = await pdfDoc.embedFont(boldBytes, { subset: true });
   const y = drawHeader(page, font, bold, kicker);
-  return { pdfDoc, page, font, bold, y };
+  return { pdfDoc, page, font, bold, y, title: kicker };
 }
 
 /**
@@ -181,6 +207,65 @@ export async function drawQrCode(doc: ToolkitDoc, data: string, size = 70): Prom
   doc.page.drawText(data, { x, y: doc.y - size - 12, size: 6.5, font: doc.font, color: GRAY });
 }
 
+/**
+ * Sets Info-dict fields + an XMP metadata stream identifying the file as
+ * PDF/A-1B, matching the two things this document actually satisfies
+ * (embedded fonts, PDF/A identification). It's deliberately NOT a claim of
+ * full ISO 19005-1 conformance — that also requires an embedded ICC output
+ * intent, which needs a verified, correctly-formed RGB ICC profile we don't
+ * have a trustworthy source for in this build. Treat this as "PDF/A-
+ * oriented", not validator-certified; a strict PDF/A checker (e.g. veraPDF)
+ * would still flag the missing OutputIntent.
+ */
+function attachPdfAMetadata(doc: ToolkitDoc): void {
+  const { pdfDoc, title } = doc;
+  const now = new Date();
+  pdfDoc.setTitle(title);
+  pdfDoc.setCreator("Axla TaxLaya");
+  pdfDoc.setLanguage("en-PH");
+  pdfDoc.setCreationDate(now);
+  // Not setting Producer/ModificationDate here — pdf-lib's save() always
+  // overwrites both itself (PDFDocument.prototype.updateInfoDict runs on
+  // every save, unconditionally setting Producer to its own library string
+  // and ModificationDate to save-time), so a call here would be silently
+  // discarded. The XMP pdf:Producer field below isn't touched by that and
+  // does stick.
+
+  const isoDate = now.toISOString();
+  const xmp =
+    '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>\n' +
+    '<x:xmpmeta xmlns:x="adobe:ns:meta/">\n' +
+    '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n' +
+    '    <rdf:Description rdf:about=""\n' +
+    '      xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"\n' +
+    '      xmlns:dc="http://purl.org/dc/elements/1.1/"\n' +
+    '      xmlns:pdf="http://ns.adobe.com/pdf/1.3/"\n' +
+    '      xmlns:xmp="http://ns.adobe.com/xap/1.0/">\n' +
+    "      <pdfaid:part>1</pdfaid:part>\n" +
+    "      <pdfaid:conformance>B</pdfaid:conformance>\n" +
+    "      <dc:format>application/pdf</dc:format>\n" +
+    "      <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">" +
+    title +
+    "</rdf:li></rdf:Alt></dc:title>\n" +
+    "      <pdf:Producer>Axla TaxLaya — Business Toolkit</pdf:Producer>\n" +
+    "      <xmp:CreatorTool>Axla TaxLaya</xmp:CreatorTool>\n" +
+    "      <xmp:CreateDate>" +
+    isoDate +
+    "</xmp:CreateDate>\n" +
+    "    </rdf:Description>\n" +
+    "  </rdf:RDF>\n" +
+    "</x:xmpmeta>\n" +
+    '<?xpacket end="w"?>';
+
+  const metadataStream = pdfDoc.context.stream(Buffer.from(xmp, "utf-8"), {
+    Type: "Metadata",
+    Subtype: "XML",
+  });
+  const metadataRef = pdfDoc.context.register(metadataStream);
+  pdfDoc.catalog.set(PDFName.of("Metadata"), metadataRef);
+}
+
 export async function finish(doc: ToolkitDoc): Promise<Uint8Array> {
+  attachPdfAMetadata(doc);
   return doc.pdfDoc.save();
 }

@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Briefcase, Rocket, Skull, Plane, Landmark, Lock, Loader2, AlertTriangle, Send, Download, Plus, Trash2 } from "lucide-react";
+import { Briefcase, Rocket, Skull, Plane, Landmark, Lock, Loader2, AlertTriangle, Send, Download, Plus, Trash2, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PLAN_PRICING } from "@/lib/plans";
 
 const PREMIUM_CARD =
@@ -15,6 +16,87 @@ const PESO = (n: number) => `₱${n.toLocaleString(undefined, { maximumFractionD
 type Tab = "open" | "close" | "spa" | "registration";
 
 const REP_RELATIONSHIPS = ["Employee", "Family Member", "Friend", "Other"];
+
+// Real citation, verified: A.M. No. 24-10-14-SC, promulgated Feb 4 2025,
+// effective ~March 24 2025 (15 days after March 9 2025 publication). The
+// rule accepts electronic documents in "PDF or PDF/A" — PDF/A isn't the
+// only accepted format, it's the archival-grade one, which is what our
+// generated PDFs now target (embedded fonts + PDF/A identification
+// metadata). We don't claim ISO 19005-1 validator-certified conformance
+// here (that also needs an ICC output intent we don't have a verified
+// profile for) — see toolkit-pdf-helpers.ts's attachPdfAMetadata().
+const E_NOTARY_STEPS = [
+  { title: "Prepare your PDF/A", desc: "Done automatically — every kit document below is generated with embedded fonts and PDF/A metadata, no extra step needed." },
+  { title: "Create an account at an accredited e-Notarization Facility (ENF)", desc: "e.g. NotarioPH, NotarizeIT — accreditation is still rolling out, so check the Supreme Court's official directory (linked below) for who's currently accredited before you pick one." },
+  { title: "Video call with an e-Notary Public", desc: "Remote Electronic Notarization (REN) — the e-Notary verifies your ID and witnesses your signature over video, no office visit needed." },
+  { title: "Receive your notarized document", desc: "You get back a notarized PDF with a digital seal, ready to submit." },
+];
+const SC_ENOTARY_URL = "https://sc.judiciary.gov.ph/enotary-services/";
+
+function ENotaryReadyBanner({ docs }: { docs: string[] }) {
+  return (
+    <div className="space-y-3 rounded-xl border border-[#22c55e]/30 bg-[#22c55e]/[0.06] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[#22c55e]" />
+          <div>
+            <p className="text-sm font-bold text-[#22c55e]">NEW: E-Notarization Ready!</p>
+            <p className="mt-1 text-sm text-gray-300">
+              These documents are generated in an archival PDF/A-oriented format with embedded fonts — the format accepted for
+              e-Notarization under the Supreme Court&apos;s 2025 Rules on Electronic Notarization (A.M. No. 24-10-14-SC).
+            </p>
+          </div>
+        </div>
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm" className="shrink-0 gap-1.5 border-[#22c55e]/40 text-[#22c55e] hover:bg-[#22c55e]/10">
+              How to e-Notary Online?
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-lg border-[#1E293B] bg-[#0B1218]">
+            <DialogHeader>
+              <DialogTitle>How to e-Notarize Online</DialogTitle>
+              <DialogDescription>
+                Remote Electronic Notarization under the Supreme Court&apos;s 2025 Rules (A.M. No. 24-10-14-SC) — no in-person notary visit
+                needed.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              {E_NOTARY_STEPS.map((s, i) => (
+                <div key={s.title} className="flex gap-3">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#22c55e] text-xs font-bold text-black">
+                    {i + 1}
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-white">{s.title}</p>
+                    <p className="text-xs text-gray-400">{s.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-4 text-xs text-gray-500">
+              Accreditation is still rolling out and can change — check the Supreme Court&apos;s official{" "}
+              <a href={SC_ENOTARY_URL} target="_blank" rel="noopener noreferrer" className="text-[#22c55e] underline">
+                eNotary Services directory
+              </a>{" "}
+              for the current list of accredited providers.
+            </p>
+          </DialogContent>
+        </Dialog>
+      </div>
+      {docs.length > 0 && (
+        <div className="space-y-1.5">
+          {docs.map((d) => (
+            <div key={d} className="flex items-center justify-between rounded-lg bg-white/5 px-3 py-2 text-xs">
+              <span className="text-gray-300">{d}</span>
+              <span className="shrink-0 rounded-full bg-[#22c55e]/15 px-2 py-0.5 text-[10px] font-bold text-[#22c55e]">✓ E-Notary Ready</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ProfilePrefill {
   fullName: string;
@@ -337,6 +419,7 @@ function CloseTab({
   const [repContactNo, setRepContactNo] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState(false);
 
   useEffect(() => {
     setFullName(prefill.fullName);
@@ -381,8 +464,17 @@ function CloseTab({
       setError(result.error ?? "Something went wrong.");
       return;
     }
+    setDownloaded(true);
     toast("Close Kit downloaded ✅");
   }
+
+  const closeDocs = [
+    "BIR 1905 Reference",
+    "Letter of Intent to Close",
+    "Close Checklist",
+    "RDO Guide",
+    ...(authorizeRep ? ["Authorization Letter"] : []),
+  ];
 
   return (
     <Card className={PREMIUM_CARD}>
@@ -453,6 +545,8 @@ function CloseTab({
           </Button>
           {planLoaded && !isPro && <ProLockOverlay price="₱249/mo" />}
         </div>
+
+        {downloaded && <ENotaryReadyBanner docs={closeDocs} />}
       </CardContent>
     </Card>
   );
@@ -471,6 +565,7 @@ function SpaTab({ prefill, isPro, planLoaded }: { prefill: ProfilePrefill; isPro
   const [loading, setLoading] = useState(false);
   const [emailing, setEmailing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState(false);
 
   useEffect(() => {
     setPrincipalName(prefill.fullName);
@@ -497,6 +592,7 @@ function SpaTab({ prefill, isPro, planLoaded }: { prefill: ProfilePrefill; isPro
     const result = await downloadZip("/api/toolkit/spa", spaBody(), "axla-spa-kit.zip");
     setLoading(false);
     if (!result.ok) return setError(result.error ?? "Something went wrong.");
+    setDownloaded(true);
     toast("SPA Kit downloaded ✅");
   }
 
@@ -517,6 +613,7 @@ function SpaTab({ prefill, isPro, planLoaded }: { prefill: ProfilePrefill; isPro
         setError(data.error || "Couldn't send the email.");
         return;
       }
+      setDownloaded(true);
       toast(`Sent to ${representativeEmail} ✅`);
     } catch {
       setError("Network error. Please try again.");
@@ -524,6 +621,8 @@ function SpaTab({ prefill, isPro, planLoaded }: { prefill: ProfilePrefill; isPro
       setEmailing(false);
     }
   }
+
+  const spaDocs = ["SPA Template", "RDO Cover Letter", "Notary Guide"];
 
   const scopeOptions: Array<{ key: keyof typeof scope; label: string }> = [
     { key: "closeBusiness", label: "Close business" },
@@ -606,6 +705,8 @@ function SpaTab({ prefill, isPro, planLoaded }: { prefill: ProfilePrefill; isPro
           Template only, need notary to be legally binding. If the principal is abroad, this needs consularization/apostille instead of a
           regular Philippine notary — see the included notary guide.
         </p>
+
+        {downloaded && <ENotaryReadyBanner docs={spaDocs} />}
       </CardContent>
     </Card>
   );
