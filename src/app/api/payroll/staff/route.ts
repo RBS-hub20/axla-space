@@ -5,6 +5,7 @@ import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { getPayrollPlan } from "@/lib/payroll/plan";
 import { PAYROLL_STAFF_LIMITS, DEFAULT_DAILY_RATE, tierOf } from "@/lib/payroll/pricing";
 import { generateClockToken } from "@/lib/payroll/clock-token";
+import { EMPLOYMENT_TYPES, RATE_TYPES, STAFF_STATUSES, type RateType } from "@/lib/payroll/staff-fields";
 import { logError } from "@/lib/log-error";
 
 const digitsOnly = (s: string) => s.replace(/\D/g, "");
@@ -36,13 +37,34 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to load staff." }, { status: 500 });
   }
 
-  return NextResponse.json({ staff: data ?? [], plan, limit: PAYROLL_STAFF_LIMITS[tier] });
+  let staff = data ?? [];
+  const avatarPaths = staff.filter((s) => s.avatar_url).map((s) => s.avatar_url as string);
+  if (avatarPaths.length > 0) {
+    const { data: signedList } = await supabaseAdmin.storage.from("payroll-staff-avatars").createSignedUrls(avatarPaths, 3600);
+    const signedByPath = new Map((signedList ?? []).map((s) => [s.path, s.signedUrl]));
+    staff = staff.map((s) => ({ ...s, avatar_signed_url: s.avatar_url ? (signedByPath.get(s.avatar_url) ?? null) : null }));
+  }
+
+  return NextResponse.json({ staff, plan, limit: PAYROLL_STAFF_LIMITS[tier] });
 }
 
 interface StaffBody {
   name?: unknown;
   gcash?: unknown;
+  phone?: unknown;
   dailyRate?: unknown;
+  position?: unknown;
+  employmentType?: unknown;
+  rateType?: unknown;
+  rateAmount?: unknown;
+  schedule?: unknown;
+  status?: unknown;
+  hiredAt?: unknown;
+}
+
+/** rate_type='daily' keeps daily_rate (what the Run engine actually computes with) in sync with rate_amount — the other rate types are display-only for now, so daily_rate falls back to the standard default rather than being set to a meaningless hourly/monthly figure. */
+function resolveDailyRate(rateType: RateType, rateAmount: number): number {
+  return rateType === "daily" ? rateAmount : DEFAULT_DAILY_RATE;
 }
 
 export async function POST(req: Request) {
@@ -94,11 +116,20 @@ export async function POST(req: Request) {
   if (typeof body.name !== "string" || !body.name.trim()) {
     return NextResponse.json({ error: "Staff name is required." }, { status: 400 });
   }
-  const dailyRate = body.dailyRate !== undefined ? Number(body.dailyRate) : DEFAULT_DAILY_RATE;
-  if (!Number.isFinite(dailyRate) || dailyRate <= 0) {
-    return NextResponse.json({ error: "Daily rate must be a positive number." }, { status: 400 });
+
+  const rateType: RateType = RATE_TYPES.includes(body.rateType as RateType) ? (body.rateType as RateType) : "daily";
+  const rateAmount = body.rateAmount !== undefined ? Number(body.rateAmount) : body.dailyRate !== undefined ? Number(body.dailyRate) : DEFAULT_DAILY_RATE;
+  if (!Number.isFinite(rateAmount) || rateAmount <= 0) {
+    return NextResponse.json({ error: "Rate must be a positive number." }, { status: 400 });
   }
-  const gcash = typeof body.gcash === "string" ? body.gcash.trim().slice(0, 20) : null;
+  const gcash = typeof body.gcash === "string" ? body.gcash.trim().slice(0, 20) || null : null;
+  const phone = typeof body.phone === "string" ? body.phone.trim().slice(0, 20) || null : null;
+  const position = typeof body.position === "string" ? body.position.trim().slice(0, 60) || null : null;
+  const employmentType =
+    typeof body.employmentType === "string" && (EMPLOYMENT_TYPES as readonly string[]).includes(body.employmentType) ? body.employmentType : "Regular";
+  const schedule = typeof body.schedule === "string" ? body.schedule.trim().slice(0, 120) || null : null;
+  const status = typeof body.status === "string" && (STAFF_STATUSES as readonly string[]).includes(body.status) ? body.status : "Active";
+  const hiredAt = typeof body.hiredAt === "string" && body.hiredAt.trim() ? body.hiredAt.trim() : null;
 
   if (gcash) {
     const normalized = digitsOnly(gcash);
@@ -132,7 +163,15 @@ export async function POST(req: Request) {
         owner_id: owner.ownerId,
         name: body.name.trim().slice(0, 120),
         gcash,
-        daily_rate: dailyRate,
+        phone,
+        position,
+        employment_type: employmentType,
+        rate_type: rateType,
+        rate_amount: rateAmount,
+        daily_rate: resolveDailyRate(rateType, rateAmount),
+        schedule,
+        status,
+        hired_at: hiredAt,
         clock_token: generateClockToken(),
       })
       .select()

@@ -28,6 +28,9 @@ import {
   Check,
   XCircle,
   RefreshCw,
+  Eye,
+  MoreVertical,
+  Search,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -57,29 +60,39 @@ import {
   type PayrollBreakdownRow,
 } from "@/lib/payroll/sahod";
 import { getPaymentProof, UNPAID_PROOF, type PaymentProof, type PaymentProofStatus } from "@/lib/payroll/payment-proof";
-
-const CLOCK_LINK_ORIGIN = "https://axla.space";
+import { EMPLOYMENT_TYPES, RATE_TYPES, RATE_TYPE_LABELS, STAFF_STATUSES, type RateType } from "@/lib/payroll/staff-fields";
+import { computeAttendanceStats } from "@/lib/payroll/attendance-stats";
+import { PESO, maskPhone } from "@/lib/payroll/format";
+import { StaffDetailModal, type DetailTab } from "@/components/payroll/StaffDetailModal";
 
 const PREMIUM_CARD =
   "rounded-2xl border-[#1E293B] bg-[#121A22] shadow-sm transition hover:border-[#00FF88]/30 hover:shadow-lg hover:shadow-green-500/10";
-const PESO = (n: number) => `₱${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+const maskGcash = maskPhone;
 
-function maskGcash(g: string | null): string {
-  if (!g) return "—";
-  const digits = g.replace(/\D/g, "");
-  if (digits.length < 8) return g;
-  return `${digits.slice(0, 4)}****${digits.slice(-4)}`;
-}
-
-function clockLinkFor(token: string | null): string | null {
-  return token ? `${CLOCK_LINK_ORIGIN}/c/${token}` : null;
-}
-
-interface Staff {
+export interface Staff {
   id: string;
   name: string;
   gcash: string | null;
+  phone: string | null;
   daily_rate: number;
+  rate_type: RateType;
+  rate_amount: number;
+  position: string | null;
+  employment_type: string;
+  schedule: string | null;
+  status: string;
+  hired_at: string | null;
+  address: string | null;
+  avatar_url: string | null;
+  /** Resolved fresh on every GET /api/payroll/staff, same pattern as Company.logo_signed_url — not a real column. */
+  avatar_signed_url?: string | null;
+  sss_no: string | null;
+  philhealth_no: string | null;
+  pagibig_no: string | null;
+  tin_no: string | null;
+  bank_name: string | null;
+  bank_account_no: string | null;
+  commission_pct: number | null;
   clock_token: string | null;
   created_at: string;
 }
@@ -114,7 +127,7 @@ interface ShopSettings {
   daily_code_date: string | null;
 }
 
-interface AttendanceRow {
+export interface AttendanceRow {
   id: string;
   staff_id: string;
   date: string;
@@ -570,11 +583,13 @@ export function PayrollAppDashboard({
           {tab === "staff" && (
             <StaffTab
               staff={staff}
+              attendance={attendance}
               isLoading={isLoading}
               tier={tier}
               guide={tabGuide(ownerId).staff}
               onChanged={loadData}
               onUpgrade={openCheckout}
+              onGoToTab={setTab}
             />
           )}
           {tab === "timekeeping" && (
@@ -802,29 +817,54 @@ function DashboardTab({ runs, isLoading, guide }: { runs: PayrollRun[]; isLoadin
   );
 }
 
+const STATUS_FILTERS = ["all", "Active", "On Leave"] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+
 function StaffTab({
   staff,
+  attendance,
   isLoading,
   tier,
   guide,
   onChanged,
   onUpgrade,
+  onGoToTab,
 }: {
   staff: Staff[];
+  attendance: AttendanceRow[];
   isLoading: boolean;
   tier: PayrollTier;
   guide: string;
   onChanged: () => void;
   onUpgrade: (plan?: PayrollPlan) => void;
+  onGoToTab: (tab: Tab) => void;
 }) {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [gcash, setGcash] = useState("");
+  const [phone, setPhone] = useState("");
+  const [position, setPosition] = useState("");
+  const [employmentType, setEmploymentType] = useState<string>("Regular");
+  const [rateType, setRateType] = useState<RateType>("daily");
   const [rate, setRate] = useState(String(DEFAULT_DAILY_RATE));
 
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [detail, setDetail] = useState<{ staff: Staff; tab: DetailTab } | null>(null);
+
   const limit = PAYROLL_STAFF_LIMITS[tier];
+
+  function resetForm() {
+    setName("");
+    setGcash("");
+    setPhone("");
+    setPosition("");
+    setEmploymentType("Regular");
+    setRateType("daily");
+    setRate(String(DEFAULT_DAILY_RATE));
+  }
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -838,7 +878,15 @@ function StaffTab({
       const res = await fetch("/api/payroll/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), gcash: gcash.trim(), dailyRate: Number(rate) }),
+        body: JSON.stringify({
+          name: name.trim(),
+          gcash: gcash.trim(),
+          phone: phone.trim(),
+          position: position.trim(),
+          employmentType,
+          rateType,
+          rateAmount: Number(rate),
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -851,9 +899,7 @@ function StaffTab({
         return;
       }
       setIsAddOpen(false);
-      setName("");
-      setGcash("");
-      setRate(String(DEFAULT_DAILY_RATE));
+      resetForm();
       toast("Staff added ✅");
       onChanged();
     } catch {
@@ -877,6 +923,16 @@ function StaffTab({
 
   const atLimit = limit !== null && staff.length >= limit;
 
+  const filteredStaff = staff.filter((s) => {
+    if (statusFilter !== "all" && s.status !== statusFilter) return false;
+    if (search.trim() && !s.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    return true;
+  });
+
+  function openDetail(s: Staff, tab: DetailTab = "personal") {
+    setDetail({ staff: s, tab });
+  }
+
   return (
     <Card className={PREMIUM_CARD}>
       <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -887,41 +943,117 @@ function StaffTab({
           </span>
           <GuideTooltip text={guide} />
         </div>
-        <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-          <Button size="sm" onClick={() => (atLimit ? onUpgrade(tier === "free" ? "starter" : undefined) : setIsAddOpen(true))}>
-            <Plus className="h-4 w-4" />
-            Add Staff
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => onGoToTab("run")}>
+            <Wallet className="h-4 w-4" />
+            Pay All
           </Button>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Staff</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleAdd} className="space-y-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-300">Name</label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Juan Dela Cruz" className="border-[#1E293B] bg-[#0B121A]" />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-300">GCash Number</label>
-                <Input value={gcash} onChange={(e) => setGcash(e.target.value)} placeholder="09171234567" className="border-[#1E293B] bg-[#0B121A]" />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-300">Daily Rate</label>
-                <Input type="number" min="0" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} className="border-[#1E293B] bg-[#0B121A]" />
-                <p className="mt-1 text-xs text-gray-500">Auto-suggested ₱{DEFAULT_DAILY_RATE} (Batangas reference minimum wage).</p>
-              </div>
-              {formError && <div className="rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">{formError}</div>}
-              <DialogFooter>
-                <Button type="submit" disabled={isSaving} className="w-full">
-                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  {isSaving ? "Saving..." : "Save Staff"}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+          <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+            <Button size="sm" onClick={() => (atLimit ? onUpgrade(tier === "free" ? "starter" : undefined) : setIsAddOpen(true))}>
+              <Plus className="h-4 w-4" />
+              Add Staff
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add Staff</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleAdd} className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-300">Name</label>
+                    <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Juan Dela Cruz" className="border-[#1E293B] bg-[#0B121A]" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-300">Position</label>
+                    <Input value={position} onChange={(e) => setPosition(e.target.value)} placeholder="Cashier, Crew, Driver..." className="border-[#1E293B] bg-[#0B121A]" />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-300">Phone</label>
+                    <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="09171234567" className="border-[#1E293B] bg-[#0B121A]" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-300">GCash Number</label>
+                    <Input value={gcash} onChange={(e) => setGcash(e.target.value)} placeholder="09171234567" className="border-[#1E293B] bg-[#0B121A]" />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-300">Employment Type</label>
+                  <select
+                    value={employmentType}
+                    onChange={(e) => setEmploymentType(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-[#1E293B] bg-[#0B121A] px-3 text-sm text-white outline-none focus:border-[#00FF88]"
+                  >
+                    {EMPLOYMENT_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-300">Rate Type</label>
+                    <select
+                      value={rateType}
+                      onChange={(e) => setRateType(e.target.value as RateType)}
+                      className="flex h-10 w-full rounded-md border border-[#1E293B] bg-[#0B121A] px-3 text-sm text-white outline-none focus:border-[#00FF88]"
+                    >
+                      {RATE_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t[0].toUpperCase() + t.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-300">Rate ({RATE_TYPE_LABELS[rateType]})</label>
+                    <Input type="number" min="0" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} className="border-[#1E293B] bg-[#0B121A]" />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500">Auto-suggested ₱{DEFAULT_DAILY_RATE}/day (Batangas reference minimum wage).</p>
+                {formError && <div className="rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">{formError}</div>}
+                <DialogFooter>
+                  <Button type="submit" disabled={isSaving} className="w-full">
+                    {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {isSaving ? "Saving..." : "Save Staff"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </CardHeader>
       <CardContent>
+        {staff.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 sm:max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search staff..."
+                className="h-9 border-[#1E293B] bg-[#0B121A] pl-8 text-sm"
+              />
+            </div>
+            <div className="flex gap-1">
+              {STATUS_FILTERS.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setStatusFilter(f)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                    statusFilter === f ? "bg-[#8BFF00] text-black" : "border border-[#1E293B] text-gray-400 hover:bg-white/5"
+                  }`}
+                >
+                  {f === "all" ? "All" : f}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="space-y-2">
             {Array.from({ length: 2 }).map((_, i) => (
@@ -937,95 +1069,322 @@ function StaffTab({
               Add Staff
             </Button>
           </div>
+        ) : filteredStaff.length === 0 ? (
+          <p className="py-10 text-center text-sm text-gray-500">No staff match your search/filter.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
-                  <th className="pb-2 pr-4">Name</th>
-                  <th className="pb-2 pr-4">GCash</th>
-                  <th className="pb-2 pr-4">Daily Rate</th>
-                  <th className="pb-2 pr-4">Clock Link</th>
-                  <th className="pb-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {staff.map((s) => (
-                  <StaffRow key={s.id} staff={s} onRemove={() => handleRemove(s.id)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Desktop / tablet table */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                    <th className="pb-2 pr-4">Staff</th>
+                    <th className="pb-2 pr-4">Contact</th>
+                    <th className="pb-2 pr-4">Rate</th>
+                    <th className="pb-2 pr-4">Attendance</th>
+                    <th className="pb-2 pr-4">Status</th>
+                    <th className="pb-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredStaff.map((s) => (
+                    <StaffRow
+                      key={s.id}
+                      staff={s}
+                      attendance={attendance}
+                      onRemove={() => handleRemove(s.id)}
+                      onOpenDetail={(tab) => openDetail(s, tab)}
+                      onGoToTab={onGoToTab}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="space-y-3 md:hidden">
+              {filteredStaff.map((s) => (
+                <StaffCard
+                  key={s.id}
+                  staff={s}
+                  attendance={attendance}
+                  onRemove={() => handleRemove(s.id)}
+                  onOpenDetail={(tab) => openDetail(s, tab)}
+                  onGoToTab={onGoToTab}
+                />
+              ))}
+            </div>
+          </>
         )}
         {tier === "free" && (
           <p className="mt-3 text-xs text-gray-500">Free plan: 1 staff. Upgrade to Starter ₱149/mo for up to 5.</p>
         )}
       </CardContent>
+
+      {detail && (
+        <StaffDetailModal
+          staff={detail.staff}
+          initialTab={detail.tab}
+          attendanceThisMonth={attendance}
+          onClose={() => setDetail(null)}
+          onChanged={onChanged}
+          onToast={toast}
+        />
+      )}
     </Card>
   );
 }
 
-function StaffRow({ staff, onRemove }: { staff: Staff; onRemove: () => void }) {
-  const link = clockLinkFor(staff.clock_token);
+function StatusDot({ status }: { status: string }) {
+  const color = status === "Active" ? "bg-[#00FF88]" : status === "On Leave" ? "bg-amber-400" : "bg-gray-500";
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-300">
+      <span className={`h-2 w-2 rounded-full ${color}`} />
+      {status}
+    </span>
+  );
+}
 
-  async function handleCopy() {
-    if (!link) return;
-    await navigator.clipboard.writeText(link);
-    toast("Clock link copied ✅");
+function ContactCell({ staff, onCopied }: { staff: Staff; onCopied: () => void }) {
+  const primary = staff.phone || staff.gcash;
+  const sameNumber = Boolean(staff.phone && staff.gcash && staff.phone.replace(/\D/g, "") === staff.gcash.replace(/\D/g, ""));
+
+  async function copy(value: string) {
+    await navigator.clipboard.writeText(value);
+    onCopied();
   }
 
-  async function handleDownloadQr() {
-    if (!link) return;
-    const QRCode = (await import("qrcode")).default;
-    const dataUrl = await QRCode.toDataURL(link, { width: 480, margin: 2, color: { dark: "#0a0a0a", light: "#ffffff" } });
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = `${staff.name.trim().replace(/\s+/g, "-").toLowerCase()}-clock-qr.png`;
-    a.click();
+  if (!primary) return <span className="text-xs text-gray-600">—</span>;
+
+  return (
+    <button type="button" onClick={() => copy(primary)} className="text-left hover:opacity-80" title="Click to copy">
+      <p className="text-gray-200">{maskPhone(primary)}</p>
+      {staff.gcash && (
+        <p className="text-xs text-gray-500">{sameNumber ? <span className="text-[#00FF88]">GCash ✓</span> : `GCash: ${maskPhone(staff.gcash)}`}</p>
+      )}
+    </button>
+  );
+}
+
+function RateCell({ staff }: { staff: Staff }) {
+  const belowMin = staff.rate_type === "daily" && Number(staff.rate_amount) < DOLE_MIN_DAILY_WAGE;
+  return (
+    <div>
+      <p className={`font-semibold ${belowMin ? "text-amber-400" : "text-white"}`}>
+        {PESO(staff.rate_amount)}
+        <span className="text-xs font-normal text-gray-500">{RATE_TYPE_LABELS[staff.rate_type]}</span>
+      </p>
+      <p className="text-xs text-gray-500">{staff.schedule || "—"}</p>
+    </div>
+  );
+}
+
+function AttendanceCell({ staff, attendance }: { staff: Staff; attendance: AttendanceRow[] }) {
+  const rows = attendance.filter((r) => r.staff_id === staff.id);
+  const stats = computeAttendanceStats(rows, staff.schedule);
+
+  if (stats.daysPresent === 0) {
+    return <span className="text-xs text-gray-600">No data yet</span>;
   }
 
   return (
-    <tr className="border-b border-[#1E293B]/60 last:border-0">
-      <td className="py-3 pr-4 font-medium text-white">{staff.name}</td>
-      <td className="py-3 pr-4 text-gray-300">{maskGcash(staff.gcash)}</td>
-      <td className={`py-3 pr-4 ${Number(staff.daily_rate) < DOLE_MIN_DAILY_WAGE ? "text-amber-400" : "text-gray-300"}`}>
-        {PESO(staff.daily_rate)}
-      </td>
-      <td className="py-3 pr-4">
-        {link ? (
-          <div className="flex items-center gap-1">
+    <div>
+      <p className="text-xs font-semibold text-[#00FF88]">{stats.onTimePct !== null ? `${stats.onTimePct}% On Time` : `${stats.daysPresent}d present`}</p>
+      {stats.lateCount !== null && stats.lateCount > 0 && <p className="text-xs font-medium text-red-400">{stats.lateCount} Late</p>}
+    </div>
+  );
+}
+
+function RowActionsMenu({ onEdit, onCashAdvance, onViewPayslips, onRemove }: { onEdit: () => void; onCashAdvance: () => void; onViewPayslips: () => void; onRemove: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="More actions"
+        className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#1E293B] text-slate-300 hover:bg-white/5"
+      >
+        <MoreVertical className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <>
+          <button type="button" aria-label="Close menu" className="fixed inset-0 z-10 cursor-default" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-8 z-20 w-40 overflow-hidden rounded-xl border border-[#1E293B] bg-[#121A22] py-1 shadow-xl">
+            {[
+              { label: "Edit", action: onEdit },
+              { label: "Cash Advance", action: onCashAdvance },
+              { label: "View Payslips", action: onViewPayslips },
+            ].map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  item.action();
+                }}
+                className="block w-full px-3 py-2 text-left text-xs text-slate-200 hover:bg-white/5"
+              >
+                {item.label}
+              </button>
+            ))}
             <button
               type="button"
-              onClick={handleCopy}
-              title={link}
-              className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#00FF88]/30 px-2 text-xs text-[#00FF88] hover:bg-[#00FF88]/10"
+              onClick={() => {
+                setOpen(false);
+                onRemove();
+              }}
+              className="block w-full px-3 py-2 text-left text-xs text-red-300 hover:bg-red-950/30"
             >
-              <Copy className="h-3 w-3" />
-              Copy Link
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadQr}
-              className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
-            >
-              <QrCode className="h-3 w-3" />
-              QR
+              Remove
             </button>
           </div>
-        ) : (
-          <span className="text-xs text-gray-600">—</span>
-        )}
-      </td>
-      <td className="py-3">
-        <button
-          type="button"
-          onClick={onRemove}
-          className="inline-flex h-7 items-center gap-1 rounded-lg border border-red-900/40 px-2 text-xs text-red-300 hover:bg-red-950/30"
-        >
-          Remove
+        </>
+      )}
+    </div>
+  );
+}
+
+function StaffAvatar({ staff, size = "h-9 w-9" }: { staff: Staff; size?: string }) {
+  if (staff.avatar_signed_url) {
+    // eslint-disable-next-line @next/next/no-img-element -- signed Supabase Storage URL, not a static/optimizable asset
+    return <img src={staff.avatar_signed_url} alt="" className={`${size} shrink-0 rounded-full border border-[#00FF88]/30 object-cover`} />;
+  }
+  return (
+    <div className={`flex ${size} shrink-0 items-center justify-center rounded-full bg-[#8BFF00] text-xs font-bold text-black`}>
+      {staff.name
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((w) => w[0]?.toUpperCase())
+        .join("") || "?"}
+    </div>
+  );
+}
+
+interface StaffRowActionProps {
+  staff: Staff;
+  attendance: AttendanceRow[];
+  onRemove: () => void;
+  onOpenDetail: (tab: DetailTab) => void;
+  onGoToTab: (tab: Tab) => void;
+}
+
+function StaffRow({ staff, attendance, onRemove, onOpenDetail, onGoToTab }: StaffRowActionProps) {
+  return (
+    <tr className="border-b border-[#1E293B]/60 transition last:border-0 hover:bg-[#1A1A1A]">
+      <td className="py-3 pr-4">
+        <button type="button" onClick={() => onOpenDetail("personal")} className="flex items-center gap-2.5 text-left">
+          <StaffAvatar staff={staff} />
+          <div className="min-w-0">
+            <p className="truncate font-medium text-white">{staff.name}</p>
+            <p className="flex items-center gap-1.5 text-xs text-gray-500">
+              {staff.position || "Staff"}
+              <span className="rounded-full border border-[#00FF88]/30 px-1.5 py-0.5 text-[10px] font-semibold text-[#00FF88]">{staff.employment_type}</span>
+            </p>
+          </div>
         </button>
       </td>
+      <td className="py-3 pr-4">
+        <ContactCell staff={staff} onCopied={() => toast("Copied ✅")} />
+      </td>
+      <td className="py-3 pr-4">
+        <RateCell staff={staff} />
+      </td>
+      <td className="py-3 pr-4">
+        <AttendanceCell staff={staff} attendance={attendance} />
+      </td>
+      <td className="py-3 pr-4">
+        <StatusDot status={staff.status} />
+      </td>
+      <td className="py-3">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onOpenDetail("personal")}
+            title="View"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#1E293B] text-slate-300 hover:bg-white/5"
+          >
+            <Eye className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenDetail("payroll")}
+            title="Pay"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-[#00FF88]/30 text-[#00FF88] hover:bg-[#00FF88]/10"
+          >
+            <Wallet className="h-3.5 w-3.5" />
+          </button>
+          <RowActionsMenu
+            onEdit={() => onOpenDetail("personal")}
+            onCashAdvance={() => onOpenDetail("advances")}
+            onViewPayslips={() => onGoToTab("payslip")}
+            onRemove={onRemove}
+          />
+        </div>
+      </td>
     </tr>
+  );
+}
+
+function StaffCard({ staff, attendance, onRemove, onOpenDetail, onGoToTab }: StaffRowActionProps) {
+  return (
+    <div className="rounded-xl border border-[#1E293B] bg-white/5 p-4">
+      <div className="flex items-start justify-between gap-2">
+        <button type="button" onClick={() => onOpenDetail("personal")} className="flex min-w-0 items-center gap-2.5 text-left">
+          <StaffAvatar staff={staff} size="h-10 w-10" />
+          <div className="min-w-0">
+            <p className="truncate font-medium text-white">{staff.name}</p>
+            <p className="flex items-center gap-1.5 text-xs text-gray-500">
+              {staff.position || "Staff"}
+              <span className="rounded-full border border-[#00FF88]/30 px-1.5 py-0.5 text-[10px] font-semibold text-[#00FF88]">{staff.employment_type}</span>
+            </p>
+          </div>
+        </button>
+        <StatusDot status={staff.status} />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-gray-500">Contact</p>
+          <ContactCell staff={staff} onCopied={() => toast("Copied ✅")} />
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-gray-500">Rate</p>
+          <RateCell staff={staff} />
+        </div>
+        <div className="col-span-2">
+          <p className="text-[10px] uppercase tracking-wide text-gray-500">Attendance</p>
+          <AttendanceCell staff={staff} attendance={attendance} />
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-1.5 border-t border-[#1E293B] pt-3">
+        <button
+          type="button"
+          onClick={() => onOpenDetail("personal")}
+          className="flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-[#1E293B] text-xs text-slate-300 hover:bg-white/5"
+        >
+          <Eye className="h-3.5 w-3.5" />
+          View
+        </button>
+        <button
+          type="button"
+          onClick={() => onOpenDetail("payroll")}
+          className="flex h-8 flex-1 items-center justify-center gap-1 rounded-lg border border-[#00FF88]/30 text-xs text-[#00FF88] hover:bg-[#00FF88]/10"
+        >
+          <Wallet className="h-3.5 w-3.5" />
+          Pay
+        </button>
+        <RowActionsMenu
+          onEdit={() => onOpenDetail("personal")}
+          onCashAdvance={() => onOpenDetail("advances")}
+          onViewPayslips={() => onGoToTab("payslip")}
+          onRemove={onRemove}
+        />
+      </div>
+    </div>
   );
 }
 
