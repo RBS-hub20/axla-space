@@ -31,6 +31,14 @@ import {
   Eye,
   MoreVertical,
   Search,
+  UserX,
+  Umbrella,
+  Thermometer,
+  List,
+  CalendarRange,
+  TrendingUp,
+  Hourglass,
+  ClipboardList,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -63,6 +71,16 @@ import { getPaymentProof, UNPAID_PROOF, type PaymentProof, type PaymentProofStat
 import { EMPLOYMENT_TYPES, RATE_TYPES, RATE_TYPE_LABELS, STAFF_STATUSES, type RateType } from "@/lib/payroll/staff-fields";
 import { computeAttendanceStats } from "@/lib/payroll/attendance-stats";
 import { PESO, maskPhone, resolveRateAmount, resolveRateType } from "@/lib/payroll/format";
+import {
+  type ShiftConfig,
+  DEFAULT_SHIFT,
+  computeDayCell,
+  currentWeekDates,
+  formatMinutes,
+  formatShortTime,
+  formatClockTime,
+  dayAbbrFor,
+} from "@/lib/payroll/shift";
 import { StaffDetailModal, type DetailTab } from "@/components/payroll/StaffDetailModal";
 
 const PREMIUM_CARD =
@@ -93,6 +111,10 @@ export interface Staff {
   bank_name: string | null;
   bank_account_no: string | null;
   commission_pct: number | null;
+  work_days: string | null;
+  shift_start: string | null;
+  shift_end: string | null;
+  grace_period_minutes: number | null;
   clock_token: string | null;
   created_at: string;
 }
@@ -133,6 +155,7 @@ export interface AttendanceRow {
   date: string;
   time_in: string | null;
   time_out: string | null;
+  status?: "present" | "absent" | "leave" | "sick";
   payroll_staff: { name: string };
 }
 
@@ -602,6 +625,7 @@ export function PayrollAppDashboard({
               onChanged={loadData}
               onUpgrade={openCheckout}
               onGoToSettings={() => setTab("settings")}
+              onGoToTab={setTab}
             />
           )}
           {tab === "run" && (
@@ -1396,6 +1420,43 @@ function StaffCard({ staff, attendance, onRemove, onOpenDetail, onGoToTab }: Sta
   );
 }
 
+type TimekeepingLogFilter = "all" | "approved" | "pending" | "rejected" | "outside";
+type DateRangeFilter = "today" | "week" | "month" | "all";
+type TimekeepingView = "list" | "timesheet";
+
+function shiftConfigFor(s: Staff): ShiftConfig {
+  return {
+    shiftStart: s.shift_start ?? DEFAULT_SHIFT.shiftStart,
+    shiftEnd: s.shift_end ?? DEFAULT_SHIFT.shiftEnd,
+    gracePeriodMinutes: s.grace_period_minutes ?? DEFAULT_SHIFT.gracePeriodMinutes,
+    workDays: s.work_days ?? DEFAULT_SHIFT.workDays,
+  };
+}
+
+function SummaryCard({
+  icon: Icon,
+  label,
+  value,
+  colorClass,
+  onClick,
+}: {
+  icon: typeof Users;
+  label: string;
+  value: number | string;
+  colorClass: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" onClick={onClick} className={`${PREMIUM_CARD} p-4 text-left`}>
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium text-gray-400">{label}</p>
+        <Icon className={`h-4 w-4 ${colorClass}`} />
+      </div>
+      <p className={`mt-2 text-2xl font-bold ${colorClass}`}>{value}</p>
+    </button>
+  );
+}
+
 function TimekeepingTab({
   staff,
   attendance,
@@ -1405,6 +1466,7 @@ function TimekeepingTab({
   onChanged,
   onUpgrade,
   onGoToSettings,
+  onGoToTab,
 }: {
   staff: Staff[];
   attendance: AttendanceRow[];
@@ -1414,16 +1476,60 @@ function TimekeepingTab({
   onChanged: () => void;
   onUpgrade: (plan?: PayrollPlan) => void;
   onGoToSettings: () => void;
+  onGoToTab: (tab: Tab) => void;
 }) {
   const [clockingId, setClockingId] = useState<string | null>(null);
+  const [view, setView] = useState<TimekeepingView>("list");
+  const [highlight, setHighlight] = useState<{ day: string; kind: "present" | "late" | "absent" } | null>(null);
+  const [showGeneratePayroll, setShowGeneratePayroll] = useState(false);
+
+  const [logs, setLogs] = useState<TimekeepingLog[]>([]);
+  const [logsLoading, setLogsLoading] = useState(true);
+  const [logFilter, setLogFilter] = useState<TimekeepingLogFilter>("all");
+  const [dateFilter, setDateFilter] = useState<DateRangeFilter>("all");
+  const [search, setSearch] = useState("");
+
+  const loadLogs = useCallback(async () => {
+    try {
+      const res = await fetch("/api/payroll/timekeeping/logs", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data.logs ?? []);
+      }
+    } finally {
+      setLogsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLogs();
+    const interval = setInterval(loadLogs, 30_000);
+    return () => clearInterval(interval);
+  }, [loadLogs]);
+
   const todayIso = new Date().toISOString().slice(0, 10);
+  const weekDates = useMemo(() => currentWeekDates(todayIso), [todayIso]);
+  const activeStaff = useMemo(() => staff.filter((s) => s.status === "Active"), [staff]);
+
   const todaysByStaff = useMemo(() => {
     const map = new Map<string, AttendanceRow>();
     for (const row of attendance) if (row.date === todayIso) map.set(row.staff_id, row);
     return map;
   }, [attendance, todayIso]);
 
-  async function handleClock(staffId: string, action: "in" | "out") {
+  // Same computeDayCell the Timesheet grid uses — a staff member scheduled
+  // off today (per their work_days) is neither "present" nor "absent", so
+  // the Absent card never falsely flags someone on their rest day.
+  const todayCells = useMemo(
+    () => activeStaff.map((s) => computeDayCell(todayIso, todaysByStaff.get(s.id), shiftConfigFor(s), todayIso)),
+    [activeStaff, todaysByStaff, todayIso],
+  );
+  const presentCount = todayCells.filter((c) => c.kind === "present").length;
+  const lateCount = todayCells.filter((c) => c.kind === "present" && c.lateMinutes > 0).length;
+  const absentCount = todayCells.filter((c) => c.kind === "absent").length;
+  const pendingReviewCount = logs.filter((l) => l.needs_approval).length;
+
+  async function handleClock(staffId: string, action: "in" | "out" | "absent" | "leave" | "sick") {
     setClockingId(staffId);
     try {
       const res = await fetch("/api/payroll/attendance/clock", {
@@ -1432,7 +1538,14 @@ function TimekeepingTab({
         body: JSON.stringify({ staffId, action }),
       });
       if (res.ok) {
-        toast(action === "in" ? "Timed in ✅" : "Timed out ✅");
+        const labels: Record<typeof action, string> = {
+          in: "Timed in ✅",
+          out: "Timed out ✅",
+          absent: "Marked absent",
+          leave: "Marked on leave",
+          sick: "Marked sick",
+        };
+        toast(labels[action]);
         onChanged();
       } else {
         const data = await res.json();
@@ -1449,11 +1562,123 @@ function TimekeepingTab({
     }
   }
 
+  function handleCardClick(card: "present" | "late" | "absent" | "pending") {
+    if (card === "pending") {
+      setView("list");
+      setLogFilter("pending");
+      setHighlight(null);
+    } else {
+      setView("timesheet");
+      setHighlight({ day: todayIso, kind: card });
+    }
+  }
+
+  const filteredLogs = useMemo(() => {
+    return logs.filter((l) => {
+      if (logFilter === "approved" && !(!l.needs_approval && l.approved !== false)) return false;
+      if (logFilter === "pending" && !l.needs_approval) return false;
+      if (logFilter === "rejected" && l.approved !== false) return false;
+      if (logFilter === "outside" && !l.is_outside) return false;
+
+      const logDate = l.created_at.slice(0, 10);
+      if (dateFilter === "today" && logDate !== todayIso) return false;
+      if (dateFilter === "week" && !weekDates.includes(logDate)) return false;
+      if (dateFilter === "month" && logDate.slice(0, 7) !== todayIso.slice(0, 7)) return false;
+
+      if (search.trim() && !l.staff_name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+      return true;
+    });
+  }, [logs, logFilter, dateFilter, search, todayIso, weekDates]);
+
   return (
     <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryCard
+          icon={CheckCircle2}
+          label="Today Present"
+          value={isLoading ? "—" : presentCount}
+          colorClass="text-[#00FF88]"
+          onClick={() => handleCardClick("present")}
+        />
+        <SummaryCard
+          icon={Hourglass}
+          label="Late Today"
+          value={isLoading ? "—" : lateCount}
+          colorClass="text-amber-400"
+          onClick={() => handleCardClick("late")}
+        />
+        <SummaryCard
+          icon={UserX}
+          label="Absent"
+          value={isLoading ? "—" : `${absentCount}/${activeStaff.length}`}
+          colorClass="text-red-400"
+          onClick={() => handleCardClick("absent")}
+        />
+        <SummaryCard
+          icon={ClipboardList}
+          label="Pending Review"
+          value={logsLoading ? "—" : pendingReviewCount}
+          colorClass="text-cyan-400"
+          onClick={() => handleCardClick("pending")}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-1 rounded-xl border border-[#1E293B] bg-[#0B121A] p-1">
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              view === "list" ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <List className="h-3.5 w-3.5" />
+            List View
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("timesheet")}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+              view === "timesheet" ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <CalendarRange className="h-3.5 w-3.5" />
+            Timesheet View
+          </button>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => setShowGeneratePayroll(true)}>
+          <TrendingUp className="h-4 w-4" />
+          Generate Payroll from Timesheet
+        </Button>
+      </div>
+
       <ShopCodeBanner onGoToSettings={onGoToSettings} />
 
-      <TimekeepingLogsSection />
+      {view === "list" ? (
+        <TimekeepingLogsSection
+          logs={filteredLogs}
+          isLoading={logsLoading}
+          filter={logFilter}
+          onFilterChange={setLogFilter}
+          dateFilter={dateFilter}
+          onDateFilterChange={setDateFilter}
+          search={search}
+          onSearchChange={setSearch}
+          onReload={loadLogs}
+        />
+      ) : (
+        <Card className={PREMIUM_CARD}>
+          <CardHeader>
+            <CardTitle className="text-sm font-semibold text-white">
+              Timesheet — {new Date(`${weekDates[0]}T00:00:00Z`).toLocaleDateString("en-PH", { month: "short", day: "numeric", timeZone: "UTC" })} to{" "}
+              {new Date(`${weekDates[6]}T00:00:00Z`).toLocaleDateString("en-PH", { month: "short", day: "numeric", timeZone: "UTC" })}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TimesheetView staff={activeStaff} attendance={attendance} weekDates={weekDates} highlight={highlight} />
+          </CardContent>
+        </Card>
+      )}
 
       <Card className={PREMIUM_CARD}>
         <CardHeader>
@@ -1483,11 +1708,21 @@ function TimekeepingTab({
                     <div>
                       <p className="text-sm font-semibold text-white">{s.name}</p>
                       <p className="text-xs text-gray-500">
-                        {today?.time_in ? `In: ${new Date(today.time_in).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}` : "Not timed in"}
-                        {today?.time_out ? ` · Out: ${new Date(today.time_out).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}` : ""}
+                        {today?.status === "absent" ? (
+                          <span className="text-red-400">Marked Absent</span>
+                        ) : today?.status === "leave" ? (
+                          <span className="text-amber-400">On Leave</span>
+                        ) : today?.status === "sick" ? (
+                          <span className="text-amber-400">Sick</span>
+                        ) : (
+                          <>
+                            {today?.time_in ? `In: ${formatClockTime(today.time_in)}` : "Not timed in"}
+                            {today?.time_out ? ` · Out: ${formatClockTime(today.time_out)}` : ""}
+                          </>
+                        )}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
                         disabled={isClocking || Boolean(today?.time_in)}
@@ -1506,6 +1741,43 @@ function TimekeepingTab({
                         {isClocking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
                         Time Out
                       </button>
+                      {!today?.time_in && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={isClocking}
+                            onClick={() => handleClock(s.id, "absent")}
+                            className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                              today?.status === "absent" ? "border-red-500/50 bg-red-500/10 text-red-300" : "border-[#1E293B] text-slate-300 hover:bg-white/5"
+                            }`}
+                          >
+                            <UserX className="h-3.5 w-3.5" />
+                            Absent
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isClocking}
+                            onClick={() => handleClock(s.id, "leave")}
+                            className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                              today?.status === "leave" ? "border-amber-500/50 bg-amber-500/10 text-amber-300" : "border-[#1E293B] text-slate-300 hover:bg-white/5"
+                            }`}
+                          >
+                            <Umbrella className="h-3.5 w-3.5" />
+                            On Leave
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isClocking}
+                            onClick={() => handleClock(s.id, "sick")}
+                            className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                              today?.status === "sick" ? "border-amber-500/50 bg-amber-500/10 text-amber-300" : "border-[#1E293B] text-slate-300 hover:bg-white/5"
+                            }`}
+                          >
+                            <Thermometer className="h-3.5 w-3.5" />
+                            Sick
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -1521,6 +1793,196 @@ function TimekeepingTab({
           )}
         </CardContent>
       </Card>
+
+      {showGeneratePayroll && (
+        <GeneratePayrollPreviewModal
+          staff={staff}
+          attendance={attendance}
+          onClose={() => setShowGeneratePayroll(false)}
+          onGoToRun={() => {
+            setShowGeneratePayroll(false);
+            onGoToTab("run");
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function TimesheetView({
+  staff,
+  attendance,
+  weekDates,
+  highlight,
+}: {
+  staff: Staff[];
+  attendance: AttendanceRow[];
+  weekDates: string[];
+  highlight: { day: string; kind: "present" | "late" | "absent" } | null;
+}) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  const totalsByDay = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const day of weekDates) {
+      let sum = 0;
+      for (const s of staff) {
+        const record = attendance.find((a) => a.staff_id === s.id && a.date === day);
+        sum += computeDayCell(day, record, shiftConfigFor(s), todayIso).workedMinutes ?? 0;
+      }
+      totals[day] = sum;
+    }
+    return totals;
+  }, [staff, attendance, weekDates, todayIso]);
+
+  if (staff.length === 0) {
+    return <p className="py-10 text-center text-sm text-gray-500">Add a staff member first.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+            <th className="pb-2 pr-4">Staff</th>
+            {weekDates.map((d) => (
+              <th key={d} className="pb-2 pr-3 text-center">
+                {dayAbbrFor(d)}
+                <br />
+                <span className="font-normal normal-case text-gray-600">
+                  {new Date(`${d}T00:00:00Z`).toLocaleDateString("en-PH", { month: "short", day: "numeric", timeZone: "UTC" })}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {staff.map((s) => (
+            <tr key={s.id} className="border-b border-[#1E293B]/60 last:border-0">
+              <td className="py-3 pr-4 font-medium text-white">{s.name}</td>
+              {weekDates.map((d) => {
+                const record = attendance.find((a) => a.staff_id === s.id && a.date === d);
+                const cell = computeDayCell(d, record, shiftConfigFor(s), todayIso);
+                const isHighlighted =
+                  highlight?.day === d &&
+                  ((highlight.kind === "present" && cell.kind === "present") ||
+                    (highlight.kind === "late" && cell.kind === "present" && cell.lateMinutes > 0) ||
+                    (highlight.kind === "absent" && cell.kind === "absent"));
+                return (
+                  <td key={d} className={`py-2 pr-3 text-center align-top ${isHighlighted ? "rounded-lg bg-[#00FF88]/10 ring-1 ring-[#00FF88]/40" : ""}`}>
+                    <TimesheetCell cell={cell} />
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-[#1E293B]">
+            <td className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Total Hours</td>
+            {weekDates.map((d) => (
+              <td key={d} className="py-2 pr-3 text-center text-xs font-semibold text-[#00FF88]">
+                {formatMinutes(totalsByDay[d])}
+              </td>
+            ))}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+function TimesheetCell({ cell }: { cell: ReturnType<typeof computeDayCell> }) {
+  if (cell.kind === "off" || cell.kind === "future") return <span className="text-xs text-gray-700">—</span>;
+  if (cell.kind === "absent") return <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-bold uppercase text-red-400">Absent</span>;
+  if (cell.kind === "leave") return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">On Leave</span>;
+  if (cell.kind === "sick") return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">Sick</span>;
+  return (
+    <div className="space-y-0.5">
+      <p className="text-xs font-medium text-white">
+        {formatShortTime(cell.timeIn as string)}
+        {cell.timeOut ? `-${formatShortTime(cell.timeOut)}` : "-…"}
+      </p>
+      <div className="flex flex-wrap justify-center gap-1">
+        {cell.lateMinutes > 0 && (
+          <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">Late {formatMinutes(cell.lateMinutes)}</span>
+        )}
+        {cell.overtimeMinutes > 0 && (
+          <span className="rounded-full bg-[#00FF88]/15 px-1.5 py-0.5 text-[9px] font-bold text-[#00FF88]">OT {formatMinutes(cell.overtimeMinutes)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GeneratePayrollPreviewModal({
+  staff,
+  attendance,
+  onClose,
+  onGoToRun,
+}: {
+  staff: Staff[];
+  attendance: AttendanceRow[];
+  onClose: () => void;
+  onGoToRun: () => void;
+}) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const rows = staff.map((s) => {
+    const config = shiftConfigFor(s);
+    const staffAttendance = attendance.filter((a) => a.staff_id === s.id);
+    let daysPresent = 0;
+    let lateMinutes = 0;
+    let overtimeMinutes = 0;
+    for (const a of staffAttendance) {
+      const cell = computeDayCell(a.date, a, config, todayIso);
+      if (cell.kind === "present") {
+        daysPresent += 1;
+        lateMinutes += cell.lateMinutes;
+        overtimeMinutes += cell.overtimeMinutes;
+      }
+    }
+    const rate = resolveRateAmount(s.rate_amount, s.daily_rate);
+    return { staff: s, daysPresent, lateMinutes, overtimeMinutes, estimatedPay: rate * daysPresent };
+  });
+  const totalEstimated = rows.reduce((sum, r) => sum + r.estimatedPay, 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl border border-[#1E293B] bg-[#121A22] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-white">Payroll Preview — This Month</h2>
+          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          Computed from this month&apos;s timesheet — days present × rate (daily-rate staff only; hourly/monthly staff aren&apos;t computed by Payroll Run
+          yet). Go to Payroll Run to actually compute and finalize a real payroll.
+        </p>
+        <div className="mt-4 max-h-80 space-y-2 overflow-y-auto">
+          {rows.map((r) => (
+            <div key={r.staff.id} className="rounded-lg border border-[#1E293B] bg-[#0B121A] px-3 py-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-white">{r.staff.name}</p>
+                <p className="text-sm font-bold text-[#00FF88]">{PESO(r.estimatedPay)}</p>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-400">
+                <span>{r.daysPresent} days present</span>
+                {r.lateMinutes > 0 && <span className="text-amber-400">{formatMinutes(r.lateMinutes)} late total</span>}
+                {r.overtimeMinutes > 0 && <span className="text-[#00FF88]">{formatMinutes(r.overtimeMinutes)} OT total</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-between border-t border-[#1E293B] pt-3 text-sm">
+          <span className="font-semibold text-white">Estimated Total</span>
+          <span className="font-bold text-[#00FF88]">{PESO(totalEstimated)}</span>
+        </div>
+        <Button className="mt-4 w-full" onClick={onGoToRun}>
+          <Wallet className="h-4 w-4" />
+          Go to Payroll Run
+        </Button>
+      </div>
     </div>
   );
 }
@@ -1564,36 +2026,31 @@ function ShopCodeBanner({ onGoToSettings }: { onGoToSettings: () => void }) {
   );
 }
 
-type LogFilter = "all" | "inside" | "needsApproval";
-
-function TimekeepingLogsSection() {
-  const [logs, setLogs] = useState<TimekeepingLog[]>([]);
-  const [counts, setCounts] = useState({ all: 0, inside: 0, needsApproval: 0 });
-  const [isLoading, setIsLoading] = useState(true);
-  const [filter, setFilter] = useState<LogFilter>("all");
+function TimekeepingLogsSection({
+  logs,
+  isLoading,
+  filter,
+  onFilterChange,
+  dateFilter,
+  onDateFilterChange,
+  search,
+  onSearchChange,
+  onReload,
+}: {
+  logs: TimekeepingLog[];
+  isLoading: boolean;
+  filter: TimekeepingLogFilter;
+  onFilterChange: (f: TimekeepingLogFilter) => void;
+  dateFilter: DateRangeFilter;
+  onDateFilterChange: (f: DateRangeFilter) => void;
+  search: string;
+  onSearchChange: (s: string) => void;
+  onReload: () => void;
+}) {
   const [viewingSelfie, setViewingSelfie] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
   const [comparingLogId, setComparingLogId] = useState<string | null>(null);
   const [flaggingId, setFlaggingId] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/payroll/timekeeping/logs", { cache: "no-store" });
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs ?? []);
-        setCounts(data.counts ?? { all: 0, inside: 0, needsApproval: 0 });
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, 30_000);
-    return () => clearInterval(interval);
-  }, [load]);
 
   async function handleReview(id: string, approved: boolean) {
     setActingId(id);
@@ -1605,7 +2062,7 @@ function TimekeepingLogsSection() {
       });
       if (res.ok) {
         toast(approved ? "Approved ✅" : "Rejected");
-        load();
+        onReload();
       } else {
         toast("Failed to update — try again.");
       }
@@ -1622,7 +2079,7 @@ function TimekeepingLogsSection() {
       const res = await fetch(`/api/payroll/timekeeping/logs/${id}/flag-buddy-punch`, { method: "POST" });
       if (res.ok) {
         toast("Flagged as buddy punching 🚩");
-        load();
+        onReload();
       } else {
         toast("Failed to flag — try again.");
       }
@@ -1632,12 +2089,6 @@ function TimekeepingLogsSection() {
       setFlaggingId(null);
     }
   }
-
-  const filtered = logs.filter((l) => {
-    if (filter === "inside") return !l.is_outside;
-    if (filter === "needsApproval") return l.needs_approval;
-    return true;
-  });
 
   // `logs` is already ordered desc by created_at (see the API route) — the
   // first entry after this one, for the same staff, is their previous
@@ -1654,34 +2105,68 @@ function TimekeepingLogsSection() {
 
   return (
     <Card className={PREMIUM_CARD}>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex-col items-stretch gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle className="text-sm font-semibold text-white">Clock-In Activity</CardTitle>
-        <div className="flex gap-1 rounded-xl border border-[#1E293B] bg-[#0B121A] p-1">
-          {(
-            [
-              { id: "all", label: `All (${counts.all})` },
-              { id: "inside", label: `Inside Only (${counts.inside})` },
-              { id: "needsApproval", label: `Needs Approval (${counts.needsApproval})` },
-            ] as { id: LogFilter; label: string }[]
-          ).map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => setFilter(f.id)}
-              className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                filter === f.id ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+            <Input
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search logs..."
+              className="h-8 w-36 border-[#1E293B] bg-[#0B121A] pl-8 text-xs sm:w-40"
+            />
+          </div>
+          <div className="flex gap-1 rounded-xl border border-[#1E293B] bg-[#0B121A] p-1">
+            {(
+              [
+                { id: "today", label: "Today" },
+                { id: "week", label: "This Week" },
+                { id: "month", label: "This Month" },
+                { id: "all", label: "All" },
+              ] as { id: DateRangeFilter; label: string }[]
+            ).map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => onDateFilterChange(f.id)}
+                className={`rounded-lg px-2 py-1 text-[11px] font-semibold transition ${
+                  dateFilter === f.id ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1 rounded-xl border border-[#1E293B] bg-[#0B121A] p-1">
+            {(
+              [
+                { id: "all", label: "All" },
+                { id: "approved", label: "Approved" },
+                { id: "pending", label: "Pending" },
+                { id: "rejected", label: "Rejected" },
+                { id: "outside", label: "Outside" },
+              ] as { id: TimekeepingLogFilter; label: string }[]
+            ).map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => onFilterChange(f.id)}
+                className={`rounded-lg px-2 py-1 text-[11px] font-semibold transition ${
+                  filter === f.id ? "bg-[#00FF88] text-black" : "text-gray-400 hover:text-white"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
           <div className="h-12 w-full animate-pulse rounded-lg bg-white/5" />
-        ) : filtered.length === 0 ? (
-          <p className="py-8 text-center text-sm text-gray-500">No clock-in activity yet — share a staff link from the Staff tab.</p>
+        ) : logs.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-500">No clock-in activity matches — share a staff link from the Staff tab, or try a different filter.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -1699,7 +2184,7 @@ function TimekeepingLogsSection() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((log) => (
+                {logs.map((log) => (
                   <tr key={log.id} className="border-b border-[#1E293B]/60 last:border-0">
                     <td className="py-3 pr-4 text-gray-300">
                       {new Date(log.created_at).toLocaleTimeString("en-PH", { hour: "2-digit", minute: "2-digit" })}

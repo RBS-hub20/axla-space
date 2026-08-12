@@ -11,6 +11,13 @@ interface ClockBody {
   action?: unknown;
 }
 
+const STATUS_ACTIONS = ["absent", "leave", "sick"] as const;
+type StatusAction = (typeof STATUS_ACTIONS)[number];
+
+function isStatusAction(action: unknown): action is StatusAction {
+  return (STATUS_ACTIONS as readonly unknown[]).includes(action);
+}
+
 /**
  * Freemium mock timekeeping — records a real time_in/time_out timestamp for
  * today, one row per staff per day (unique constraint on payroll_attendance).
@@ -19,6 +26,12 @@ interface ClockBody {
  * capped at FREE_ATTENDANCE_LIMIT total rows (lifetime, across all staff) —
  * clocking in then out on the SAME already-created row (today's) doesn't
  * count as a second entry, only creating a brand-new date row does.
+ *
+ * action is 'in'|'out' (real clock event, sets status back to 'present' —
+ * covers correcting a mistaken Mark Absent/Leave/Sick) or one of
+ * 'absent'|'leave'|'sick' (Manual Time In/Out's quick-status buttons — sets
+ * status only, no time_in/time_out, since the staff member didn't actually
+ * work).
  */
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -41,9 +54,9 @@ export async function POST(req: Request) {
   }
 
   const staffId = typeof body.staffId === "string" ? body.staffId : "";
-  const action = body.action === "in" || body.action === "out" ? body.action : null;
+  const action = body.action === "in" || body.action === "out" || isStatusAction(body.action) ? body.action : null;
   if (!staffId || !action) {
-    return NextResponse.json({ error: "staffId and action ('in'|'out') are required." }, { status: 400 });
+    return NextResponse.json({ error: "staffId and action ('in'|'out'|'absent'|'leave'|'sick') are required." }, { status: 400 });
   }
 
   // Ownership check — a staff id belonging to a different owner must 404, not silently record attendance against it.
@@ -91,7 +104,11 @@ export async function POST(req: Request) {
     }
   }
 
-  const patch = action === "in" ? { time_in: now.toISOString() } : { time_out: now.toISOString() };
+  const patch = isStatusAction(action)
+    ? { status: action }
+    : action === "in"
+      ? { time_in: now.toISOString(), status: "present" }
+      : { time_out: now.toISOString(), status: "present" };
 
   const { data, error } = await supabaseAdmin
     .from("payroll_attendance")
