@@ -62,7 +62,7 @@ import {
 import { getPaymentProof, UNPAID_PROOF, type PaymentProof, type PaymentProofStatus } from "@/lib/payroll/payment-proof";
 import { EMPLOYMENT_TYPES, RATE_TYPES, RATE_TYPE_LABELS, STAFF_STATUSES, type RateType } from "@/lib/payroll/staff-fields";
 import { computeAttendanceStats } from "@/lib/payroll/attendance-stats";
-import { PESO, maskPhone } from "@/lib/payroll/format";
+import { PESO, maskPhone, resolveRateAmount, resolveRateType } from "@/lib/payroll/format";
 import { StaffDetailModal, type DetailTab } from "@/components/payroll/StaffDetailModal";
 
 const PREMIUM_CARD =
@@ -1167,12 +1167,20 @@ function ContactCell({ staff, onCopied }: { staff: Staff; onCopied: () => void }
 }
 
 function RateCell({ staff }: { staff: Staff }) {
-  const belowMin = staff.rate_type === "daily" && Number(staff.rate_amount) < DOLE_MIN_DAILY_WAGE;
+  const amount = resolveRateAmount(staff.rate_amount, staff.daily_rate);
+  const rateType = resolveRateType(staff.rate_type);
+  const belowMin = rateType === "daily" && amount > 0 && amount < DOLE_MIN_DAILY_WAGE;
   return (
     <div>
       <p className={`font-semibold ${belowMin ? "text-amber-400" : "text-white"}`}>
-        {PESO(staff.rate_amount)}
-        <span className="text-xs font-normal text-gray-500">{RATE_TYPE_LABELS[staff.rate_type]}</span>
+        {amount > 0 ? (
+          <>
+            {PESO(amount)}
+            <span className="text-xs font-normal text-gray-500">{RATE_TYPE_LABELS[rateType]}</span>
+          </>
+        ) : (
+          <span className="text-gray-600">—</span>
+        )}
       </p>
       <p className="text-xs text-gray-500">{staff.schedule || "—"}</p>
     </div>

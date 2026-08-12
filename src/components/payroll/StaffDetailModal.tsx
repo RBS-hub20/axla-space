@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import type { Staff, AttendanceRow } from "@/components/payroll/PayrollAppDashboard";
 import { EMPLOYMENT_TYPES, RATE_TYPES, RATE_TYPE_LABELS, STAFF_STATUSES, type RateType } from "@/lib/payroll/staff-fields";
 import { computeAttendanceStats } from "@/lib/payroll/attendance-stats";
-import { PESO } from "@/lib/payroll/format";
+import { PESO, resolveRateAmount, resolveRateType } from "@/lib/payroll/format";
+import { DEFAULT_DAILY_RATE } from "@/lib/payroll/pricing";
 
 const CLOCK_LINK_ORIGIN = "https://axla.space";
 
@@ -401,8 +402,8 @@ function GovernmentTab({ staff, onSave }: { staff: Staff; onSave: (body: Record<
 }
 
 function PayrollTab({ staff, onSave }: { staff: Staff; onSave: (body: Record<string, unknown>) => Promise<boolean> }) {
-  const [rateType, setRateType] = useState<RateType>(staff.rate_type);
-  const [rateAmount, setRateAmount] = useState(String(staff.rate_amount ?? staff.daily_rate));
+  const [rateType, setRateType] = useState<RateType>(resolveRateType(staff.rate_type));
+  const [rateAmount, setRateAmount] = useState(String(resolveRateAmount(staff.rate_amount, staff.daily_rate) || DEFAULT_DAILY_RATE));
   const [commissionPct, setCommissionPct] = useState(staff.commission_pct !== null ? String(staff.commission_pct) : "");
   const [bankName, setBankName] = useState(staff.bank_name ?? "");
   const [bankAccountNo, setBankAccountNo] = useState(staff.bank_account_no ?? "");
