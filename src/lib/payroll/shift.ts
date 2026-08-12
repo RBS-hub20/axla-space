@@ -125,6 +125,19 @@ export function computeDayCell(
   return { kind: "present", timeIn: record.time_in, timeOut: record.time_out, lateMinutes, overtimeMinutes, undertimeMinutes, workedMinutes };
 }
 
+/** Every date (YYYY-MM-DD) from `from` (inclusive) up to `to` (exclusive) — matches the same [from, to) convention as sahod.ts's getCutOffRange, used by the payroll compute route to walk a full cut-off period day by day. */
+export function datesInRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  let cursor = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  while (cursor < end) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor = new Date(cursor);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
 /** Monday-Sunday dates (YYYY-MM-DD) for the week containing `dateIso`. */
 export function currentWeekDates(dateIso: string): string[] {
   const d = new Date(`${dateIso}T00:00:00Z`);

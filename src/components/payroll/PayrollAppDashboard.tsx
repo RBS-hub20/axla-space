@@ -630,6 +630,7 @@ export function PayrollAppDashboard({
           )}
           {tab === "run" && (
             <PayrollRunTab
+              company={company}
               staff={staff}
               attendance={attendance}
               runs={runs}
@@ -2405,48 +2406,290 @@ function MissingAttendanceModal({
   );
 }
 
-function RunDetailsModal({ run, onClose }: { run: PayrollRun; onClose: () => void }) {
+type RunDisplayStatus = "draft" | "computed" | "paid";
+
+/** Derived purely client-side from the run's own data — no separate status lifecycle/migration needed. A run is "Paid" once every staff line has a non-unpaid payment_proofs entry, "Draft" only for the (currently unused) legacy draft DB value, "Computed" otherwise. */
+function runDisplayStatus(run: PayrollRun): RunDisplayStatus {
+  if (run.status === "draft") return "draft";
+  const rows = run.breakdown ?? [];
+  if (rows.length === 0) return "computed";
+  const allPaid = rows.every((r) => {
+    const status = getPaymentProof(run.payment_proofs, r.staffId).status;
+    return status === "paid" || status === "confirmed";
+  });
+  return allPaid ? "paid" : "computed";
+}
+
+function RunStatusBadge({ status }: { status: RunDisplayStatus }) {
+  const config: Record<RunDisplayStatus, { label: string; className: string }> = {
+    draft: { label: "Draft", className: "bg-white/10 text-gray-400" },
+    computed: { label: "Computed", className: "bg-blue-500/15 text-blue-400 ring-1 ring-inset ring-blue-500/30" },
+    paid: { label: "Paid", className: "bg-[#00FF88]/15 text-[#00FF88] ring-1 ring-inset ring-[#00FF88]/30" },
+  };
+  const { label, className } = config[status];
+  return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${className}`}>{label}</span>;
+}
+
+/** "Aug 1-31" style — the exclusive `to` boundary from getCutOffRange is rolled back a day to show the real last date of the period. */
+function formatPeriodLabel(month: string, cutOff: CutOff | null | undefined): string {
+  if (!cutOff) return "—";
+  const range = getCutOffRange(month, cutOff);
+  const fromDate = new Date(`${range.from}T00:00:00Z`);
+  const lastDate = new Date(new Date(`${range.to}T00:00:00Z`).getTime() - 86_400_000);
+  const monthLabel = fromDate.toLocaleDateString("en-PH", { month: "short", timeZone: "UTC" });
+  return `${monthLabel} ${fromDate.getUTCDate()}-${lastDate.getUTCDate()}`;
+}
+
+function RunDetailsModal({
+  run,
+  staff,
+  company,
+  onClose,
+  onChanged,
+}: {
+  run: PayrollRun;
+  staff: Staff[];
+  company: Company | null;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [payModalRow, setPayModalRow] = useState<PayrollBreakdownRow | null>(null);
+  const [isBulkPaying, setIsBulkPaying] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const staffById = useMemo(() => new Map(staff.map((s) => [s.id, s])), [staff]);
+  const rows = run.breakdown ?? [];
+  const status = runDisplayStatus(run);
+
+  const totalBasic = rows.reduce((sum, r) => sum + r.basicPay, 0);
+  const totalLateUndertime = rows.reduce((sum, r) => sum + (r.lateDeduction ?? 0) + (r.undertimeDeduction ?? 0), 0);
+  const totalOvertime = rows.reduce((sum, r) => sum + (r.overtimePay ?? 0), 0);
+  const totalCommission = rows.reduce((sum, r) => sum + (r.commission ?? 0), 0);
+  const totalAdvances = rows.reduce((sum, r) => sum + (r.advancesDeduction ?? 0), 0);
+  const totalGross = rows.reduce((sum, r) => sum + (r.grossPay ?? r.basicPay), 0);
+  const totalDeductions = rows.reduce((sum, r) => sum + (r.totalDeductions ?? 0), 0);
+  const totalNet = rows.reduce((sum, r) => sum + (r.netPay ?? r.basicPay), 0);
+
+  const doleWarnings = rows.filter((r) => r.dailyRate > 0 && r.dailyRate < DOLE_MIN_DAILY_WAGE);
+  const unpaidRows = rows.filter((r) => getPaymentProof(run.payment_proofs, r.staffId).status === "unpaid");
+
+  async function handleMarkAllPaid() {
+    if (unpaidRows.length === 0) return;
+    setIsBulkPaying(true);
+    try {
+      let failures = 0;
+      for (const row of unpaidRows) {
+        const formData = new FormData();
+        formData.append("amount", String(row.netPay ?? row.basicPay));
+        formData.append("note", "Cash — Mark as Paid");
+        const res = await fetch(`/api/payroll/runs/${run.id}/payment/${row.staffId}`, { method: "POST", body: formData });
+        if (!res.ok) failures += 1;
+      }
+      toast(failures === 0 ? `Marked ${unpaidRows.length} staff as paid ✅` : `Marked ${unpaidRows.length - failures}/${unpaidRows.length} as paid — retry the rest.`);
+      onChanged();
+    } catch {
+      toast("Network error — try again.");
+    } finally {
+      setIsBulkPaying(false);
+    }
+  }
+
+  async function handleDownloadPayslip(row: PayrollBreakdownRow) {
+    const { generatePayslipPdf } = await import("@/lib/payroll/payslip-pdf");
+    generatePayslipPdf({
+      businessName: company?.business_name ?? "Your Business",
+      staffName: row.name,
+      dailyRate: row.dailyRate,
+      daysPresent: row.daysPresent,
+      basicPay: row.netPay ?? row.basicPay,
+      gcash: staffById.get(row.staffId)?.gcash ?? null,
+      demo: false,
+    });
+  }
+
+  async function handleGenerateAllPayslips() {
+    for (const row of rows) {
+      await handleDownloadPayslip(row);
+      await new Promise((r) => setTimeout(r, 150)); // stagger so the browser doesn't block simultaneous downloads
+    }
+  }
+
+  async function handleExportExcel() {
+    setIsExporting(true);
+    try {
+      const { exportPayrollRunExcel } = await import("@/lib/payroll/payroll-excel-export");
+      await exportPayrollRunExcel(run, rows, (staffId) => staffById.get(staffId)?.gcash ?? null);
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-[#1E293B] bg-[#121A22] p-6 shadow-2xl">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-bold text-white">
-            {run.month} {run.cut_off ? `· ${CUTOFF_LABELS[run.cut_off]}` : ""}
-          </h2>
-          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">
-            <X className="h-4 w-4" />
-          </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-[#1E293B] bg-[#121A22] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-bold text-white">
+              Payroll Run — {new Date(`${run.month}-01T00:00:00Z`).toLocaleDateString("en-PH", { month: "long", year: "numeric", timeZone: "UTC" })}
+              {run.cut_off ? ` · ${CUTOFF_LABELS[run.cut_off]}` : ""}
+            </h2>
+            <p className="mt-0.5 text-xs text-gray-500">{formatPeriodLabel(run.month, run.cut_off)}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <RunStatusBadge status={status} />
+            <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-300" aria-label="Close">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
-        <div className="mt-4 max-h-96 space-y-2 overflow-y-auto">
-          {run.breakdown.map((row) => (
-            <div key={row.staffId} className="rounded-lg border border-[#1E293B] bg-[#0B121A] px-3 py-2">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-white">{row.name}</p>
-                {row.estimated && (
-                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-400">
-                    Estimated
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 flex justify-between text-xs text-gray-400">
-                <span>
-                  {PESO(row.dailyRate)} × {row.daysPresent} days
-                </span>
-                <span className="font-semibold text-[#00FF88]">{PESO(row.basicPay)}</span>
-              </div>
-            </div>
-          ))}
+
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-3">
+            <p className="text-[10px] uppercase tracking-wide text-gray-500">Gross</p>
+            <p className="mt-1 text-lg font-bold text-white">{PESO(totalGross)}</p>
+          </div>
+          <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-3">
+            <p className="text-[10px] uppercase tracking-wide text-gray-500">Deductions</p>
+            <p className="mt-1 text-lg font-bold text-red-400">-{PESO(totalDeductions)}</p>
+          </div>
+          <div className="rounded-xl border border-[#00FF88]/20 bg-[#00FF88]/[0.04] p-3">
+            <p className="text-[10px] uppercase tracking-wide text-[#00FF88]/70">Net</p>
+            <p className="mt-1 text-lg font-bold text-[#00FF88]">{PESO(totalNet)}</p>
+          </div>
+          <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-3">
+            <p className="text-[10px] uppercase tracking-wide text-gray-500">Staff</p>
+            <p className="mt-1 text-lg font-bold text-white">{rows.length}</p>
+          </div>
         </div>
-        <div className="mt-4 flex justify-between border-t border-[#1E293B] pt-3 text-sm">
-          <span className="font-semibold text-white">Total Sahod</span>
-          <span className="font-bold text-[#00FF88]">{PESO(run.total_sahod)}</span>
+
+        <div className="mt-4 max-h-[42vh] overflow-x-auto overflow-y-auto rounded-xl border border-[#1E293B]">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-[#121A22]">
+              <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="px-3 pb-2 pt-3">Staff</th>
+                <th className="px-3 pb-2 pt-3">Days</th>
+                <th className="px-3 pb-2 pt-3">Basic</th>
+                <th className="px-3 pb-2 pt-3">Late/UT</th>
+                <th className="px-3 pb-2 pt-3">OT</th>
+                <th className="px-3 pb-2 pt-3">Comm.</th>
+                <th className="px-3 pb-2 pt-3">Advances</th>
+                <th className="px-3 pb-2 pt-3">Net Pay</th>
+                <th className="px-3 pb-2 pt-3">Status</th>
+                <th className="px-3 pb-2 pt-3">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const s = staffById.get(row.staffId);
+                const proof = getPaymentProof(run.payment_proofs, row.staffId);
+                const lateUndertime = (row.lateDeduction ?? 0) + (row.undertimeDeduction ?? 0);
+                return (
+                  <tr key={row.staffId} className="border-b border-[#1E293B]/60 last:border-0">
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-2">
+                        {s ? <StaffAvatar staff={s} size="h-7 w-7" /> : <div className="h-7 w-7 shrink-0 rounded-full bg-white/10" />}
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-white">{row.name}</p>
+                          {row.estimated && <span className="text-[10px] font-semibold uppercase text-amber-400">Estimated</span>}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-gray-300">{row.daysPresent}</td>
+                    <td className="px-3 py-2.5 text-gray-300">{PESO(row.basicPay)}</td>
+                    <td className="px-3 py-2.5 text-red-400">{lateUndertime > 0 ? `-${PESO(lateUndertime)}` : "—"}</td>
+                    <td className="px-3 py-2.5 text-[#00FF88]">{row.overtimePay ? `+${PESO(row.overtimePay)}` : "—"}</td>
+                    <td className="px-3 py-2.5 text-gray-500">{row.commission ? PESO(row.commission) : "—"}</td>
+                    <td className="px-3 py-2.5 text-red-400">{row.advancesDeduction ? `-${PESO(row.advancesDeduction)}` : "—"}</td>
+                    <td className="px-3 py-2.5 font-semibold text-white">{PESO(row.netPay ?? row.basicPay)}</td>
+                    <td className="px-3 py-2.5">
+                      <PaymentStatusBadge status={proof.status} />
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1">
+                        {proof.status === "unpaid" && (
+                          <button
+                            type="button"
+                            onClick={() => setPayModalRow(row)}
+                            className="inline-flex h-7 items-center gap-1 rounded-lg bg-[#00FF88] px-2 text-xs font-semibold text-black hover:bg-[#22C55E]"
+                          >
+                            <Wallet className="h-3 w-3" />
+                            Pay
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadPayslip(row)}
+                          title="View Payslip"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-[#1E293B] text-slate-300 hover:bg-white/5"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-[#1E293B] text-sm font-semibold">
+                <td className="px-3 py-2.5 text-white">Total</td>
+                <td className="px-3 py-2.5" />
+                <td className="px-3 py-2.5 text-white">{PESO(totalBasic)}</td>
+                <td className="px-3 py-2.5 text-red-400">-{PESO(totalLateUndertime)}</td>
+                <td className="px-3 py-2.5 text-[#00FF88]">+{PESO(totalOvertime)}</td>
+                <td className="px-3 py-2.5 text-gray-400">{totalCommission ? PESO(totalCommission) : "—"}</td>
+                <td className="px-3 py-2.5 text-red-400">-{PESO(totalAdvances)}</td>
+                <td className="px-3 py-2.5 text-white">{PESO(totalNet)}</td>
+                <td className="px-3 py-2.5" />
+                <td className="px-3 py-2.5" />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <p className="mt-3 text-[11px] leading-relaxed text-gray-500">
+          {doleWarnings.length === 0 ? (
+            <span className="text-[#00FF88]">✓ DOLE compliant</span>
+          ) : (
+            <span className="text-amber-400">⚠ {doleWarnings.length} staff below reference minimum wage — see Staff tab</span>
+          )}
+          {" — "}includes mandatory fields for BIR 1601C filing prep.
+        </p>
+
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-[#1E293B] pt-4">
+          <Button size="sm" onClick={handleMarkAllPaid} disabled={isBulkPaying || unpaidRows.length === 0}>
+            {isBulkPaying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wallet className="h-3.5 w-3.5" />}
+            {unpaidRows.length === 0 ? "All Paid" : `Mark as Paid (${unpaidRows.length})`}
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleGenerateAllPayslips}>
+            <Download className="h-3.5 w-3.5" />
+            Generate Payslips
+          </Button>
+          <Button size="sm" variant="outline" onClick={handleExportExcel} disabled={isExporting}>
+            {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+            Export Excel
+          </Button>
         </div>
       </div>
+
+      {payModalRow && (
+        <PayViaGcashModal
+          runId={run.id}
+          row={payModalRow}
+          gcash={staffById.get(payModalRow.staffId)?.gcash ?? null}
+          onClose={() => setPayModalRow(null)}
+          onSaved={() => {
+            setPayModalRow(null);
+            onChanged();
+          }}
+        />
+      )}
     </div>
   );
 }
 
 function PayrollRunTab({
+  company,
   staff,
   attendance,
   runs,
@@ -2457,6 +2700,7 @@ function PayrollRunTab({
   onUpgrade,
   onGoToTimekeeping,
 }: {
+  company: Company | null;
   staff: Staff[];
   attendance: AttendanceRow[];
   runs: PayrollRun[];
@@ -2566,33 +2810,44 @@ function PayrollRunTab({
                 <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
                   <th className="pb-2 pr-4">Month</th>
                   <th className="pb-2 pr-4">Cut-off</th>
-                  <th className="pb-2 pr-4">Total Sahod</th>
+                  <th className="pb-2 pr-4">Period</th>
+                  <th className="pb-2 pr-4">Total Gross</th>
+                  <th className="pb-2 pr-4">Total Deductions</th>
+                  <th className="pb-2 pr-4">Total Net</th>
                   <th className="pb-2 pr-4">Staff</th>
                   <th className="pb-2 pr-4">Status</th>
-                  <th className="pb-2" />
+                  <th className="pb-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {runs.map((r) => (
-                  <tr key={r.id} className="border-b border-[#1E293B]/60 last:border-0">
-                    <td className="py-3 pr-4 font-medium text-white">{r.month}</td>
-                    <td className="py-3 pr-4 text-gray-300">{r.cut_off ? CUTOFF_LABELS[r.cut_off] : "—"}</td>
-                    <td className="py-3 pr-4 text-gray-300">{PESO(r.total_sahod)}</td>
-                    <td className="py-3 pr-4 text-gray-300">{r.breakdown?.length ?? 0}</td>
-                    <td className="py-3 pr-4">
-                      <Badge variant="success">{r.status === "finalized" ? "Finalized" : "Draft"}</Badge>
-                    </td>
-                    <td className="py-3">
-                      <button
-                        type="button"
-                        onClick={() => setViewingRun(r)}
-                        className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
-                      >
-                        View Details
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {runs.map((r) => {
+                  const rows = r.breakdown ?? [];
+                  const totalGross = rows.reduce((sum, row) => sum + (row.grossPay ?? row.basicPay), 0);
+                  const totalDeductions = rows.reduce((sum, row) => sum + (row.totalDeductions ?? 0), 0);
+                  return (
+                    <tr key={r.id} className="border-b border-[#1E293B]/60 last:border-0">
+                      <td className="py-3 pr-4 font-medium text-white">{r.month}</td>
+                      <td className="py-3 pr-4 text-gray-300">{r.cut_off ? CUTOFF_LABELS[r.cut_off] : "—"}</td>
+                      <td className="py-3 pr-4 text-gray-300">{formatPeriodLabel(r.month, r.cut_off)}</td>
+                      <td className="py-3 pr-4 text-gray-300">{PESO(totalGross)}</td>
+                      <td className="py-3 pr-4 text-gray-300">{totalDeductions > 0 ? `-${PESO(totalDeductions)}` : "—"}</td>
+                      <td className="py-3 pr-4 font-semibold text-white">{PESO(r.total_sahod)}</td>
+                      <td className="py-3 pr-4 text-gray-300">{rows.length}</td>
+                      <td className="py-3 pr-4">
+                        <RunStatusBadge status={runDisplayStatus(r)} />
+                      </td>
+                      <td className="py-3">
+                        <button
+                          type="button"
+                          onClick={() => setViewingRun(r)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-[#1E293B] px-2 text-xs text-slate-200 hover:bg-white/5"
+                        >
+                          View Details
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -2612,7 +2867,9 @@ function PayrollRunTab({
         />
       )}
 
-      {viewingRun && <RunDetailsModal run={viewingRun} onClose={() => setViewingRun(null)} />}
+      {viewingRun && (
+        <RunDetailsModal run={viewingRun} staff={staff} company={company} onClose={() => setViewingRun(null)} onChanged={onChanged} />
+      )}
     </Card>
   );
 }
@@ -2912,15 +3169,16 @@ function PayViaGcashModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const amountOwed = row.netPay ?? row.basicPay;
   const [step, setStep] = useState<"send" | "upload">("send");
-  const [amount, setAmount] = useState(String(row.basicPay));
+  const [amount, setAmount] = useState(String(amountOwed));
   const [gcashRef, setGcashRef] = useState("");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const amountMismatch = Number(amount) !== row.basicPay;
+  const amountMismatch = Number(amount) !== amountOwed;
 
   async function handleCopy(text: string, label: string) {
     await navigator.clipboard.writeText(text);
@@ -2980,7 +3238,7 @@ function PayViaGcashModal({
           <div className="mt-4 space-y-4">
             <div className="rounded-xl border border-[#00FF88]/20 bg-[#00FF88]/[0.04] p-4 text-center">
               <p className="text-xs uppercase tracking-wide text-gray-500">Send</p>
-              <p className="text-2xl font-black text-[#00FF88]">{PESO(row.basicPay)}</p>
+              <p className="text-2xl font-black text-[#00FF88]">{PESO(amountOwed)}</p>
               <p className="mt-1 text-sm text-gray-300">
                 to {maskGcash(gcash)} ({row.name})
               </p>
@@ -2988,7 +3246,7 @@ function PayViaGcashModal({
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => handleCopy(String(row.basicPay), "Amount")}
+                onClick={() => handleCopy(String(amountOwed), "Amount")}
                 className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[#1E293B] text-xs text-slate-200 hover:bg-white/5"
               >
                 <Copy className="h-3.5 w-3.5" />
@@ -3039,7 +3297,7 @@ function PayViaGcashModal({
               <label className="mb-1 block text-sm font-medium text-slate-300">Amount Sent</label>
               <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="border-[#1E293B] bg-[#0B121A]" />
               {amountMismatch && (
-                <p className="mt-1 text-xs text-amber-400">Doesn&apos;t match Net Pay {PESO(row.basicPay)} — double check before saving.</p>
+                <p className="mt-1 text-xs text-amber-400">Doesn&apos;t match Net Pay {PESO(amountOwed)} — double check before saving.</p>
               )}
             </div>
             {error && <div className="rounded-lg border border-red-900/60 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</div>}
@@ -3065,7 +3323,7 @@ function MarkPaidCashModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [amount, setAmount] = useState(String(row.basicPay));
+  const [amount, setAmount] = useState(String(row.netPay ?? row.basicPay));
   const [note, setNote] = useState("Cash");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

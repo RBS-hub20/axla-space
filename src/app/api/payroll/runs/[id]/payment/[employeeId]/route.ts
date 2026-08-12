@@ -18,6 +18,8 @@ const AMOUNT_TOLERANCE = 0.01;
 interface RunBreakdownEntry {
   staffId: string;
   basicPay: number;
+  /** Present on runs computed by the newer engine (late/OT/undertime/advances deductions) — the actual amount owed once those exist. Older runs never had deductions, so basicPay was already the full amount. */
+  netPay?: number;
 }
 
 async function loadRun(runId: string, ownerId: string) {
@@ -123,12 +125,13 @@ export async function POST(req: Request, { params }: { params: { id: string; emp
   // this employee is owed, not whatever the owner's client happens to send.
   const breakdown = (run.breakdown ?? []) as RunBreakdownEntry[];
   const entry = breakdown.find((b) => b.staffId === params.employeeId);
-  if (entry && Math.abs(amount - entry.basicPay) > AMOUNT_TOLERANCE) {
+  const amountOwed = entry?.netPay ?? entry?.basicPay;
+  if (entry && amountOwed !== undefined && Math.abs(amount - amountOwed) > AMOUNT_TOLERANCE) {
     return NextResponse.json(
       {
-        error: `Amount mismatch — expected ₱${entry.basicPay.toLocaleString()}, got ₱${amount.toLocaleString()}.`,
+        error: `Amount mismatch — expected ₱${amountOwed.toLocaleString()}, got ₱${amount.toLocaleString()}.`,
         code: "AMOUNT_MISMATCH",
-        expected: entry.basicPay,
+        expected: amountOwed,
         received: amount,
       },
       { status: 400 },
