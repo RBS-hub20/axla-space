@@ -3505,6 +3505,129 @@ function exportPaymentAuditCsv(rows: PaymentAuditRow[]) {
   URL.revokeObjectURL(url);
 }
 
+/** "YYYY-MM" for the current month and the two before it, oldest first. */
+function lastThreeMonthKeys(): string[] {
+  const now = new Date();
+  return Array.from({ length: 3 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (2 - i), 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+}
+
+function monthShortLabel(monthKey: string): string {
+  return new Date(`${monthKey}-01T00:00:00Z`).toLocaleDateString("en-PH", { month: "short", timeZone: "UTC" });
+}
+
+function PayrollTrendChart({ runs }: { runs: PayrollRun[] }) {
+  const monthKeys = useMemo(lastThreeMonthKeys, []);
+  const totals = monthKeys.map((m) => runs.filter((r) => r.month === m).reduce((sum, r) => sum + Number(r.total_sahod), 0));
+  const maxTotal = Math.max(1, ...totals);
+
+  const prev = totals[1];
+  const latest = totals[2];
+  const changeLabel =
+    prev > 0 ? `${latest >= prev ? "▲" : "▼"} ${Math.abs(Math.round(((latest - prev) / prev) * 100))}% vs ${monthShortLabel(monthKeys[1])}` : null;
+
+  return (
+    <Card className={PREMIUM_CARD}>
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold text-white">Payroll Trend (Last 3 Months)</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex h-32 items-end justify-around gap-6 sm:gap-10">
+          {monthKeys.map((m, i) => {
+            const value = totals[i];
+            const heightPct = maxTotal > 0 ? Math.max(value > 0 ? 4 : 0, (value / maxTotal) * 100) : 0;
+            return (
+              <div key={m} className="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
+                <span className="text-xs font-medium text-gray-300">{PESO(value)}</span>
+                <div className="flex h-24 w-full items-end">
+                  <div className="w-full rounded-t-md bg-[#00C853] transition-all" style={{ height: `${heightPct}%` }} />
+                </div>
+                <span className="text-xs text-gray-500">{monthShortLabel(m)}</span>
+              </div>
+            );
+          })}
+        </div>
+        {changeLabel && (
+          <p className={`mt-3 text-center text-xs font-semibold ${latest >= prev ? "text-[#00FF88]" : "text-amber-400"}`}>{changeLabel}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function StaffCostBreakdown({ latestRun }: { latestRun: PayrollRun | undefined }) {
+  const rows = latestRun?.breakdown ?? [];
+  const totalDays = rows.reduce((sum, r) => sum + r.daysPresent, 0);
+  const totalGross = rows.reduce((sum, r) => sum + (r.grossPay ?? r.basicPay), 0);
+  const totalDeductions = rows.reduce((sum, r) => sum + (r.totalDeductions ?? 0), 0);
+  const totalNet = rows.reduce((sum, r) => sum + (r.netPay ?? r.basicPay), 0);
+
+  if (!latestRun || rows.length === 0) return null;
+
+  const monthLabel = new Date(`${latestRun.month}-01T00:00:00Z`).toLocaleDateString("en-PH", { month: "long", year: "numeric", timeZone: "UTC" });
+
+  return (
+    <Card className={PREMIUM_CARD}>
+      <CardHeader>
+        <CardTitle className="text-sm font-semibold text-white">Staff Cost Breakdown — {monthLabel}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                <th className="pb-2 pr-4">Employee</th>
+                <th className="pb-2 pr-4">Days</th>
+                <th className="pb-2 pr-4">Gross</th>
+                <th className="pb-2 pr-4">Deductions</th>
+                <th className="pb-2 pr-4">Net</th>
+                <th className="pb-2">Share %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows
+                .slice()
+                .sort((a, b) => (b.netPay ?? b.basicPay) - (a.netPay ?? a.basicPay))
+                .map((row) => {
+                  const net = row.netPay ?? row.basicPay;
+                  const sharePct = totalNet > 0 ? (net / totalNet) * 100 : 0;
+                  return (
+                    <tr key={row.staffId} className="border-b border-[#1E293B]/60 last:border-0">
+                      <td className="py-2 pr-4 font-medium text-white">{row.name}</td>
+                      <td className="py-2 pr-4 text-gray-300">{row.daysPresent}</td>
+                      <td className="py-2 pr-4 text-gray-300">{PESO(row.grossPay ?? row.basicPay)}</td>
+                      <td className="py-2 pr-4 text-red-400">{row.totalDeductions ? `-${PESO(row.totalDeductions)}` : "—"}</td>
+                      <td className="py-2 pr-4 font-semibold text-white">{PESO(net)}</td>
+                      <td className="py-2 text-[#00FF88]">{sharePct.toFixed(1)}%</td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-[#1E293B] text-sm font-semibold">
+                <td className="py-2 pr-4 text-white">Total</td>
+                <td className="py-2 pr-4 text-white">{totalDays}</td>
+                <td className="py-2 pr-4 text-white">{PESO(totalGross)}</td>
+                <td className="py-2 pr-4 text-red-400">{totalDeductions ? `-${PESO(totalDeductions)}` : "—"}</td>
+                <td className="py-2 pr-4 text-white">{PESO(totalNet)}</td>
+                <td className="py-2 text-[#00FF88]">100%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AuditStatusBadge({ status }: { status: PaymentProofStatus }) {
+  if (status === "unpaid") return <Badge>Unpaid</Badge>;
+  // Reports' audit trail treats both "paid" and employee-"confirmed" as green — this view is about what's actually settled, not the finer paid-vs-confirmed distinction the Payslip tab's badge draws.
+  return <Badge variant="success">{status === "confirmed" ? "Confirmed" : "Paid"}</Badge>;
+}
+
 function ReportsTab({
   staff,
   runs,
@@ -3521,6 +3644,9 @@ function ReportsTab({
   const currentYear = new Date().getFullYear();
   const ytdTotal = runs.filter((r) => r.month.startsWith(String(currentYear))).reduce((sum, r) => sum + Number(r.total_sahod), 0);
   const thirteenthMonthAccrual = ytdTotal / 12;
+  const latestRun = runs[0]; // already ordered desc by created_at (see GET /api/payroll/runs)
+
+  const [auditSearch, setAuditSearch] = useState("");
 
   const staffById = useMemo(() => new Map(staff.map((s) => [s.id, s])), [staff]);
   const auditRows = useMemo(() => {
@@ -3547,6 +3673,11 @@ function ReportsTab({
     return rows;
   }, [runs, staffById]);
 
+  const filteredAuditRows = auditSearch.trim()
+    ? auditRows.filter((r) => r.staffName.toLowerCase().includes(auditSearch.trim().toLowerCase()))
+    : auditRows;
+  const totalPaid = filteredAuditRows.reduce((sum, r) => sum + (r.amount ?? 0), 0);
+
   return (
     <div className="space-y-4">
       <Card className={PREMIUM_CARD}>
@@ -3568,94 +3699,105 @@ function ReportsTab({
               )}
             </div>
           ) : (
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
-                  <p className="text-xs text-gray-500">YTD Payroll ({currentYear})</p>
-                  <p className="mt-1 text-xl font-bold text-white">{PESO(ytdTotal)}</p>
-                </div>
-                <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
-                  <p className="text-xs text-gray-500">13th Month Accrual (YTD ÷ 12)</p>
-                  <p className="mt-1 text-xl font-bold text-[#00FF88]">{PESO(thirteenthMonthAccrual)}</p>
-                </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
+                <p className="text-xs text-gray-500">YTD Payroll ({currentYear})</p>
+                <p className="mt-1 text-xl font-bold text-white">{PESO(ytdTotal)}</p>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
-                      <th className="pb-2 pr-4">Month</th>
-                      <th className="pb-2">Total Sahod</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runs.map((r) => (
-                      <tr key={r.id} className="border-b border-[#1E293B]/60 last:border-0">
-                        <td className="py-2 pr-4 text-white">{r.month}</td>
-                        <td className="py-2 text-gray-300">{PESO(r.total_sahod)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="rounded-xl border border-[#1E293B] bg-[#0B121A] p-4">
+                <p className="text-xs text-gray-500">13th Month Accrual (YTD ÷ 12)</p>
+                <p className="mt-1 text-xl font-bold text-[#00FF88]">{PESO(thirteenthMonthAccrual)}</p>
               </div>
             </div>
           )}
         </CardContent>
       </Card>
 
+      {runs.length > 0 && (
+        <>
+          <PayrollTrendChart runs={runs} />
+          <StaffCostBreakdown latestRun={latestRun} />
+        </>
+      )}
+
       {auditRows.length > 0 && (
         <Card className={PREMIUM_CARD}>
-          <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardHeader className="flex-col items-stretch gap-3 space-y-0 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-sm font-semibold text-white">Payment Audit Trail</CardTitle>
-            <button
-              type="button"
-              onClick={() => exportPaymentAuditCsv(auditRows)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#1E293B] px-3 text-xs text-slate-200 hover:bg-white/5"
-            >
-              <Download className="h-3.5 w-3.5" />
-              Export CSV
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
+                <Input
+                  value={auditSearch}
+                  onChange={(e) => setAuditSearch(e.target.value)}
+                  placeholder="Search employee..."
+                  className="h-8 w-40 border-[#1E293B] bg-[#0B121A] pl-8 text-xs"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => exportPaymentAuditCsv(filteredAuditRows)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#1E293B] px-3 text-xs text-slate-200 hover:bg-white/5"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </button>
+            </div>
           </CardHeader>
           <CardContent>
             <p className="mb-3 text-xs text-gray-500">For BIR/DOLE audits — every recorded payment, receipt, and employee confirmation across your payroll history.</p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
-                    <th className="pb-2 pr-4">Month</th>
-                    <th className="pb-2 pr-4">Employee</th>
-                    <th className="pb-2 pr-4">Amount</th>
-                    <th className="pb-2 pr-4">Ref / Note</th>
-                    <th className="pb-2 pr-4">Receipt</th>
-                    <th className="pb-2 pr-4">Paid At</th>
-                    <th className="pb-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditRows.map((r, i) => (
-                    <tr key={`${r.runId}-${i}`} className="border-b border-[#1E293B]/60 last:border-0">
-                      <td className="py-2 pr-4 text-white">{r.month}</td>
-                      <td className="py-2 pr-4 text-gray-300">{r.staffName}</td>
-                      <td className="py-2 pr-4 text-gray-300">{r.amount !== null ? PESO(r.amount) : "—"}</td>
-                      <td className="py-2 pr-4 text-gray-300">{r.gcashRef ?? r.note ?? "—"}</td>
-                      <td className="py-2 pr-4">
-                        {r.receiptUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={r.receiptUrl} alt="Receipt" className="h-8 w-8 rounded border border-[#1E293B] object-cover" />
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="py-2 pr-4 text-gray-300">
-                        {r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric" }) : "—"}
-                      </td>
-                      <td className="py-2">
-                        <PaymentStatusBadge status={r.status} />
-                      </td>
+            {filteredAuditRows.length === 0 ? (
+              <p className="py-8 text-center text-sm text-gray-500">No payments match &quot;{auditSearch}&quot;.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#1E293B] text-left text-xs uppercase tracking-wide text-gray-500">
+                      <th className="pb-2 pr-4">Month</th>
+                      <th className="pb-2 pr-4">Employee</th>
+                      <th className="pb-2 pr-4">Amount</th>
+                      <th className="pb-2 pr-4">Ref / Note</th>
+                      <th className="pb-2 pr-4">Receipt</th>
+                      <th className="pb-2 pr-4">Paid At</th>
+                      <th className="pb-2">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {filteredAuditRows.map((r, i) => (
+                      <tr key={`${r.runId}-${i}`} className="border-b border-[#1E293B]/60 last:border-0">
+                        <td className="py-2 pr-4 text-white">{r.month}</td>
+                        <td className="py-2 pr-4 text-gray-300">{r.staffName}</td>
+                        <td className="py-2 pr-4 text-gray-300">{r.amount !== null ? PESO(r.amount) : "—"}</td>
+                        <td className="py-2 pr-4 text-gray-300">{r.gcashRef ?? r.note ?? "—"}</td>
+                        <td className="py-2 pr-4">
+                          {r.receiptUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={r.receiptUrl} alt="Receipt" className="h-8 w-8 rounded border border-[#1E293B] object-cover" />
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="py-2 pr-4 text-gray-300">
+                          {r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric" }) : "—"}
+                        </td>
+                        <td className="py-2">
+                          <AuditStatusBadge status={r.status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-[#1E293B] text-sm font-semibold">
+                      <td className="py-2 pr-4 text-white" colSpan={2}>
+                        Total Paid
+                      </td>
+                      <td className="py-2 pr-4 text-[#00FF88]">{PESO(totalPaid)}</td>
+                      <td className="py-2" colSpan={4} />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
