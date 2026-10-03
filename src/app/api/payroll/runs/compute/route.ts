@@ -5,6 +5,7 @@ import { supabaseAdmin, isSupabaseAdminConfigured } from "@/lib/supabase/admin";
 import { hasPayrollAccess } from "@/lib/payroll/plan";
 import { computePayrollRow, getCutOffRange, DEFAULT_DAYS_BY_CUTOFF, type PayrollComputeInput, type CutOff } from "@/lib/payroll/sahod";
 import { computeDayCell, datesInRange, DEFAULT_SHIFT, type ShiftConfig } from "@/lib/payroll/shift";
+import { formatManilaDate } from "@/lib/manila-time";
 import { logError } from "@/lib/log-error";
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
@@ -65,7 +66,7 @@ export async function POST(req: Request) {
   const useDefaultForMissing = body.useDefaultForMissing === true;
 
   const range = getCutOffRange(month, cutOff);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = formatManilaDate(new Date());
 
   const [{ data: staff, error: staffError }, { data: attendance, error: attError }, { data: advances, error: advError }] = await Promise.all([
     supabaseAdmin

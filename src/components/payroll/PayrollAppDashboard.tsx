@@ -82,6 +82,7 @@ import {
   dayAbbrFor,
 } from "@/lib/payroll/shift";
 import { StaffDetailModal, type DetailTab } from "@/components/payroll/StaffDetailModal";
+import { formatManilaDate } from "@/lib/manila-time";
 
 const PREMIUM_CARD =
   "rounded-2xl border-[#1E293B] bg-[#121A22] shadow-sm transition hover:border-[#00FF88]/30 hover:shadow-lg hover:shadow-green-500/10";
@@ -1508,7 +1509,7 @@ function TimekeepingTab({
     return () => clearInterval(interval);
   }, [loadLogs]);
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = formatManilaDate(new Date());
   const weekDates = useMemo(() => currentWeekDates(todayIso), [todayIso]);
   const activeStaff = useMemo(() => staff.filter((s) => s.status === "Active"), [staff]);
 
@@ -1821,7 +1822,7 @@ function TimesheetView({
   weekDates: string[];
   highlight: { day: string; kind: "present" | "late" | "absent" } | null;
 }) {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = formatManilaDate(new Date());
 
   const totalsByDay = useMemo(() => {
     const totals: Record<string, number> = {};
@@ -1927,7 +1928,7 @@ function GeneratePayrollPreviewModal({
   onClose: () => void;
   onGoToRun: () => void;
 }) {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = formatManilaDate(new Date());
   const rows = staff.map((s) => {
     const config = shiftConfigFor(s);
     const staffAttendance = attendance.filter((a) => a.staff_id === s.id);

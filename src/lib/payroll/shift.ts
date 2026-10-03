@@ -4,6 +4,8 @@
 // grace_period_minutes (migration 028) rather than parsing the free-text
 // `schedule` field used elsewhere for display.
 
+import { manilaMinutesSinceMidnight, formatManilaShortTime } from "@/lib/manila-time";
+
 export const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 export type WeekDay = (typeof WEEK_DAYS)[number];
 
@@ -29,9 +31,9 @@ function timeToMinutes(time: string): number {
   return h * 60 + (m || 0);
 }
 
+/** Manila-local minutes-since-midnight for a clock event — never `.getHours()`, see manilaMinutesSinceMidnight's own doc comment for why. */
 function clockToMinutes(iso: string): number {
-  const d = new Date(iso);
-  return d.getHours() * 60 + d.getMinutes();
+  return manilaMinutesSinceMidnight(new Date(iso));
 }
 
 export function formatMinutes(minutes: number): string {
@@ -43,14 +45,14 @@ export function formatMinutes(minutes: number): string {
 }
 
 export function formatClockTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" });
+  return formatManilaShortTime(new Date(iso));
 }
 
 /** Compact "9:05" / "18:10"-in-12h form (no AM/PM) for the Timesheet grid's "9:05-6:10" cells — formatClockTime's "9:05 AM" is too wide for a table cell repeated 7x per row. */
 export function formatShortTime(iso: string): string {
-  const d = new Date(iso);
-  const h = d.getHours() % 12 || 12;
-  const m = String(d.getMinutes()).padStart(2, "0");
+  const minutesSinceMidnight = manilaMinutesSinceMidnight(new Date(iso));
+  const h = Math.floor(minutesSinceMidnight / 60) % 12 || 12;
+  const m = String(minutesSinceMidnight % 60).padStart(2, "0");
   return `${h}:${m}`;
 }
 

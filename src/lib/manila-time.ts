@@ -11,6 +11,15 @@ function manilaHour(date: Date): number {
   return Number(formatter.format(date));
 }
 
+/** Minutes since Manila midnight (0-1439) — the input every late/overtime/undertime minute comparison in lib/payroll/shift.ts is built on. Never use `date.getHours()`/`getMinutes()` for this: those read the *runtime's* local timezone, which is UTC on most Node hosts (Vercel included) — a 9:05 AM Manila clock-in would silently become "1:05 AM" server-side and corrupt every lateness/overtime figure that feeds into actual payroll. */
+export function manilaMinutesSinceMidnight(date: Date): number {
+  const formatter = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "numeric", hourCycle: "h23" });
+  const parts = formatter.formatToParts(date);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
+  return hour * 60 + minute;
+}
+
 /** "HH:MM:SS" in 24h Manila time, for display alongside a "PHT" suffix. */
 export function formatManilaTime(date: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-US", {
@@ -20,6 +29,11 @@ export function formatManilaTime(date: Date = new Date()): string {
     second: "2-digit",
     hourCycle: "h23",
   }).format(date);
+}
+
+/** "9:05 AM" in 12h Manila time, no seconds — compact enough for a repeated table cell (the Timekeeping tab's Timesheet grid, Manual Time In/Out). */
+export function formatManilaShortTime(date: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit" }).format(date);
 }
 
 /** "YYYY-MM-DD" in Manila time — the calendar date deadlines are compared against. */

@@ -1,6 +1,8 @@
 // Deliberately NOT "server-only" — computed client-side from attendance
 // rows already fetched for the Timekeeping tab (no extra API call).
 
+import { manilaMinutesSinceMidnight } from "@/lib/manila-time";
+
 export interface AttendanceStats {
   daysPresent: number;
   /** null when `schedule` has no parseable start time — there's nothing real to compare clock-ins against, so we show a day count instead of a fabricated on-time percentage. */
@@ -39,8 +41,7 @@ export function computeAttendanceStats(records: { time_in: string | null }[], sc
 
   let lateCount = 0;
   for (const r of present) {
-    const d = new Date(r.time_in as string);
-    const clockInMinutes = d.getHours() * 60 + d.getMinutes();
+    const clockInMinutes = manilaMinutesSinceMidnight(new Date(r.time_in as string));
     if (clockInMinutes > startMinutes + GRACE_MINUTES) lateCount += 1;
   }
 
