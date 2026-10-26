@@ -31,6 +31,7 @@
     "clsx": "^2.1.1",
     "exceljs": "^4.4.0",
     "file-type": "^22.0.1",
+    "framer-motion": "^14.6.0",
     "image-size": "^2.0.2",
     "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.2.1",
