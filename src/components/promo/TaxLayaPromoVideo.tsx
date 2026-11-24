@@ -23,6 +23,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PROMO, isPromoActive } from "@/lib/promo";
+import { generateAxlaQrDataUrl } from "@/lib/promo/qr";
+import { AXLA_PROMO_COPY } from "@/lib/promo/copy";
 
 /**
  * 30-second looping promo video MOCKUP — not a real video file. A
@@ -246,8 +248,8 @@ function Scene3HowItWorks() {
           <DeviceFrame kind="phone" className="w-20">
             <div className="flex aspect-[9/19] flex-col items-center justify-center gap-1.5 px-2 pt-6">
               <Wallet className="h-5 w-5 text-[#00FF88]" />
-              <span className="text-center text-[6px] font-semibold text-white">GCash synced</span>
-              <span className="text-[5px] text-slate-500">142 transactions</span>
+              <span className="text-center text-[6px] font-semibold text-white">{AXLA_PROMO_COPY.gcashSyncedTitle}</span>
+              <span className="text-[5px] text-slate-500">{AXLA_PROMO_COPY.gcashSyncedSubtitle}</span>
             </div>
           </DeviceFrame>
           <CheckBadge delay={1.15} />
@@ -257,7 +259,7 @@ function Scene3HowItWorks() {
           <DeviceFrame kind="phone" className="w-[4.6rem]">
             <div className="flex aspect-[9/19] flex-col items-center gap-1 px-1.5 pt-6">
               <div className="w-full rounded-md bg-[#00FF88]/15 px-1.5 py-1.5 text-center">
-                <span className="text-[6px] font-bold text-[#00FF88]">2551Q Filed ✅</span>
+                <span className="text-[6px] font-bold text-[#00FF88]">{AXLA_PROMO_COPY.filedLabel}</span>
               </div>
             </div>
           </DeviceFrame>
@@ -356,8 +358,7 @@ function Scene5Cta() {
 
   useEffect(() => {
     let cancelled = false;
-    import("qrcode")
-      .then((QRCode) => QRCode.toDataURL("https://axla.space", { width: 160, margin: 1, color: { dark: "#0B0F1A", light: "#ffffff" } }))
+    generateAxlaQrDataUrl(160)
       .then((url) => {
         if (!cancelled) setQrDataUrl(url);
       })
@@ -390,8 +391,8 @@ function Scene5Cta() {
               <div className="flex items-center gap-1.5 rounded-lg border border-[#00FF88]/30 bg-[#0B0F1A] p-1.5">
                 <Image src="/icon-192.png" alt="" width={18} height={18} className="shrink-0 rounded" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[6px] font-bold text-white">Install Axla App</p>
-                  <p className="truncate text-[5px] text-slate-400">Parang GCash for BIR filing</p>
+                  <p className="truncate text-[6px] font-bold text-white">{AXLA_PROMO_COPY.installAppTitle}</p>
+                  <p className="truncate text-[5px] text-slate-400">{AXLA_PROMO_COPY.installTagline}</p>
                 </div>
               </div>
               <motion.span

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { PROMO, isPromoActive } from "@/lib/promo";
 import { buildLofiLoopBuffer, schedulePop } from "@/lib/promo/lofi-audio";
+import { generateAxlaQrDataUrl } from "@/lib/promo/qr";
+import { AXLA_PROMO_COPY } from "@/lib/promo/copy";
 
 /**
  * 1920x1080 canvas "showreel" studio for Axla TaxLaya: a Web-Audio-driven
@@ -45,6 +47,19 @@ const ACCENT = "#00FF88";
 const CARD = "#141A2A";
 const BORDER = "#1E293B";
 
+// Single source of truth for the bottom-of-frame "safe zone": the caption
+// box and the waveform strip both live here, so every scene keeps its own
+// content above (h - SCENE_SAFE_BOTTOM_MARGIN) instead of each re-deriving
+// its own "how far from the edge" number by eyeballing one caption's wrap
+// count (that's exactly how the caption/QR-box/badges-row collisions
+// happened before — four independent constants, none aware of the others).
+const CAPTION_BOTTOM_MARGIN = 60;
+const CAPTION_LINE_HEIGHT = 46;
+const CAPTION_BOX_PADDING = 28;
+const CAPTION_MAX_LINES = 3; // generous upper bound for any caption string at 34px/72%-width wrap
+const CAPTION_MAX_BOX_H = CAPTION_MAX_LINES * CAPTION_LINE_HEIGHT + CAPTION_BOX_PADDING;
+const SCENE_SAFE_BOTTOM_MARGIN = CAPTION_BOTTOM_MARGIN + CAPTION_MAX_BOX_H + 24;
+
 interface SceneBound {
   start: number;
   end: number;
@@ -79,7 +94,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-type Images = { icon512: HTMLImageElement; icon192: HTMLImageElement; logo: HTMLImageElement; qr: HTMLImageElement };
+type Images = { icon512: HTMLImageElement; icon192: HTMLImageElement; qr: HTMLImageElement };
 
 function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, elapsed: number, reduced: boolean) {
   const grad = ctx.createLinearGradient(0, 0, 0, h);
@@ -111,8 +126,8 @@ function drawBackground(ctx: CanvasRenderingContext2D, w: number, h: number, ela
 function drawWaveform(ctx: CanvasRenderingContext2D, data: Uint8Array<ArrayBuffer>, w: number, h: number) {
   const barCount = 64;
   const step = Math.floor(data.length / barCount);
-  const baseY = h - 70;
-  const maxBarH = 46;
+  const baseY = h - 26;
+  const maxBarH = 30;
   const barW = (w - 160) / barCount - 3;
   ctx.save();
   for (let i = 0; i < barCount; i++) {
@@ -178,10 +193,17 @@ function drawPill(ctx: CanvasRenderingContext2D, text: string, x: number, y: num
   return w;
 }
 
-function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: number) {
-  ctx.font = `700 34px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
-  ctx.textAlign = "center";
-  const maxWidth = w * 0.72;
+const CAPTION_FONT = `700 ${CAPTION_LINE_HEIGHT - 12}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+
+interface CaptionLayout {
+  text: string;
+  lines: string[];
+  boxH: number;
+}
+
+/** Wraps caption text into lines once per distinct string — callers cache the result and only recompute when the text changes, instead of re-running this on every animation frame. */
+function measureCaptionLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): CaptionLayout {
+  ctx.font = CAPTION_FONT;
   const words = text.split(" ");
   const lines: string[] = [];
   let line = "";
@@ -195,15 +217,20 @@ function drawCaption(ctx: CanvasRenderingContext2D, text: string, w: number, h: 
     }
   }
   if (line) lines.push(line);
+  return { text, lines, boxH: lines.length * CAPTION_LINE_HEIGHT + CAPTION_BOX_PADDING };
+}
 
-  const lineHeight = 46;
-  const boxH = lines.length * lineHeight + 28;
-  const boxY = h - 170 - boxH;
+/** Draws a pre-measured caption, anchored to a fixed distance from the bottom edge (not relative to whatever a scene draws above it) — see SCENE_SAFE_BOTTOM_MARGIN. */
+function drawCaption(ctx: CanvasRenderingContext2D, layout: CaptionLayout, w: number, h: number) {
+  const maxWidth = w * 0.72;
+  const boxY = h - CAPTION_BOTTOM_MARGIN - layout.boxH;
   ctx.fillStyle = "rgba(0,0,0,0.68)";
-  roundRect(ctx, w / 2 - maxWidth / 2 - 24, boxY, maxWidth + 48, boxH, 16);
+  roundRect(ctx, w / 2 - maxWidth / 2 - 24, boxY, maxWidth + 48, layout.boxH, 16);
   ctx.fill();
   ctx.fillStyle = "#ffffff";
-  lines.forEach((l, i) => ctx.fillText(l, w / 2, boxY + 36 + i * lineHeight));
+  ctx.font = CAPTION_FONT;
+  ctx.textAlign = "center";
+  layout.lines.forEach((l, i) => ctx.fillText(l, w / 2, boxY + 36 + i * CAPTION_LINE_HEIGHT));
 }
 
 function easeOutCubic(t: number) {
@@ -290,16 +317,30 @@ function drawSceneProblem2(ctx: CanvasRenderingContext2D, t: number, w: number, 
   drawHeadline(ctx, ["Nakaka-stress, diba?"], w / 2, h / 2 + 220, 58, "#fca5a5", "center");
 }
 
-function drawSceneSolution(ctx: CanvasRenderingContext2D, t: number, w: number, h: number, images: Images) {
-  const introT = Math.min(1, t / 1.2);
-  const scale = 0.6 + 0.4 * easeOutCubic(introT);
+// The solution scene's sub-beats (icon pop → phone slide-in → badges reveal)
+// were tuned by eye against this scene's real measured VO duration (line 3,
+// ~11.42s at the time of writing). They're expressed below as fractions of
+// that tuned duration and then scaled by the *actual* scene duration passed
+// in, so regenerating the VO line to a different length rescales the beats
+// instead of silently desyncing them (cutting phones off early, or leaving
+// dead air before the next scene).
+const SOLUTION_SCENE_TUNED_DURATION = 11.42;
+
+function drawSceneSolution(ctx: CanvasRenderingContext2D, t: number, w: number, h: number, images: Images, duration: number) {
+  const scale = duration > 0 ? duration / SOLUTION_SCENE_TUNED_DURATION : 1;
+  const introEnd = 3.2 * scale;
+  const introPop = 1.2 * scale;
+  const introFadeStart = introEnd - 0.6 * scale;
+
+  const introT = Math.min(1, t / introPop);
+  const popScale = 0.6 + 0.4 * easeOutCubic(introT);
   const introAlpha = introT;
 
-  if (t < 3.2) {
+  if (t < introEnd) {
     ctx.save();
-    ctx.globalAlpha = introAlpha * (t > 2.6 ? Math.max(0, 1 - (t - 2.6) / 0.6) : 1);
+    ctx.globalAlpha = introAlpha * (t > introFadeStart ? Math.max(0, 1 - (t - introFadeStart) / (0.6 * scale)) : 1);
     ctx.translate(w / 2, h / 2 - 60);
-    ctx.scale(scale, scale);
+    ctx.scale(popScale, popScale);
     ctx.shadowColor = ACCENT;
     ctx.shadowBlur = 80;
     ctx.drawImage(images.icon512, -90, -90, 180, 180);
@@ -316,23 +357,23 @@ function drawSceneSolution(ctx: CanvasRenderingContext2D, t: number, w: number, 
     return;
   }
 
-  const phaseT = t - 3.0;
-  const slideT = Math.min(1, phaseT / 0.8);
+  const phaseT = t - (introEnd - 0.2 * scale);
+  const slideT = Math.min(1, phaseT / (0.8 * scale));
   const slide = easeOutCubic(slideT);
 
   drawPill(ctx, "⏱ 2-min setup", w / 2 - 110, 140, ACCENT, "rgba(0,255,136,0.08)", "rgba(0,255,136,0.3)");
 
-  const phoneW = 300;
-  const phoneH = 580;
+  const phoneW = 280;
+  const phoneH = 420;
   const gap = 60;
   const totalW = phoneW * 3 + gap * 2;
   const startX = w / 2 - totalW / 2;
-  const y = h / 2 - phoneH / 2 + 30;
+  const y = 270;
 
   const screens: { title: string; sub: string }[] = [
     { title: "Enter code", sub: "OTP sent to your email" },
-    { title: "GCash synced", sub: "142 transactions" },
-    { title: "2551Q Filed ✅", sub: "BIR compliant" },
+    { title: AXLA_PROMO_COPY.gcashSyncedTitle, sub: AXLA_PROMO_COPY.gcashSyncedSubtitle },
+    { title: AXLA_PROMO_COPY.filedLabel, sub: "BIR compliant" },
   ];
 
   screens.forEach((s, i) => {
@@ -362,14 +403,15 @@ function drawSceneSolution(ctx: CanvasRenderingContext2D, t: number, w: number, 
     ctx.restore();
   });
 
-  if (phaseT > 1.2) {
-    const badgeAlpha = Math.min(1, (phaseT - 1.2) / 0.6);
+  const badgeDelay = 1.2 * scale;
+  if (phaseT > badgeDelay) {
+    const badgeAlpha = Math.min(1, (phaseT - badgeDelay) / (0.6 * scale));
     ctx.save();
     ctx.globalAlpha = badgeAlpha;
     const badges = ["No credit card", "BIR compliant", "2-min setup"];
     ctx.font = `600 24px system-ui, sans-serif`;
     let bx = w / 2 - 420;
-    const by = h - 140;
+    const by = h - SCENE_SAFE_BOTTOM_MARGIN - 50;
     badges.forEach((b) => {
       const bw = ctx.measureText(b).width + 56;
       ctx.fillStyle = "rgba(255,255,255,0.06)";
@@ -445,7 +487,7 @@ function drawScenePricing(ctx: CanvasRenderingContext2D, t: number, w: number, h
   const btnW = 420;
   const btnH = 90;
   ctx.save();
-  ctx.translate(w / 2, h - 230);
+  ctx.translate(w / 2, h - SCENE_SAFE_BOTTOM_MARGIN - btnH / 2);
   ctx.scale(pulse, pulse);
   ctx.shadowColor = ACCENT;
   ctx.shadowBlur = 40;
@@ -462,24 +504,55 @@ function drawScenePricing(ctx: CanvasRenderingContext2D, t: number, w: number, h
 function drawSceneCta(ctx: CanvasRenderingContext2D, t: number, w: number, h: number, images: Images) {
   const slide = easeOutCubic(Math.min(1, t / 0.6));
 
-  const phoneW = 260;
-  const phoneH = 500;
-  const androidW = 320;
-  const centerGap = 50;
-  const py = h / 2 - phoneH / 2 - 40;
+  // End-card wordmark up top, clear of the device row below.
+  const headAlpha = Math.min(1, t / 0.4);
+  ctx.save();
+  ctx.globalAlpha = headAlpha;
+  ctx.drawImage(images.icon192, w / 2 - 160, 90, 56, 56);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `800 48px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.fillText("axla.space", w / 2 - 90, 132);
+  ctx.restore();
 
-  const leftX = w / 2 - centerGap / 2 - phoneW - (1 - slide) * 140;
-  drawDeviceFrame(ctx, "phone", leftX, py, phoneW, phoneH);
-  ctx.drawImage(images.icon192, leftX + phoneW / 2 - 40, py + phoneH / 2 - 60, 80, 80);
+  // Three columns (phone / QR / Android install card) all share one row so
+  // nothing stacks down into the caption band at the bottom of frame.
+  const phoneW = 260;
+  const androidW = 320;
+  const qrBoxSize = 280;
+  const colGap = 60;
+  const totalW = phoneW + colGap + qrBoxSize + colGap + androidW;
+  const startX = w / 2 - totalW / 2;
+  const rowCenterY = 470;
+  const rowH = 460;
+  const py = rowCenterY - rowH / 2;
+
+  const leftX = startX - (1 - slide) * 140;
+  drawDeviceFrame(ctx, "phone", leftX, py, phoneW, rowH);
+  ctx.drawImage(images.icon192, leftX + phoneW / 2 - 40, py + rowH / 2 - 60, 80, 80);
   ctx.fillStyle = "#ffffff";
   ctx.font = `600 24px system-ui, sans-serif`;
   ctx.textAlign = "center";
-  ctx.fillText("Axla", leftX + phoneW / 2, py + phoneH / 2 + 50);
+  ctx.fillText("Axla", leftX + phoneW / 2, py + rowH / 2 + 50);
 
-  const rightX = w / 2 + centerGap / 2 + (1 - slide) * 140;
-  drawDeviceFrame(ctx, "phone", rightX, py, androidW, phoneH);
+  if (t > 0.35) {
+    const qrAlpha = Math.min(1, (t - 0.35) / 0.4);
+    const qrX = startX + phoneW + colGap;
+    const qrY = rowCenterY - qrBoxSize / 2;
+    const qrInset = 20;
+    ctx.save();
+    ctx.globalAlpha = qrAlpha;
+    ctx.fillStyle = "#ffffff";
+    roundRect(ctx, qrX, qrY, qrBoxSize, qrBoxSize, 16);
+    ctx.fill();
+    ctx.drawImage(images.qr, qrX + qrInset, qrY + qrInset, qrBoxSize - qrInset * 2, qrBoxSize - qrInset * 2);
+    ctx.restore();
+  }
+
+  const rightX = startX + phoneW + colGap + qrBoxSize + colGap + (1 - slide) * 140;
+  drawDeviceFrame(ctx, "phone", rightX, py, androidW, rowH);
   const cardX = rightX + 30;
-  const cardY = py + phoneH - 170;
+  const cardY = py + rowH / 2 - 55;
   ctx.fillStyle = BG;
   ctx.strokeStyle = "rgba(0,255,136,0.3)";
   ctx.lineWidth = 2;
@@ -490,10 +563,10 @@ function drawSceneCta(ctx: CanvasRenderingContext2D, t: number, w: number, h: nu
   ctx.fillStyle = "#ffffff";
   ctx.font = `700 24px system-ui, sans-serif`;
   ctx.textAlign = "left";
-  ctx.fillText("Install Axla App", cardX + 92, cardY + 42);
+  ctx.fillText(AXLA_PROMO_COPY.installAppTitle, cardX + 92, cardY + 42);
   ctx.fillStyle = "#94a3b8";
   ctx.font = `500 18px system-ui, sans-serif`;
-  ctx.fillText("Parang GCash for BIR filing", cardX + 92, cardY + 70);
+  ctx.fillText(AXLA_PROMO_COPY.installTagline, cardX + 92, cardY + 70);
 
   const ripple = (t * 1.4) % 1;
   ctx.save();
@@ -504,40 +577,11 @@ function drawSceneCta(ctx: CanvasRenderingContext2D, t: number, w: number, h: nu
   ctx.arc(cardX + androidW - 110, cardY + 95, 14 + ripple * 26, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
-
-  if (t > 0.5) {
-    const qrAlpha = Math.min(1, (t - 0.5) / 0.5);
-    ctx.save();
-    ctx.globalAlpha = qrAlpha;
-    const qrSize = 180;
-    const qrX = w / 2 - qrSize / 2;
-    const qrY = h - 290;
-    ctx.fillStyle = "#ffffff";
-    roundRect(ctx, qrX - 14, qrY - 14, qrSize + 28, qrSize + 28, 16);
-    ctx.fill();
-    ctx.drawImage(images.qr, qrX, qrY, qrSize, qrSize);
-    ctx.restore();
-  }
-
-  if (t > 0.9) {
-    const endAlpha = Math.min(1, (t - 0.9) / 0.5);
-    ctx.save();
-    ctx.globalAlpha = endAlpha;
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `800 44px system-ui, sans-serif`;
-    ctx.fillText("axla.space", w / 2, h - 60);
-    ctx.font = `500 26px system-ui, sans-serif`;
-    ctx.fillStyle = "#94a3b8";
-    ctx.fillText("BIR filing, no stress.", w / 2, h - 24);
-    ctx.restore();
-  }
 }
 
 export function AxlaShowreelStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
-  const sceneLabelRef = useRef<HTMLSpanElement>(null);
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const voBuffersRef = useRef<AudioBuffer[]>([]);
@@ -557,7 +601,8 @@ export function AxlaShowreelStudio() {
   const sceneBoundsRef = useRef<SceneBound[]>([]);
   const totalDurationRef = useRef(0);
   const waveDataRef = useRef<Uint8Array<ArrayBuffer>>(new Uint8Array(new ArrayBuffer(128)));
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const captionCacheRef = useRef<CaptionLayout | null>(null);
+  const isExportingRef = useRef(false);
   const exportTimersRef = useRef<{ stop?: ReturnType<typeof setTimeout>; progress?: ReturnType<typeof setInterval> }>({});
 
   const [assetsReady, setAssetsReady] = useState(false);
@@ -612,7 +657,7 @@ export function AxlaShowreelStudio() {
         analyserRef.current = analyser;
         recorderDestRef.current = recorderDest;
 
-        const [voBuffers, lofiBuffer, icon512, icon192, logo, QRCode] = await Promise.all([
+        const [voBuffers, lofiBuffer, icon512, icon192, qrDataUrl] = await Promise.all([
           Promise.all(
             VO_LINES.map(async (line) => {
               const res = await fetch(line.src);
@@ -623,18 +668,16 @@ export function AxlaShowreelStudio() {
           buildLofiLoopBuffer(ctx),
           loadImage("/icon-512.png"),
           loadImage("/icon-192.png"),
-          loadImage("/axla-logo-dark.png"),
-          import("qrcode"),
+          generateAxlaQrDataUrl(360),
         ]);
         if (cancelled) return;
 
-        const qrDataUrl = await QRCode.toDataURL("https://axla.space", { width: 360, margin: 1, color: { dark: "#0B0F1A", light: "#ffffff" } });
         const qrImg = await loadImage(qrDataUrl);
         if (cancelled) return;
 
         voBuffersRef.current = voBuffers;
         lofiBufferRef.current = lofiBuffer;
-        imagesRef.current = { icon512, icon192, logo, qr: qrImg };
+        imagesRef.current = { icon512, icon192, qr: qrImg };
 
         const durations = voBuffers.map((b) => b.duration);
         const { bounds, total } = buildSceneBounds(durations);
@@ -743,7 +786,7 @@ export function AxlaShowreelStudio() {
     if (inScene) {
       if (visual === "problem1") drawSceneProblem1(ctx, localT, w, h, reducedMotionRef.current);
       else if (visual === "problem2") drawSceneProblem2(ctx, localT, w, h, reducedMotionRef.current);
-      else if (visual === "solution") drawSceneSolution(ctx, localT, w, h, images);
+      else if (visual === "solution") drawSceneSolution(ctx, localT, w, h, images, bounds[idx].end - bounds[idx].start);
       else if (visual === "pricing") drawScenePricing(ctx, localT, w, h, promoActive, daysLeft, reducedMotionRef.current);
       else drawSceneCta(ctx, localT, w, h, images);
     }
@@ -754,7 +797,11 @@ export function AxlaShowreelStudio() {
     }
 
     if (showCaptionsRefInternal.current) {
-      drawCaption(ctx, VO_LINES[idx].caption, w, h);
+      const text = VO_LINES[idx].caption;
+      if (captionCacheRef.current?.text !== text) {
+        captionCacheRef.current = measureCaptionLines(ctx, text, w * 0.72);
+      }
+      drawCaption(ctx, captionCacheRef.current, w, h);
     }
 
     if (progressRef.current && total > 0) {
@@ -791,32 +838,45 @@ export function AxlaShowreelStudio() {
 
   const handleReplay = useCallback(async () => {
     const ctx = audioCtxRef.current;
-    if (!ctx) return;
+    if (!ctx || !assetsReady) return;
     if (ctx.state === "suspended") await ctx.resume();
     stopActiveSources();
     scheduleTimeline(ctx.currentTime + 0.05);
     setIsPlaying(true);
     startRaf();
-  }, [scheduleTimeline, startRaf, stopActiveSources]);
+  }, [assetsReady, scheduleTimeline, startRaf, stopActiveSources]);
 
   useEffect(() => {
     const gain = liveMonitorGainRef.current;
     if (gain) gain.gain.value = isMuted ? 0 : 1;
   }, [isMuted]);
 
+  const clearExportTimers = useCallback(() => {
+    if (exportTimersRef.current.progress) clearInterval(exportTimersRef.current.progress);
+    if (exportTimersRef.current.stop) clearTimeout(exportTimersRef.current.stop);
+    exportTimersRef.current = {};
+  }, []);
+
   useEffect(() => {
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       stopActiveSources();
+      clearExportTimers();
       audioCtxRef.current?.close().catch(() => {});
     };
-  }, [stopActiveSources]);
+  }, [stopActiveSources, clearExportTimers]);
 
   const handleExport = useCallback(async () => {
     const canvas = canvasRef.current;
     const ctx = audioCtxRef.current;
     const recorderDest = recorderDestRef.current;
-    if (!canvas || !ctx || !recorderDest || !exportSupported || isExporting) return;
+    // isExportingRef is a synchronous lock checked-and-set before any
+    // `await` below — the `isExporting` *state* only commits on React's
+    // next render, so a second click fired in that window would otherwise
+    // read the old value and slip past this guard, starting a second
+    // MediaRecorder against the same streams.
+    if (!canvas || !ctx || !recorderDest || !exportSupported || isExportingRef.current) return;
+    isExportingRef.current = true;
 
     await handlePause();
     stopActiveSources();
@@ -828,7 +888,6 @@ export function AxlaShowreelStudio() {
     const combined = new MediaStream([...canvasStream.getVideoTracks(), ...recorderDest.stream.getAudioTracks()]);
 
     const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 8_000_000 });
-    mediaRecorderRef.current = recorder;
     const chunks: BlobPart[] = [];
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data);
@@ -843,17 +902,23 @@ export function AxlaShowreelStudio() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
+      isExportingRef.current = false;
       setIsExporting(false);
       setExportPct(0);
-      if (exportTimersRef.current.progress) clearInterval(exportTimersRef.current.progress);
+      clearExportTimers();
     };
 
     setIsExporting(true);
     setExportPct(0);
-    recorder.start();
 
+    // Resume + schedule BEFORE starting the recorder, so recording begins
+    // right as playback does (same ~50ms pre-roll handlePlay/handleReplay
+    // already use) instead of capturing a blank/silent lead-in for however
+    // long ctx.resume()'s promise happens to take to settle.
     if (ctx.state === "suspended") await ctx.resume();
-    scheduleTimeline(ctx.currentTime + 0.05);
+    const startAt = ctx.currentTime + 0.05;
+    scheduleTimeline(startAt);
+    recorder.start();
     setIsPlaying(true);
     startRaf();
 
@@ -870,7 +935,7 @@ export function AxlaShowreelStudio() {
       }
       handlePause();
     }, (total + 0.4) * 1000);
-  }, [exportSupported, isExporting, handlePause, scheduleTimeline, startRaf, stopActiveSources]);
+  }, [exportSupported, handlePause, scheduleTimeline, startRaf, stopActiveSources, clearExportTimers]);
 
   const sceneTitles = ["Problem", "Stress", "Meet Axla", "Launch Offer", "Install Now"];
 
@@ -894,7 +959,7 @@ export function AxlaShowreelStudio() {
       </div>
 
       <div className="flex w-full max-w-[960px] flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-        <span ref={sceneLabelRef}>
+        <span>
           Scene {sceneIndex + 1}/5 — <span className="font-semibold text-white">{sceneTitles[sceneIndex]}</span>
           {totalDuration > 0 && <span className="ml-2 text-slate-500">· {totalDuration.toFixed(1)}s total</span>}
         </span>
